@@ -95,13 +95,12 @@ COMMANDS
   balance                                Show pool balance
   scan                                   Show all received notes
   lookup   <alias.hls>                   Lookup alias info
-  voucher  create <amount> <encPubkey>   Create a pool-note voucher for a recipient
-  voucher  list                          Show vouchers received by this account
-  voucher  redeem <alias> <index>        Redeem a voucher to register alias
+  invite   create <amount>               Create a funded invite link for a new user
+  invite   claim <code> <alias>          Claim an invite and register your alias
 
 FLAGS
   --token <address>    ERC-20 token address (default: ETH)
-  --gas <amount>       Gas budget ETH for voucher redeem (default: 0.002)
+  --relayer <addr>     Pay a third party to broadcast (with --relayer-fee)\n  --relayer-fee <eth>  Fee paid to the relayer out of the note
   --json               Output JSON
 
 ENVIRONMENT
@@ -169,7 +168,7 @@ async function main() {
     return;
   }
 
-  const KNOWN = ["register", "deposit", "send", "withdraw", "balance", "scan", "lookup", "voucher", "keys"];
+  const KNOWN = ["register", "deposit", "send", "withdraw", "balance", "scan", "lookup", "invite", "keys"];
   if (!KNOWN.includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     usage();
@@ -331,7 +330,7 @@ async function main() {
   // ── keys ──────────────────────────────────────────────────────────────────
 
   if (command === "keys") {
-    // Print this account's public keys (for Alice to create a voucher to this account)
+    // Print this account's public keys (shareable identifiers, not secrets)
     const keys = (halias as any).keys;
     const { ethers: e2 } = await import("ethers");
     const encPubkey = e2.hexlify(keys.encryption.publicKey);
@@ -341,80 +340,56 @@ async function main() {
     return;
   }
 
-  // ── voucher ───────────────────────────────────────────────────────────────
+  // ── invite ────────────────────────────────────────────────────────────────
 
-  if (command === "voucher") {
+  if (command === "invite") {
     if (sub === "create") {
-      const amount    = args[2];
-      const encPubHex = args[3];
-      if (!amount || !encPubHex) {
-        process.stderr.write("Usage: halias voucher create <amount-eth> <recipient-enc-pubkey>\n");
-        process.stderr.write("       Get recipient's enc pubkey with: halias keys --json\n");
+      const amount = args[2];
+      if (!amount) {
+        process.stderr.write("Usage: halias invite create <amount-eth>\n");
         process.exit(1);
       }
 
-      const { ethers: e2 } = await import("ethers");
-      const recipientEncPub = e2.getBytes(encPubHex);
+      const result = await withSpinner("Registering invite account + funding note", () =>
+        halias.createInvite(amount)
+      );
 
-      dim("Creating voucher pool note...");
-      const result = await halias.createVoucher(recipientEncPub, amount);
-
-      if (jsonMode) { outputJson({ commitment: result.commitment, voucherSeed: result.voucherSeed.toString(), txHash: result.txHash }); return; }
-      ok(`Voucher pool note created`);
-      field("commitment", result.commitment.slice(0, 18) + "…");
-      field("tx",         result.txHash);
-      process.stdout.write(`\n${DIM}  Recipient scans for their voucher automatically.${RESET}\n`);
-      process.stdout.write(`${DIM}  Keep voucherSeed to reclaim via transact() if unredeemed.${RESET}\n`);
+      if (jsonMode) { outputJson({ inviteCode: result.inviteCode, amount: ethers.formatEther(result.amount), txHash: result.txHash }); return; }
+      ok(`Invite created for ${ethers.formatEther(result.amount)} ETH`);
+      field("code", result.inviteCode);
+      field("tx",   result.txHash);
+      process.stdout.write(`\n${DIM}  Send this code to the recipient. Anyone holding it can claim${RESET}\n`);
+      process.stdout.write(`${DIM}  the funds, so share it over a private channel.${RESET}\n`);
+      process.stdout.write(`${DIM}  You can reclaim it until they do — the secret is yours too.${RESET}\n`);
       return;
     }
 
-    if (sub === "list") {
-      const vouchers = await halias.myVouchers();
-
-      if (jsonMode) {
-        outputJson({ vouchers: vouchers.map((v, i) => ({ index: i, leafIndex: v.leafIndex, amount: ethers.formatEther(v.amount) })) });
-        return;
-      }
-
-      if (vouchers.length === 0) { process.stdout.write("  No unspent vouchers found.\n"); return; }
-      field("found", String(vouchers.length));
-      process.stdout.write("\n");
-      for (let i = 0; i < vouchers.length; i++) {
-        const v = vouchers[i];
-        process.stdout.write(`  [${i}] leaf #${v.leafIndex}`.padEnd(18) + `${ethers.formatEther(v.amount)} ETH\n`);
-      }
-      process.stdout.write(`\n${DIM}  Redeem with: halias voucher redeem <alias.hls> <index>${RESET}\n`);
-      return;
-    }
-
-    if (sub === "redeem") {
-      const alias = args[2];
-      const idx   = args[3];
-      if (!alias || idx === undefined) {
-        process.stderr.write("Usage: halias voucher redeem <alias.hls> <index>\n");
-        process.stderr.write("       First run: halias voucher list\n");
+    if (sub === "claim") {
+      const code  = args[2];
+      const alias = args[3];
+      if (!code || !alias) {
+        process.stderr.write("Usage: halias invite claim <invite-code> <alias.hls>\n");
         process.exit(1);
       }
 
-      const vouchers = await halias.myVouchers();
-      const voucherEntry = vouchers[parseInt(idx)];
-      if (!voucherEntry) {
-        process.stderr.write(`Error: no voucher at index ${idx}\n`);
-        process.exit(1);
-      }
+      const { decodeInviteCode } = await import("./invite");
+      const secret = decodeInviteCode(code);
 
-      const gasBudget = (flags["gas"] as string) || "0.002";
+      // A relayer fee lets a third party broadcast this when the claimer holds no ETH.
+      const relayerFee  = flags["relayer-fee"] ? ethers.parseEther(flags["relayer-fee"] as string) : 0n;
+      const relayerAddr = (flags["relayer"] as string) || undefined;
+
       const result = await withSpinner("Generating proof + registering", () =>
-        halias.redeemVoucher(alias, voucherEntry, gasBudget)
+        halias.claimInvite(secret, alias, { relayerFee, relayer: relayerAddr })
       );
 
       if (jsonMode) { outputJson({ alias, txHash: result.txHash }); return; }
-      ok(`Registered ${alias} via voucher`);
+      ok(`Claimed invite and registered ${alias}`);
       field("tx", result.txHash);
       return;
     }
 
-    process.stderr.write("Usage: halias voucher <create|list|redeem> ...\n");
+    process.stderr.write("Usage: halias invite <create|claim> ...\n");
     process.exit(1);
   }
 }

@@ -41,7 +41,12 @@
       "Bash(kill %1)",
       "Bash(PAYMASTER_ADDRESS=0x00000000000000000000000000000000000000aa PORT=3033 node *)",
       "Bash(pkill -f \"node dist/index.js\")",
-      "Bash(grep -vE \"MODULE_TYPELESS|Reparsing|To eliminate|trace-warnings|^$\")"
+      "Bash(grep -vE \"MODULE_TYPELESS|Reparsing|To eliminate|trace-warnings|^$\")",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(grep -iA6 \"deploy\\\\|deterministic\\\\|address\\\\|0x\" node_modules/poseidon-solidity/README.md)",
+      "Bash(SKIP_VANITY=1 npx hardhat run scripts/deploy.ts)"
     ]
   }
 }

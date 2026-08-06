@@ -56,12 +56,10 @@ describe("ERC-20 and callTarget", function () {
     const t4 = await PoseidonT4.deploy();
     const MockVerifier = await ethers.getContractFactory("MockTransactVerifier");
     const mv = await MockVerifier.deploy();
-    const MockEntryPoint = await ethers.getContractFactory("MockEntryPoint");
-    const ep = await MockEntryPoint.deploy();
     const Halias = await ethers.getContractFactory("Halias", {
       libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
     });
-    halias = await Halias.deploy(await mv.getAddress(), await ep.getAddress());
+    halias = await Halias.deploy(await mv.getAddress());
     haliasAddress = await halias.getAddress();
     REGISTRATION_FEE = await halias.registrationFee();
 

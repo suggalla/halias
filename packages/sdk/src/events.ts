@@ -188,53 +188,6 @@ export async function scanEvents(
   return { poolTree, smt, outputs: sortedOutputs, registryEntries, aliasHashByPubkey, spentNullifiers };
 }
 
-export interface VoucherEntry extends OwnedEntry {
-  voucherSeed:    bigint;
-  spendingPrivKey: bigint;
-  viewingPrivKey:  bigint;
-  blinding:        bigint;
-}
-
-// Scans all pool outputs for voucher notes. Vouchers are normal Transact pool notes
-// encrypted to the recipient; the "blinding" slot of the blob carries the voucherSeed.
-// Derive the temp keypair from voucherSeed to reconstruct and verify the commitment.
-export function findMyVoucherOutputs(
-  voucherOutputs: Output[],
-  encryptionPrivKey: Uint8Array,
-): VoucherEntry[] {
-  const found: VoucherEntry[] = [];
-  for (const out of voucherOutputs) {
-    const decoded = decodeOutputBlob(out.encryptedBlob);
-    if (!decoded) continue;
-    const decrypted = tryDecryptOutput(decoded, encryptionPrivKey);
-    if (!decrypted) continue;
-
-    // In voucher blobs the "blinding" slot contains the voucherSeed
-    const voucherSeed = decrypted.blinding;
-    const amount      = decrypted.amount;
-
-    // Derive temp keypair from seed (mirrors halias.ts createVoucher derivation)
-    const tempSpendingPrivKey  = poseidonHash([voucherSeed, 0n]);
-    const tempViewingPrivKey   = poseidonHash([voucherSeed, 1n]);
-    const tempBlinding         = poseidonHash([voucherSeed, 2n]);
-    const tempSpendingPubkey   = poseidonHash([tempSpendingPrivKey]);
-    const tempNullifierKey     = poseidonHash([tempViewingPrivKey]);
-    const tempNullifierKeyHash = poseidonHash([tempNullifierKey, 1n]);
-
-    const entry = buildEntry(tempSpendingPubkey, tempNullifierKeyHash, tempBlinding, amount, ETH_TOKEN_ADDRESS);
-    if (entry.commitment !== out.commitment) continue;
-
-    found.push({
-      ...entry,
-      leafIndex:       out.leafIndex,
-      voucherSeed,
-      spendingPrivKey: tempSpendingPrivKey,
-      viewingPrivKey:  tempViewingPrivKey,
-      blinding:        tempBlinding,
-    });
-  }
-  return found;
-}
 
 export function findMyOutputs(
   outputs: Output[],

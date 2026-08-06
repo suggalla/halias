@@ -18,7 +18,6 @@ async function main() {
   const salt = config.vanitySalt;
   const poseidonT3 = config.poseidonT3;
   const transactVerifier = config.transactVerifier;
-  const entryPointAddr = process.env.ENTRY_POINT || "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 
   if (!factoryAddr || !salt || !poseidonT3 || !transactVerifier) {
     console.error("Missing values in deployment config. Required: factory, vanitySalt, poseidonT3, transactVerifier");
@@ -33,7 +32,7 @@ async function main() {
   const abiCoder = new ethers.AbiCoder();
   const encodedArgs = abiCoder.encode(
     ["address", "address"],
-    [transactVerifier, entryPointAddr]
+    [transactVerifier]
   );
   const initCode = ethers.concat([Halias.bytecode, encodedArgs]);
 

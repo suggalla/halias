@@ -12,7 +12,7 @@ const HALIAS_ABI = [
   "function transferAliasWithKeys(bytes32 aliasHash, address newOwner, bytes32 newSpendingPubkey, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey) external",
   "function aliases(bytes32 aliasHash) external view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint64 registeredAt)",
   "function registrationFee() external view returns (uint256)",
-  // Vouchers (pool-note model — spend a pool note atomically with registration)
+  // Invite claim (pool-note model — spend a pool note atomically with registration)
   "function registerWithPoolNote((bytes32 poolRoot, bytes32 registryRoot, uint256 publicAmount, uint256 tokenAddress, bytes32[2] inputNullifiers, bytes32[2] outputCommitments, address recipient, bytes32 externalData) p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external",
   // SMT state
   "function smtRoot() external view returns (bytes32)",

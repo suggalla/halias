@@ -6,7 +6,6 @@ import "./base/SMTRegistry.sol";
 import "./base/Constants.sol";
 import "./interfaces/IHalias.sol";
 import "./interfaces/ITransactVerifier.sol";
-import {IEntryPoint, IEntryPointStake} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -19,7 +18,6 @@ import "poseidon-solidity/PoseidonT4.sol";
 
 // Construction
 error InvalidVerifier();
-error InvalidEntryPoint();
 
 // Access
 error NotAdmin();
@@ -37,12 +35,17 @@ error NullifierKeyHashOutOfField();
 error AliasTaken();
 error WrongRegistrationFee();
 
-// Vouchers / pool-note registration
-error VoucherInsufficientForFee();
-error VoucherTooLarge();
+// Pool-note registration (invite claim)
+error PoolNoteWrongFee();
 error NotAWithdrawal();
 error MustWithdrawToSelf();
 error PoolNoteMustBeETH();
+error RetainRequiresRegistration();
+
+// Relayer fee
+error RelayerFeeExceedsWithdrawal();
+error RelayerFeeOnNonWithdrawal();
+error RelayerCannotBePool();
 
 // Pool/Registry Roots
 error PoolRootUnknown();
@@ -76,11 +79,8 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
     using SafeERC20 for IERC20;
 
     ITransactVerifier public immutable transactVerifier;
-    IEntryPoint       public immutable entryPoint;
     address public admin;
     address public pendingAdmin;
-
-    uint256 public constant GAS_RESERVE_BPS = 5000; // 50% of registration fee seeds EntryPoint
 
     struct AliasData {
         bytes32 spendingPubkey;
@@ -98,7 +98,6 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
     string private _baseTokenURI;
 
     uint256 public registrationFee = 0.002 ether;
-    uint256 public constant MAX_VOUCHER_GAS_BUDGET = 0.01 ether;
     uint256 public accumulatedFees;
 
     // ── Events ─────────────────────────────────────────────────────────────────
@@ -141,6 +140,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         bytes encryptedOutput1
     );
     event Withdrawal(address indexed recipient, uint256 amount, uint256 indexed tokenAddress);
+    event RelayerPaid(address indexed relayer, uint256 fee);
     event FeeUpdated(uint256 oldFee, uint256 newFee);
     event FeesWithdrawn(address indexed to, uint256 amount);
     event AdminTransferInitiated(address indexed currentAdmin, address indexed pendingAdmin);
@@ -148,12 +148,10 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
 
     // ── Logic ──────────────────────────────────────────────────────────────────
 
-    constructor(address _transactVerifier, address _entryPoint) ERC721("Halias", "HLS") {
+    constructor(address _transactVerifier) ERC721("Halias", "HLS") {
         if (_transactVerifier == address(0)) revert InvalidVerifier();
-        if (_entryPoint == address(0))       revert InvalidEntryPoint();
 
         transactVerifier = ITransactVerifier(_transactVerifier);
-        entryPoint = IEntryPoint(_entryPoint);
         admin = msg.sender;
 
         _initSMT();
@@ -202,9 +200,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
     ) external payable nonReentrant {
         if (msg.value != registrationFee) revert WrongRegistrationFee();
 
-        uint256 gasReserve = msg.value * GAS_RESERVE_BPS / 10000;
-        accumulatedFees += msg.value - gasReserve;
-        entryPoint.depositTo{value: gasReserve}(address(this));
+        accumulatedFees += msg.value;
 
         _doRegister(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey);
     }
@@ -272,12 +268,19 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         emit AliasTransferred(aliasHash, prev, newOwner, newSpendingPubkey, leaf, newEncryptionPubkey);
     }
 
-    // ── Zero-ETH bootstrapping ────────────────────────────────────────────────
+    // ── Invite claim: register paying the fee from shielded funds ─────────────
     //
-    // Sponsor deposits a pool note via transact() assigned to a temp keypair, shares the
-    // temp private data out-of-band. Recipient derives the keypair, generates a ZK proof,
-    // and calls registerWithPoolNote() to atomically spend the note and register.
-    // MAX_VOUCHER_GAS_BUDGET scopes this path to bootstrapping; larger notes use change outputs.
+    // The inviter funds a pool note held by a temp keypair derived from the invite
+    // secret and shares that secret out-of-band. The claimer derives the keypair and
+    // calls this to register a name in one transaction, paying registrationFee out of
+    // the note rather than from their own balance. They still pay their own gas.
+    //
+    // Ordering matters: _doRegister runs FIRST so the claimer's own registry leaf is in
+    // the tree before the proof is checked. The change output is a note addressed to the
+    // freshly registered alias, and the circuit enforces registry membership for every
+    // non-zero output — so it must prove against the POST-registration root. _smtUpdate
+    // pushes that root into smtRoots immediately, so isKnownRegistryRoot accepts it.
+    // The claimer computes it off-chain from the current tree plus their own leaf.
     function registerWithPoolNote(
         TransactParams calldata p,
         bytes calldata encryptedOutput0,
@@ -288,19 +291,33 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey
     ) external nonReentrant {
-        if (p.tokenAddress != 0)                                      revert PoolNoteMustBeETH();
-        if (p.publicAmount < (FIELD_PRIME - MAX_ABS_AMOUNT))         revert NotAWithdrawal();
+        if (p.tokenAddress != 0)                              revert PoolNoteMustBeETH();
+        if (p.publicAmount < (FIELD_PRIME - MAX_ABS_AMOUNT))  revert NotAWithdrawal();
         uint256 absAmount = FIELD_PRIME - p.publicAmount;
-        if (absAmount < registrationFee)                              revert VoucherInsufficientForFee();
-        if (absAmount > registrationFee + MAX_VOUCHER_GAS_BUDGET)    revert VoucherTooLarge();
-        if (p.recipient != address(this))                             revert MustWithdrawToSelf();
+        if (p.recipient != address(this))                     revert MustWithdrawToSelf();
 
-        // Spend the pool note; ETH stays in Halias (recipient = address(this) skips sendValue)
-        _transactCore(p, encryptedOutput0, encryptedOutput1, proof);
-
-        accumulatedFees += absAmount;
+        // The note covers the registration fee plus, optionally, a relayer's gas. Anything
+        // beyond that belongs in a change output under the claimer's own keys rather than
+        // stranded in the contract, so the total must be exact.
+        (address relayer, uint256 relayerFee) = _decodeRelayerFee(p.externalData);
+        if (relayerFee > 0 && relayer == address(0))          revert NoDestination();
+        if (relayerFee > 0 && relayer == address(this))       revert RelayerCannotBePool();
+        if (absAmount != registrationFee + relayerFee)        revert PoolNoteWrongFee();
 
         _doRegister(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey);
+
+        // Spend the pool note. recipient == address(this) retains the ETH here rather than
+        // sending it out, so this function is responsible for splitting it.
+        _transactCore(p, encryptedOutput0, encryptedOutput1, proof, true);
+
+        accumulatedFees += registrationFee;
+
+        // Paying the submitter out of the note is what lets a claimer with zero ETH be
+        // registered by a third party — no paymaster, no sponsor, no deposit anywhere.
+        if (relayerFee > 0) {
+            payable(relayer).sendValue(relayerFee);
+            emit RelayerPaid(relayer, relayerFee);
+        }
     }
 
     // ── Transact ───────────────────────────────────────────────────────────────
@@ -359,14 +376,19 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         bytes calldata encryptedOutput1,
         bytes calldata proof
     ) external payable nonReentrant {
-        _transactCore(p, encryptedOutput0, encryptedOutput1, proof);
+        _transactCore(p, encryptedOutput0, encryptedOutput1, proof, false);
     }
 
+    // retainToSelf is true only for registerWithPoolNote, the one path where a withdrawal
+    // legitimately keeps its ETH inside the contract. Through transact() that would burn a
+    // note and credit nothing — accumulatedFees is untouched and there is no ETH rescue
+    // path, so the funds would be unrecoverable.
     function _transactCore(
         TransactParams calldata p,
         bytes calldata encryptedOutput0,
         bytes calldata encryptedOutput1,
-        bytes calldata proof
+        bytes calldata proof,
+        bool retainToSelf
     ) internal {
         // Checks — nullifiers first: cheapest possible revert for front-run victims.
         if (spentNullifiers[p.inputNullifiers[0]])                    revert Input0AlreadySpent();
@@ -375,7 +397,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         if (!isKnownPoolRoot(p.poolRoot))                             revert PoolRootUnknown();
         if (!isKnownRegistryRoot(p.registryRoot))                     revert RegistryRootNotCurrent();
 
-        _checkPayment(p);
+        _checkPayment(p, retainToSelf);
         _verifyTransact(p, encryptedOutput0, encryptedOutput1, proof);
 
         // Effects — spend inputs and insert outputs before any external transfer.
@@ -397,10 +419,42 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         );
     }
 
+    // Optional relayer fee, packed into externalData:
+    //   [0:20]  relayer address   (high 160 bits)
+    //   [20:32] fee in wei        (low 96 bits — 7.9e10 ETH, far above any real fee)
+    // externalData is committed inside paramsHash, so the prover fixes both the relayer and
+    // the fee. A relayer can only choose to submit or not; it cannot alter the destination,
+    // the amount, or its own cut, so submitting is trustless in both directions. This lets a
+    // user with zero ETH pay for inclusion out of their own shielded funds, with no sponsor.
+    // Zero means no relayer, which is the ordinary self-submitted path.
+    function _decodeRelayerFee(bytes32 externalData)
+        internal pure returns (address relayer, uint256 fee)
+    {
+        relayer = address(uint160(uint256(externalData) >> 96));
+        fee     = uint256(uint96(uint256(externalData)));
+    }
+
     // Cheap input validation — msg.value, destination, token sanity. Pure checks, no
     // state mutation or external calls, so it runs early (fail-fast, before the proof).
-    function _checkPayment(TransactParams calldata p) internal view {
+    function _checkPayment(TransactParams calldata p, bool retainToSelf) internal view {
         bool isWithdraw = p.publicAmount >= (FIELD_PRIME - MAX_ABS_AMOUNT);
+
+        if (p.recipient == address(this) && !retainToSelf) revert RetainRequiresRegistration();
+
+        if (p.externalData != bytes32(0)) {
+            // A fee is paid out of the ETH leaving the pool, so it only exists on an ETH
+            // withdrawal. On a transfer or deposit there is no outflow to pay it from.
+            if (!isWithdraw || p.tokenAddress != 0)   revert RelayerFeeOnNonWithdrawal();
+            (address relayer, uint256 fee) = _decodeRelayerFee(p.externalData);
+            // Paying the pool itself would send ETH that no accounting entry covers — it is
+            // neither collateral nor fees, so it would be stranded. receive() would reject
+            // it anyway; rejecting here names the actual problem.
+            if (fee > 0 && relayer == address(0))     revert NoDestination();
+            if (fee > 0 && relayer == address(this))  revert RelayerCannotBePool();
+            // No cap beyond the outflow itself: the fee is committed in paramsHash, so it is
+            // the prover's own authorised figure, not something a submitter can inflate.
+            if (fee > (FIELD_PRIME - p.publicAmount)) revert RelayerFeeExceedsWithdrawal();
+        }
 
         if (p.tokenAddress == 0) {
             if (isWithdraw) {
@@ -428,11 +482,24 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         uint256 absAmount = isWithdraw ? (FIELD_PRIME - p.publicAmount) : p.publicAmount;
 
         if (p.tokenAddress == 0) {
-            // recipient == address(this): ETH stays in contract for paymaster gas — no transfer.
+            // recipient == address(this): registerWithPoolNote retains the ETH, which that
+            // function books into accumulatedFees — no transfer here.
             // Deposit: ETH already arrived with msg.value (validated in _checkPayment) — nothing to move.
             if (isWithdraw && p.recipient != address(this)) {
-                payable(p.recipient).sendValue(absAmount);
-                emit Withdrawal(p.recipient, absAmount, 0);
+                // Invariant: fee + payout == absAmount. fee <= absAmount by _checkPayment.
+                uint256 payout = absAmount;
+                if (p.externalData != bytes32(0)) {
+                    (address relayer, uint256 fee) = _decodeRelayerFee(p.externalData);
+                    if (fee > 0) {
+                        payout -= fee;
+                        payable(relayer).sendValue(fee);
+                        emit RelayerPaid(relayer, fee);
+                    }
+                }
+                // A withdrawal may be entirely consumed by the fee — that is the shape of a
+                // claimer's first transaction, where the change output holds the balance.
+                if (payout > 0) payable(p.recipient).sendValue(payout);
+                emit Withdrawal(p.recipient, payout, 0);
             }
         } else {
             address token = address(uint160(p.tokenAddress));
@@ -465,25 +532,6 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         accumulatedFees -= amount;
         to.sendValue(amount);
         emit FeesWithdrawn(to, amount);
-    }
-
-    function withdrawEntryPointDeposit(address payable to, uint256 amount) external onlyAdmin {
-        entryPoint.withdrawTo(to, amount);
-    }
-
-    // IEntryPointStake wrappers — stakes Halias so HaliasPaymaster can read
-    // halias.registrationFee() during validatePaymasterUserOp (ERC-7562: a staked
-    // contract's storage may be read by other entities).
-    function addStake(uint32 unstakeDelaySec) external payable onlyAdmin {
-        IEntryPointStake(address(entryPoint)).addStake{value: msg.value}(unstakeDelaySec);
-    }
-
-    function unlockStake() external onlyAdmin {
-        IEntryPointStake(address(entryPoint)).unlockStake();
-    }
-
-    function withdrawStake(address payable to) external onlyAdmin {
-        IEntryPointStake(address(entryPoint)).withdrawStake(to);
     }
 
     // Recover ERC-20 tokens sent directly to this contract via token.transfer() rather
@@ -524,9 +572,10 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         return _baseTokenURI;
     }
 
-    // Only the EntryPoint may push ETH directly (EP returns ETH via withdrawTo in some paths).
-    // Pool ETH arrives through transact(), which is payable.
+    // Pool ETH arrives through transact(), which is payable, and registration fees through
+    // register(). Nothing else should push ETH here: untracked ETH is neither pool
+    // collateral nor withdrawable fees, so it would be permanently stranded.
     receive() external payable {
-        if (msg.sender != address(entryPoint)) revert DirectETHNotAllowed();
+        revert DirectETHNotAllowed();
     }
 }

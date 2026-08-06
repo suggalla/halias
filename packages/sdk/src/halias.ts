@@ -12,7 +12,8 @@ import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADD
 import { MerkleTree } from "./merkle";
 import { SMT, aliasHashToSmtKey } from "./smt";
 import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
-import { scanEvents, findMyOutputs, findMyVoucherOutputs, VoucherEntry, RegistryEntry } from "./events";
+import { scanEvents, findMyOutputs, Output, RegistryEntry } from "./events";
+import { deriveInviteKeys, packRelayerFee, InviteKeys, encodeInviteCode } from "./invite";
 import {
   getContract,
   transact as contractTransact,
@@ -53,10 +54,9 @@ export interface SendResult     { txHash: string; commitment: bigint; amount: bi
 export interface WithdrawResult { txHash: string; recipient: string; amount: bigint }
 export interface BalanceResult  { total: bigint; entries: OwnedEntry[] }
 export interface LookupResult   { spendingPubkey: bigint; nullifierKeyHash: bigint; encryptionPubkey: Uint8Array; dataHash: bigint }
-// voucherSeed: keep this secret — needed to reclaim by spending via transact() if Bob doesn't redeem
-export interface VoucherResult  { txHash: string; commitment: string; voucherSeed: bigint }
+// secret is the whole invite — anyone holding it can claim the note. Treat it like cash.
+export interface InviteResult   { txHash: string; secret: bigint; inviteCode: string; amount: bigint }
 export interface ScanEntry      extends OwnedEntry { spent: boolean }
-export type { VoucherEntry };
 
 export class Halias {
   private config: HaliasConfig;
@@ -67,7 +67,7 @@ export class Halias {
   private aliasHashByPubkey = new Map<bigint, bigint>(); // spendingPubkey → aliasHash (bigint)
   private registryEntries: RegistryEntry[] = [];
   private myEntries: OwnedEntry[] = [];
-  private myVoucherEntries: VoucherEntry[] = [];
+  private allOutputs: Output[] = [];
   private spentNullifiers = new Set<bigint>();
   private nextDummyIdx = 0;
   private selfAliasHash: bigint | null = null;
@@ -163,11 +163,8 @@ export class Halias {
       keys.encryption.privateKey,
     );
 
-    // Find voucher pool notes encrypted to us (voucherSeed in blinding slot)
-    this.myVoucherEntries = findMyVoucherOutputs(
-      result.outputs,
-      keys.encryption.privateKey,
-    );
+    // Retained so an invite claimer can locate the note belonging to a derived keypair.
+    this.allOutputs.push(...result.outputs);
 
     await this.saveCache();
   }
@@ -555,35 +552,44 @@ export class Halias {
     return { sweepTxHashes, transferTxHash: receipt!.hash };
   }
 
-  // Alice creates a voucher: pool note with a temporary keypair, encrypted to Bob's X25519 key.
-  // The encrypted blob stores (voucherSeed, amount) — Bob decrypts to derive the temp keypair.
-  // Alice keeps voucherSeed to reclaim if Bob never redeems (spend via normal transact()).
+  // ── Invite links ──────────────────────────────────────────────────────────
   //
-  // Note: the circuit enables the SMT registry check when outAmount > 0. Temp keypairs are
-  // unregistered (aliasHash=0), so this path requires a circuit update (check aliasHash==0
-  // instead of amount==0) to work with the real verifier. Tests use MockTransactVerifier.
-  async createVoucher(
-    recipientEncryptionPubkey: Uint8Array,
-    amountEth: string,
-  ): Promise<VoucherResult> {
+  // The inviter does everything up front, alone: derive a temp keypair from a random
+  // secret, register it as an UNNAMED account (a random aliasHash with no name
+  // preimage), and fund it with a note. The claimer only needs the secret.
+  //
+  // Registering the temp account is not optional. The circuit enforces registry
+  // membership for every non-zero output, so an unregistered recipient cannot be paid
+  // at all — which is exactly what the old aliasHash=0 voucher path got wrong.
+  //
+  // The inviter keeps the secret and can reclaim an unclaimed invite by spending the
+  // note normally. That also means they could claw it back after the claimer sees it,
+  // so a claimer should claim promptly. This is inherent to any one-shot link: whoever
+  // generates the secret knows it.
+  async createInvite(amountEth: string): Promise<InviteResult> {
     this.ensureInit();
     await this.ensureSync();
 
     const amount = ethers.parseEther(amountEth);
+    const secret = randomBlinding();
+    const temp   = deriveInviteKeys(secret);
 
-    // Generate temp keypair from random seed (voucherSeed stored in encrypted blob's "blinding" slot)
-    const voucherSeed = randomBlinding();
-    const tempSpendingPrivKey  = poseidonHash([voucherSeed, 0n]);
-    const tempViewingPrivKey   = poseidonHash([voucherSeed, 1n]);
-    const tempBlinding         = poseidonHash([voucherSeed, 2n]);
-    const tempSpendingPubkey   = poseidonHash([tempSpendingPrivKey]);
-    const tempNullifierKey     = poseidonHash([tempViewingPrivKey]);
-    const tempNullifierKeyHash = poseidonHash([tempNullifierKey, 1n]);
+    // Unnamed account: random key, no name preimage, invisible to alias lookup.
+    const tempAliasHash = BigInt(ethers.hexlify(randomBytes(32))) % FIELD_PRIME;
+    const registrationFee = await this.contract.registrationFee() as bigint;
 
-    const entry = buildEntry(tempSpendingPubkey, tempNullifierKeyHash, tempBlinding, amount, ETH_TOKEN_ADDRESS);
+    const regTx = await contractRegister(
+      this.contract, tempAliasHash, temp.spendingPubkey,
+      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
+    );
+    await regTx.wait();
+    await this.refresh();
 
-    // Encode voucherSeed in the "blinding" slot — Bob's findMyVoucherOutputs detects this
-    const { encrypted, viewTag } = encryptOutput(voucherSeed, amount, recipientEncryptionPubkey);
+    const entry = buildEntry(temp.spendingPubkey, temp.nullifierKeyHash, temp.blinding, amount, ETH_TOKEN_ADDRESS);
+
+    // Encrypted to the temp key derived from the secret, so holding the secret is
+    // sufficient to discover and decrypt the note — nothing else is transmitted.
+    const { encrypted, viewTag } = encryptOutput(temp.blinding, amount, temp.encryption.publicKey);
     const encryptedOutput0 = encodeOutputBlob(encrypted, viewTag);
 
     const out1  = dummyOutput(randomBlinding());
@@ -596,6 +602,7 @@ export class Halias {
     const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, encryptedOutput0, "0x", BigInt(this.config.chainId), this.config.contractAddress);
     const poolRoot     = this.poolTree.getRoot();
     const registryRoot = this.smt.root;
+    const siblings     = this.smt.getSiblings(tempAliasHash);
 
     const { proofBytes } = await proveTransact({
       poolRoot, registryRoot, publicAmount: amount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
@@ -603,8 +610,8 @@ export class Halias {
       outputCommitments: [entry.commitment, comm1],
       inputs: [dummy0.input, dummy1.input],
       outputs: [
-        // aliasHash=0 bypasses SMT check in the circuit (requires circuit update for real verifier)
-        { pubkey: tempSpendingPubkey, nullifierKeyHash: tempNullifierKeyHash, blinding: tempBlinding, amount, aliasHash: 0n, dataHash: 0n, registrySiblings: new Array(REGISTRY_LEVELS).fill(0n) },
+        { pubkey: temp.spendingPubkey, nullifierKeyHash: temp.nullifierKeyHash, blinding: temp.blinding,
+          amount, aliasHash: tempAliasHash, dataHash: 0n, registrySiblings: siblings },
         out1,
       ],
     }, this.getArtifacts());
@@ -618,89 +625,94 @@ export class Halias {
     const receipt = await tx.wait();
     await this.refresh();
 
-    return {
-      txHash:      receipt!.hash,
-      commitment:  ethers.toBeHex(entry.commitment, 32),
-      voucherSeed,
-    };
+    return { txHash: receipt!.hash, secret, inviteCode: encodeInviteCode(secret), amount };
   }
 
-  // Bob redeems a voucher note to pay for registration.
-  // voucherEntry: from findMyVoucherOutputs() — contains temp keypair needed to spend.
-  // alias: the .hls name Bob wants to register.
-  // gasBudgetEth: how much of the voucher to dedicate to gas (rest = registrationFee).
-  async redeemVoucher(
+  // Claim an invite: register `alias` and pay registrationFee out of the invite note.
+  //
+  // relayerFee > 0 lets a third party broadcast this and be reimbursed from the note, so
+  // a claimer holding no ETH at all can still be registered. The relayer is named inside
+  // paramsHash, so it cannot alter the amount, the destination, or its own cut.
+  //
+  // The proof targets the registry root AFTER this registration, because the change note
+  // is addressed to the alias being created. registerWithPoolNote registers before it
+  // verifies, and the new root is pushed to history immediately, so it is already valid.
+  async claimInvite(
+    secret: bigint,
     alias: string,
-    voucherEntry: VoucherEntry,
-    gasBudgetEth: string = "0.002",
+    opts: { relayerFee?: bigint; relayer?: string } = {},
   ): Promise<{ txHash: string }> {
     this.ensureInit();
     await this.ensureSync();
 
+    const relayerFee = opts.relayerFee ?? 0n;
+    const relayer    = opts.relayer ?? ethers.ZeroAddress;
+    if (relayerFee > 0n && relayer === ethers.ZeroAddress)
+      throw new Error("relayerFee requires a relayer address");
+
+    const temp = deriveInviteKeys(secret);
+    const note = this.findInviteNote(temp);
+    if (!note) throw new Error("No unspent invite note found for this secret");
+
     const cleanAlias = alias.replace(/\.hls$/, "").toLowerCase();
     const aliasHash  = BigInt(ethers.keccak256(ethers.toUtf8Bytes(cleanAlias + ".hls")));
+    const smtKey     = aliasHash % FIELD_PRIME;
 
     const keys             = this.keys!;
     const nullifierKeyHash = poseidonHash([keys.nullifierKey, 1n]);
     const encBytes32       = BigInt(ethers.hexlify(keys.encryption.publicKey));
 
     const registrationFee = await this.contract.registrationFee() as bigint;
-    const gasBudget       = ethers.parseEther(gasBudgetEth);
-    const totalWithdraw   = registrationFee + gasBudget;
+    const absAmount       = registrationFee + relayerFee;
+    if (note.amount < absAmount)
+      throw new Error(`Invite note ${ethers.formatEther(note.amount)} ETH cannot cover fee + relayer (${ethers.formatEther(absAmount)} ETH)`);
 
-    if (voucherEntry.amount < totalWithdraw)
-      throw new Error(`Voucher amount ${ethers.formatEther(voucherEntry.amount)} ETH insufficient for fee+gas (${ethers.formatEther(totalWithdraw)} ETH needed)`);
+    // Mirror _doRegister locally: the change output must prove against the post-register root.
+    const postSmt = this.smt.clone();
+    postSmt.update(smtKey, poseidonHash([keys.spendingPubkey, nullifierKeyHash, 0n]));
 
-    // Build Merkle proof for the voucher pool note
-    const poolProof = this.poolTree.getProof(voucherEntry.leafIndex);
+    const changeAmount = note.amount - absAmount;
+    const changeBlind  = randomBlinding();
+    const changeOut = changeAmount > 0n
+      ? { pubkey: keys.spendingPubkey, nullifierKeyHash, blinding: changeBlind, amount: changeAmount,
+          aliasHash: smtKey, dataHash: 0n, registrySiblings: postSmt.getSiblings(smtKey) }
+      : dummyOutput(randomBlinding());
+    const comm0 = poseidonHash([changeOut.pubkey, changeOut.nullifierKeyHash, changeOut.blinding, changeOut.amount, ETH_TOKEN_ADDRESS]);
 
-    // Dummy second input
-    const dBase = this.consumeDummyIdx(1);
-    const dummy = dummyInput(dBase, POOL_LEVELS);
-
-    // All outputs are dummy (zero amount) — SMT registry check disabled by circuit
-    const out0 = dummyOutput(randomBlinding());
-    const out1 = dummyOutput(randomBlinding());
-    const comm0 = poseidonHash([out0.pubkey, out0.nullifierKeyHash, out0.blinding, out0.amount, ETH_TOKEN_ADDRESS]);
+    const out1  = dummyOutput(randomBlinding());
     const comm1 = poseidonHash([out1.pubkey, out1.nullifierKeyHash, out1.blinding, out1.amount, ETH_TOKEN_ADDRESS]);
 
-    // Spend: withdraw totalWithdraw to address(this); ETH stays in Halias for fee+gas
-    const publicAmount  = FIELD_PRIME - totalWithdraw;
-    const recipientAddr = this.config.contractAddress;
+    const poolProof = this.poolTree.getProof(note.leafIndex);
+    const dBase     = this.consumeDummyIdx(1);
+    const dummy     = dummyInput(dBase, POOL_LEVELS);
 
-    // Nullifier for the temp keypair's pool note
-    const tempNullifierKey  = poseidonHash([voucherEntry.viewingPrivKey]);
-    const inputNullifier0   = computeNullifier(tempNullifierKey, voucherEntry.leafIndex);
+    const nullifier0   = computeNullifier(temp.nullifierKey, note.leafIndex);
+    const externalData = relayerFee > 0n ? packRelayerFee(relayer, relayerFee) : ethers.ZeroHash;
+    const params: TransactParams = { recipient: this.config.contractAddress, externalData };
 
-    const voucherParams: TransactParams = { recipient: recipientAddr, externalData: ethers.ZeroHash };
-    const paramsHash    = computeParamsHash(voucherParams, "0x", "0x", BigInt(this.config.chainId), this.config.contractAddress);
-    const poolRoot      = this.poolTree.getRoot();
-    const registryRoot  = this.smt.root;
+    const publicAmount = FIELD_PRIME - absAmount;
+    const paramsHash   = computeParamsHash(params, "0x", "0x", BigInt(this.config.chainId), this.config.contractAddress);
+    const poolRoot     = this.poolTree.getRoot();
 
     const { proofBytes } = await proveTransact({
-      poolRoot, registryRoot, publicAmount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
-      inputNullifiers:   [inputNullifier0, dummy.nullifier],
+      poolRoot, registryRoot: postSmt.root, publicAmount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
+      inputNullifiers:   [nullifier0, dummy.nullifier],
       outputCommitments: [comm0, comm1],
       inputs: [
-        {
-          spendingPrivKey: voucherEntry.spendingPrivKey,
-          viewingPrivKey:  voucherEntry.viewingPrivKey,
-          blinding:        voucherEntry.blinding,
-          amount:          voucherEntry.amount,
-          pathIndices:     poolProof.pathIndices,
-          pathElements:    poolProof.pathElements,
-        },
+        { spendingPrivKey: temp.spendingPrivKey, viewingPrivKey: temp.viewingPrivKey,
+          blinding: note.blinding, amount: note.amount,
+          pathIndices: poolProof.pathIndices, pathElements: poolProof.pathElements },
         dummy.input,
       ],
-      outputs: [out0, out1],
+      outputs: [changeOut, out1],
     }, this.getArtifacts());
 
     const tx = await contractRegisterWithPoolNote(
       this.contract,
-      poolRoot, registryRoot, publicAmount,
-      [inputNullifier0, dummy.nullifier],
+      poolRoot, postSmt.root, publicAmount,
+      [nullifier0, dummy.nullifier],
       [comm0, comm1],
-      voucherParams, "0x", "0x", proofBytes,
+      params, "0x", "0x", proofBytes,
       aliasHash, keys.spendingPubkey, nullifierKeyHash, encBytes32,
     );
     const receipt = await tx.wait();
@@ -708,15 +720,14 @@ export class Halias {
     return { txHash: receipt!.hash };
   }
 
-  // Return voucher notes encrypted to this account (usable for redeemVoucher)
-  async myVouchers(): Promise<VoucherEntry[]> {
-    this.ensureInit();
-    await this.ensureSync();
-    return this.myVoucherEntries.filter(v =>
-      !this.spentNullifiers.has(
-        poseidonHash([poseidonHash([v.viewingPrivKey]), BigInt(v.leafIndex)])
-      )
+  // Locate the unspent pool note belonging to an invite's temp keypair. The note is a
+  // perfectly ordinary output encrypted to the temp encryption key, so the normal
+  // decrypt-and-match path finds it — no special-case scanning.
+  private findInviteNote(temp: InviteKeys): OwnedEntry | null {
+    const owned = findMyOutputs(
+      this.allOutputs, temp.spendingPubkey, temp.nullifierKey, temp.encryption.privateKey,
     );
+    return owned.find(e => !this.spentNullifiers.has(computeNullifier(temp.nullifierKey, e.leafIndex))) ?? null;
   }
 
   async scan(tokenAddress: bigint = ETH_TOKEN_ADDRESS): Promise<ScanEntry[]> {

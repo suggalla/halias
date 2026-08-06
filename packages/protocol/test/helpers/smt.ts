@@ -31,6 +31,7 @@ function smtHash2(left: bigint, right: bigint): bigint {
 
 export class SMT {
   private nodes = new Map<string, bigint>();
+
   public root: bigint;
 
   constructor() {
@@ -52,6 +53,16 @@ export class SMT {
       current = isRight ? smtHash2(sibling, current) : smtHash2(current, sibling);
     }
     this.root = current;
+  }
+
+  // Lets a test build the tree state a pending registration WILL produce, without
+  // mutating the tree that reflects what is actually on-chain. registerWithPoolNote
+  // registers before it verifies, so the claimer's proof targets that future root.
+  clone(): SMT {
+    const copy = new SMT();
+    copy.nodes = new Map(this.nodes);
+    copy.root  = this.root;
+    return copy;
   }
 
   getSiblings(key: bigint): bigint[] {
