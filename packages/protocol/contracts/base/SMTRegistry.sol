@@ -8,7 +8,7 @@ import "./Constants.sol";
 // ---------------------------------------------------------------------------
 // SMTRegistry — abstract Sparse Merkle Tree registry base
 //
-// 32-level SMT. Key = aliasHash % FIELD_PRIME. Value = RegistryLeaf hash.
+// 64-level SMT. Key = aliasHash % FIELD_PRIME. Value = RegistryLeaf hash.
 // Supports in-place updates (key rotation, alias transfer) so the root always
 // reflects the *latest* keys — unlike an append-only Merkle tree.
 //
@@ -16,10 +16,10 @@ import "./Constants.sol";
 // Internal node: SMTHash2(L, R)       = Poseidon(L, R)           [PoseidonT3]
 // Empty subtree: zeros[i], pre-computed from zeros[0] = 0
 //
-// Birthday collision at 32 levels: P ≈ n²/2^33 — acceptable at testnet scale.
+// Birthday collision at 64 levels: P ≈ n²/2^65 — negligible at any realistic scale.
 // ---------------------------------------------------------------------------
 abstract contract SMTRegistry {
-    uint32 public constant REGISTRY_LEVELS = 32;
+    uint32 public constant REGISTRY_LEVELS = 64;
     uint32  public constant REGISTRY_HISTORY_SIZE = 300;
 
     error SMTCollision();
@@ -31,7 +31,7 @@ abstract contract SMTRegistry {
 
     // _smtNodes[level][nodePath] = node hash (0 = empty/unset, use _smtZeros[level])
     mapping(uint256 => mapping(uint256 => bytes32)) private _smtNodes;
-    bytes32[33] private _smtZeros;
+    bytes32[65] private _smtZeros;
 
     function _initSMT() internal {
         bytes32 z = bytes32(0);
@@ -91,7 +91,7 @@ abstract contract SMTRegistry {
     }
 
     // Returns all 32 SMT siblings for a given key (for off-chain proof construction).
-    function getSmtSiblings(uint256 key) external view returns (bytes32[32] memory siblings) {
+    function getSmtSiblings(uint256 key) external view returns (bytes32[64] memory siblings) {
         uint256 pathKey = key & ((1 << REGISTRY_LEVELS) - 1);
         for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
             uint256 siblingPath = (pathKey >> i) ^ 1;

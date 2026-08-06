@@ -12,6 +12,7 @@ const TRANSACT_WASM = path.resolve(__dirname, "../circuits/out/transact/transact
 const TRANSACT_ZKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/transact_final.zkey");
 const TRANSACT_VKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/verification_key.json");
 const POOL_LEVELS = 32;
+const REGISTRY_LEVELS = 64;
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 describe("Halias (on-chain Transact)", function () {
@@ -84,7 +85,7 @@ describe("Halias (on-chain Transact)", function () {
     poseidonHash([pubkey, nullifierKeyHash, blinding, amount, 0n]); // tokenAddress=0 for ETH
 
   const computeNullifier = (nullifierKey: bigint, leafIndex: number) =>
-    poseidonHash([nullifierKey, BigInt(leafIndex)]);
+    poseidonHash([nullifierKey, BigInt(leafIndex), 1314148940n]); // NULLIFIER_DOMAIN ("NULL")
 
   function dummyInput(leafIndex: number) {
     const pathIndices = Array.from({ length: POOL_LEVELS }, (_, i) => (leafIndex >> i) & 1);
@@ -109,7 +110,7 @@ describe("Halias (on-chain Transact)", function () {
       aliasHash:        0n,
       blinding:         0n,
       amount:           0n,
-      registrySiblings: new Array(32).fill(0n),
+      registrySiblings: new Array(REGISTRY_LEVELS).fill(0n),
     };
   }
 

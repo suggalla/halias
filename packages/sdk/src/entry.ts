@@ -25,9 +25,14 @@ export function buildEntry(
   return { blinding, amount, tokenAddress, commitment };
 }
 
+// Domain tag keeps the nullifier in a different Poseidon arity/domain from
+// nullifierKeyHash = Poseidon(nullifierKey, 1), so the two can never collide.
+// Must stay in sync with NoteNullifier in transact.circom.
+export const NULLIFIER_DOMAIN = 1314148940n; // "NULL" ascii (0x4e554c4c)
+
 // Nullifier derivable only after on-chain inclusion (leafIndex known from Transact event).
 export function computeNullifier(nullifierKey: bigint, leafIndex: number): bigint {
-  return poseidonHash([nullifierKey, BigInt(leafIndex)]);
+  return poseidonHash([nullifierKey, BigInt(leafIndex), NULLIFIER_DOMAIN]);
 }
 
 export function randomBlinding(): bigint {

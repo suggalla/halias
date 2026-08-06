@@ -368,22 +368,25 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         bytes calldata encryptedOutput1,
         bytes calldata proof
     ) internal {
-        // Nullifier checks first: cheapest possible revert for front-run victims.
+        // Checks — nullifiers first: cheapest possible revert for front-run victims.
         if (spentNullifiers[p.inputNullifiers[0]])                    revert Input0AlreadySpent();
         if (spentNullifiers[p.inputNullifiers[1]])                    revert Input1AlreadySpent();
         if (p.inputNullifiers[0] == p.inputNullifiers[1])             revert DuplicateNullifier();
         if (!isKnownPoolRoot(p.poolRoot))                             revert PoolRootUnknown();
         if (!isKnownRegistryRoot(p.registryRoot))                     revert RegistryRootNotCurrent();
 
-        _processPayment(p);
-
+        _checkPayment(p);
         _verifyTransact(p, encryptedOutput0, encryptedOutput1, proof);
 
+        // Effects — spend inputs and insert outputs before any external transfer.
         spentNullifiers[p.inputNullifiers[0]] = true;
         spentNullifiers[p.inputNullifiers[1]] = true;
 
         uint32 idx0 = _insert(p.outputCommitments[0]);
         uint32 idx1 = _insert(p.outputCommitments[1]);
+
+        // Interactions — ETH/token movement last (CEI: safe independent of nonReentrant).
+        _settlePayment(p);
 
         emit Transact(
             p.publicAmount, p.tokenAddress,
@@ -394,19 +397,15 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         );
     }
 
-    function _processPayment(TransactParams calldata p) internal {
+    // Cheap input validation — msg.value, destination, token sanity. Pure checks, no
+    // state mutation or external calls, so it runs early (fail-fast, before the proof).
+    function _checkPayment(TransactParams calldata p) internal view {
         bool isWithdraw = p.publicAmount >= (FIELD_PRIME - MAX_ABS_AMOUNT);
-        uint256 absAmount = isWithdraw ? (FIELD_PRIME - p.publicAmount) : p.publicAmount;
 
         if (p.tokenAddress == 0) {
             if (isWithdraw) {
                 if (msg.value != 0) revert WithdrawCannotHaveValue();
                 if (p.recipient == address(0)) revert NoDestination();
-                // recipient == address(this): ETH stays in contract for paymaster gas — no transfer needed
-                if (p.recipient != address(this)) {
-                    payable(p.recipient).sendValue(absAmount);
-                    emit Withdrawal(p.recipient, absAmount, 0);
-                }
             } else {
                 if (p.publicAmount > 0) {
                     if (msg.value != p.publicAmount) revert WrongDepositValue();
@@ -418,8 +417,26 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
             if (msg.value != 0) revert ERC20CannotHaveETH();
             address token = address(uint160(p.tokenAddress));
             if (token.code.length == 0) revert InvalidTokenAddress();
+            if (isWithdraw && p.recipient == address(0)) revert NoDestination();
+        }
+    }
+
+    // Balance effects + external transfers — runs last (CEI), after inputs are spent
+    // and outputs inserted, so settlement is safe independent of the nonReentrant guard.
+    function _settlePayment(TransactParams calldata p) internal {
+        bool isWithdraw = p.publicAmount >= (FIELD_PRIME - MAX_ABS_AMOUNT);
+        uint256 absAmount = isWithdraw ? (FIELD_PRIME - p.publicAmount) : p.publicAmount;
+
+        if (p.tokenAddress == 0) {
+            // recipient == address(this): ETH stays in contract for paymaster gas — no transfer.
+            // Deposit: ETH already arrived with msg.value (validated in _checkPayment) — nothing to move.
+            if (isWithdraw && p.recipient != address(this)) {
+                payable(p.recipient).sendValue(absAmount);
+                emit Withdrawal(p.recipient, absAmount, 0);
+            }
+        } else {
+            address token = address(uint160(p.tokenAddress));
             if (isWithdraw) {
-                if (p.recipient == address(0)) revert NoDestination();
                 poolTokenBalance[token] -= absAmount;
                 IERC20(token).safeTransfer(p.recipient, absAmount);
                 emit Withdrawal(p.recipient, absAmount, p.tokenAddress);

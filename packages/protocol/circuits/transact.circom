@@ -81,9 +81,13 @@ template NoteNullifier(levels) {
         leafIndexBits.in[i] <== pathIndices[i];
     }
 
-    component hasher = Poseidon(2);
+    // 3-input hash so the nullifier sits in a different Poseidon domain than
+    // nullifierKeyHash = Poseidon(nullifierKey, 1) — they can never collide,
+    // so a spend never reveals a value linkable to the public registry key-hash.
+    component hasher = Poseidon(3);
     hasher.inputs[0] <== nullifierKey;
     hasher.inputs[1] <== leafIndexBits.out;
+    hasher.inputs[2] <== 1314148940; // NULLIFIER_DOMAIN ("NULL" ascii)
     out <== hasher.out;
 }
 
@@ -145,10 +149,10 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     signal input outDataHash[nOuts];                                 // recipient's dataHash (from registry)
     signal input outAliasHash[nOuts];                                // aliasHash % FIELD_PRIME — private SMT key
     signal input outRegistrySiblings[nOuts][registryLevels];         // SMT sibling hashes
-    // Path bits for the SMT are derived internally from outAliasHash via Num2Bits(255).
-    // FIELD_PRIME < 2^255, so Num2Bits(255) succeeds for every valid field element.
-    // This constrains path indices to exactly match outAliasHash bits, eliminating a
-    // separate outRegistryPathIndices input and tightening the path-to-key binding.
+    // Path bits for the SMT are derived internally from outAliasHash via Num2Bits_strict.
+    // The strict decomposition enforces the canonical (< p) bits, so path indices match
+    // outAliasHash exactly — eliminating a separate outRegistryPathIndices input and
+    // tightening the path-to-key binding. Low registryLevels (64) bits drive the path.
 
     // -----------------------------------------------------------------------
     // INPUT VERIFICATION
@@ -322,6 +326,15 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     publicAmountCheck.in <== publicAmount + (1 << 248);
 
     // -----------------------------------------------------------------------
+    // TOKEN ADDRESS RANGE CHECK
+    // -----------------------------------------------------------------------
+    // tokenAddress is an EVM address (0 = ETH). Bounding it to 160 bits keeps a
+    // token's note-namespace canonical — high-bit variants can't alias the same
+    // uint160 token on-chain. (Sound: 160 < 254, so the decomposition is unique.)
+    component tokenAddressCheck = Num2Bits(160);
+    tokenAddressCheck.in <== tokenAddress;
+
+    // -----------------------------------------------------------------------
     // AMOUNT CONSERVATION
     // -----------------------------------------------------------------------
     // sumIns + publicAmount === sumOuts
@@ -355,8 +368,8 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     signal paramsHashSquare <== paramsHash * paramsHash;
 }
 
-// Registry uses 32 levels (bits 0-31 of aliasHash % FIELD_PRIME).
-// P(collision) ≈ n²/2^33. Acceptable at testnet scale (<10k aliases).
+// Registry uses 64 levels (bits 0-63 of aliasHash % FIELD_PRIME).
+// P(collision) ≈ n²/2^65 — negligible at any realistic scale.
 component main {public [
     poolRoot,
     registryRoot,
@@ -365,4 +378,4 @@ component main {public [
     paramsHash,
     inputNullifier,
     outputCommitment
-]} = Transact(32, 32, 2, 2);
+]} = Transact(32, 64, 2, 2);

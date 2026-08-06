@@ -4,7 +4,7 @@ export type { NaclKeypair, HaliasKeys, Signer, EncryptedOutput } from "./crypto"
 
 export { MerkleTree } from "./merkle";
 
-export { buildEntry, computeNullifier, randomBlinding, ETH_TOKEN_ADDRESS } from "./entry";
+export { buildEntry, computeNullifier, randomBlinding, ETH_TOKEN_ADDRESS, NULLIFIER_DOMAIN } from "./entry";
 export type { Entry, OwnedEntry } from "./entry";
 
 export { proveTransact, dummyInput, dummyOutput } from "./proof";

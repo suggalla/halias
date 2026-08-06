@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { randomBytes } from "crypto";
 import { poseidonHash } from "./crypto";
+import { computeNullifier } from "./entry";
 
 const snarkjs = require("snarkjs");
 
@@ -25,7 +26,7 @@ export interface TransactOutput {
   amount: bigint;
   aliasHash: bigint;           // aliasHash % FIELD_PRIME — private SMT key for this recipient
   dataHash: bigint;            // attestation/reputation data commitment
-  registrySiblings: bigint[];  // length = registry levels (32); SMT proof
+  registrySiblings: bigint[];  // length = registry levels (64); SMT proof
 }
 
 export interface TransactProveInput {
@@ -87,7 +88,7 @@ export async function proveTransact(
 
 // ── Dummy input/output helpers ────────────────────────────────────────────────
 
-const REGISTRY_LEVELS = 32;
+const REGISTRY_LEVELS = 64;
 const POOL_LEVELS     = 32;
 
 export interface DummyInput {
@@ -102,7 +103,7 @@ export function dummyInput(leafIndex: number = 0, poolLevels: number = POOL_LEVE
   const spendingPrivKey = BigInt("0x" + randomBytes(31).toString("hex"));
   const viewingPrivKey  = BigInt("0x" + randomBytes(31).toString("hex"));
   const nullifierKey    = poseidonHash([viewingPrivKey]);
-  const nullifier       = poseidonHash([nullifierKey, BigInt(finalIdx)]);
+  const nullifier       = computeNullifier(nullifierKey, finalIdx);
   return {
     input: {
       spendingPrivKey,

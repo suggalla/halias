@@ -31,7 +31,7 @@ import { randomBytes } from "crypto";
 
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const POOL_LEVELS     = 32;
-const REGISTRY_LEVELS = 32;
+const REGISTRY_LEVELS = 64;
 
 export interface HaliasConfig {
   provider: ethers.Provider;
@@ -185,6 +185,10 @@ export class Halias {
     };
   }
 
+  // Returns aliasHash as the field-reduced SMT key (aliasHash % FIELD_PRIME) — this is the
+  // value the circuit consumes as outAliasHash (leaf key + Num2Bits_strict path source), and
+  // it matches the on-chain leaf key. The raw aliasHash (256-bit keccak) is ≥ p ~81% of the
+  // time, so passing it unreduced would fail Num2Bits_strict and mismatch the leaf.
   private selfSmtProof() {
     const pubkey = this.keys!.spendingPubkey;
     const aliasHash = this.aliasHashByPubkey.get(pubkey);
@@ -192,7 +196,7 @@ export class Halias {
     const smtKey = aliasHashToSmtKey(aliasHash);
     const siblings = this.smt.getSiblings(smtKey);
     const entry = this.registryEntries.find(e => BigInt(e.aliasHash) === aliasHash)!;
-    return { aliasHash, siblings, dataHash: entry.dataHash };
+    return { aliasHash: smtKey, siblings, dataHash: entry.dataHash };
   }
 
   private recipientSmtProof(pubkey: bigint) {
@@ -201,7 +205,7 @@ export class Halias {
     const smtKey = aliasHashToSmtKey(aliasHash);
     const siblings = this.smt.getSiblings(smtKey);
     const entry = this.registryEntries.find(e => BigInt(e.aliasHash) === aliasHash)!;
-    return { aliasHash, siblings, dataHash: entry.dataHash };
+    return { aliasHash: smtKey, siblings, dataHash: entry.dataHash };
   }
 
   private selectEntry(amount: bigint, tokenAddress: bigint): OwnedEntry {
@@ -600,7 +604,7 @@ export class Halias {
       inputs: [dummy0.input, dummy1.input],
       outputs: [
         // aliasHash=0 bypasses SMT check in the circuit (requires circuit update for real verifier)
-        { pubkey: tempSpendingPubkey, nullifierKeyHash: tempNullifierKeyHash, blinding: tempBlinding, amount, aliasHash: 0n, dataHash: 0n, registrySiblings: new Array(32).fill(0n) },
+        { pubkey: tempSpendingPubkey, nullifierKeyHash: tempNullifierKeyHash, blinding: tempBlinding, amount, aliasHash: 0n, dataHash: 0n, registrySiblings: new Array(REGISTRY_LEVELS).fill(0n) },
         out1,
       ],
     }, this.getArtifacts());
@@ -666,7 +670,7 @@ export class Halias {
 
     // Nullifier for the temp keypair's pool note
     const tempNullifierKey  = poseidonHash([voucherEntry.viewingPrivKey]);
-    const inputNullifier0   = poseidonHash([tempNullifierKey, BigInt(voucherEntry.leafIndex)]);
+    const inputNullifier0   = computeNullifier(tempNullifierKey, voucherEntry.leafIndex);
 
     const voucherParams: TransactParams = { recipient: recipientAddr, externalData: ethers.ZeroHash };
     const paramsHash    = computeParamsHash(voucherParams, "0x", "0x", BigInt(this.config.chainId), this.config.contractAddress);
