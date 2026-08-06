@@ -28,13 +28,12 @@ const ZERO_PARAMS = {
   externalData:      ethers.ZeroHash,
 };
 
-describe("ERC-20 and callTarget", function () {
+describe("ERC-20", function () {
   this.timeout(30000);
 
   let halias: any;
   let mockToken: any;
   let mockFeeToken: any;
-  let mockCallTarget: any;
   let registrySMT: SMT;
 
   let haliasAddress: string;
@@ -68,9 +67,6 @@ describe("ERC-20 and callTarget", function () {
 
     const MockFeeToken = await ethers.getContractFactory("MockFeeToken");
     mockFeeToken = await MockFeeToken.deploy();
-
-    const MockCallTarget = await ethers.getContractFactory("MockCallTarget");
-    mockCallTarget = await MockCallTarget.deploy(false);
 
     registrySMT = new SMT();
 
