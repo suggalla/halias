@@ -31,7 +31,7 @@ const HALIAS_ABI = [
 ];
 
 export interface TransactParams {
-  recipient:    string;  // unshield destination; address(this) = retain ETH for paymaster gas
+  recipient:    string;  // unshield destination; address(this) only via registerWithPoolNote
   externalData: string;  // bytes32 hex commitment hook
 }
 

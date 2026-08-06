@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-// Always-valid verifier for non-ZK contract tests (ERC-20, callTarget, vouchers).
+// Always-valid verifier for tests that exercise contract logic rather than the circuit.
+// Never use it for anything that must prove a real constraint holds — see Claim.test.ts.
 contract MockTransactVerifier {
     function verifyProof(
         uint[2] calldata,

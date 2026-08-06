@@ -7,30 +7,35 @@ Halias is a privacy-preserving identity and asset protocol on Ethereum. It combi
 - **Halias.sol**: The core contract managing alias registration (ERC-721) and the shielded pool.
 - **Registry**: A **Sparse Merkle Tree (SMT)** that tracks authorized spending keys and identity attestations, indexed by `aliasHash`.
 - **Shielded Pool**: An append-only Merkle tree (UTXO model) for note commitments, ensuring maximum privacy for transfers.
-- **Self-Sponsoring Paymaster**: An integrated ERC-4337 Paymaster role allowing the protocol to "bootstrap" brand-new EOAs with gas and funds directly from the shielded pool.
-- **Local-First Web App**: A stateless PWA that performs all ZK-proof generation and key derivation locally using WebAuthn and client-side SNARKs, ensuring no sensitive data ever touches a server.
+- **Invite Claims**: `registerWithPoolNote` registers an alias and pays the registration fee straight out of a funded pool note, so a new user needs no ETH of their own to get a name.
+- **Relayer Fee**: An optional fee bound inside the proof (`externalData`) that reimburses whoever broadcasts a transaction, letting a user with no ETH pay for inclusion out of their own shielded funds. No paymaster, sponsor or deposit is involved, and the contract depends on no account-abstraction standard.
+- **Local-First Web App**: A stateless PWA that derives keys and generates ZK proofs entirely in the browser, so no sensitive data reaches a server.
 
-## Current Goals
+## Status
 
-### 1. Sparse Merkle Tree (SMT) Registry
-Transition the Registry to an SMT to enable strict identity binding.
-- **Identity Binding**: Fixed `aliasHash` indexing ensures the registry root always reflects the *latest* authorized keys.
-- **ZK Ownership Proofs**: Enable proof of ownership for specific aliases, supporting EOA-less transfers and account recovery.
+Implemented: the SMT registry with in-place key rotation, ETH and ERC-20 shielded
+transfers, invite claims, and the relayer fee. The `transact` circuit is frozen.
 
-### 2. Stealth Manifestation & Bootstrapping
+Not yet done, and both gate mainnet: the trusted setup is currently a single
+self-generated ceremony with a `--dev` phase 2, which must be replaced by a
+multi-party ceremony over a public Powers of Tau file; and the contracts have not
+been audited.
+
+## Roadmap
+
+### 1. Stealth Manifestation & Bootstrapping
 Halias functions as a **Personal Stealth Network**, allowing users to manifest untraceable on-chain presence.
-- **Unlinked EOA Bootstrapping**: Utilizing EIP-7702 and Paymasters to fund brand-new, 0-ETH Externally Owned Accounts (EOAs) directly from the shielded pool, breaking all public on-chain links.
-- **Hardware-Enclave Onboarding**: Seedless wallet creation using the device's Secure Enclave (WebAuthn/Passkeys), ensuring keys are biometric-locked and unextractable.
-- **Shielded Registration**: Support for "Waiver Notes" that allow new users to register aliases without an existing ETH balance, enabling 100% isolated identity creation.
+- **Unlinked EOA Bootstrapping**: Fund brand-new, 0-ETH accounts directly from the shielded pool, breaking public on-chain links. The relayer fee already provides the trustless half of this; the remainder is client work.
+- **Hardware-Enclave Onboarding**: Seedless wallet creation using the device's Secure Enclave (WebAuthn/Passkeys), so keys are biometric-locked and unextractable. Today keys derive from an EIP-191 `personal_sign`, which works with any EVM wallet.
 
-### 3. Halias Attestation Toolkit (HAT)
+### 2. Halias Attestation Toolkit (HAT)
 A library of standardized ZK-circuits for common identity and compliance statements:
 - **Proof of Humanity**: Integrated attestations for Worldcoin, Gitcoin Passport, etc.
 - **Social Binding**: DNS/OAuth-based proofs linking `hls` names to real-world identities.
 - **Private Compliance**: Non-membership proofs against community-governed blacklists (PPOI).
 - **Financial Status**: Private proofs of on-chain activity (e.g., "Maintains > 1 ETH balance" without revealing exact balance).
 
-### 4. Extensibility & Composability
+### 3. Extensibility & Composability
 - **Standardized Public Signals**: Ensuring all verifier versions output consistent identity anchors for 3rd-party contract consumption.
 - **Plug-and-Play Verifiers**: Allowing the protocol to support new asset types (NFTs, RWA) and complex identity requirements over time.
 
@@ -40,6 +45,7 @@ A library of standardized ZK-circuits for common identity and compliance stateme
 Halias is committed to being a transparent, community-driven public good. 
 - **License**: Core circuits and contracts are GPL-3.0; SDKs and tooling are MIT.
 - **Reproducible Builds**: All ZK artifacts (WASM/ZKEY) are deterministically generated from the source code.
+- **Public Ceremony**: The production proving key will come from a multi-party ceremony with published transcripts, so no single party can forge proofs.
 - **Modular Contribution**: The Halias Attestation Toolkit (HAT) is open for community-designed schemas and verifiers.
 
 ### Build
