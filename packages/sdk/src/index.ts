@@ -19,8 +19,6 @@ export type { TransactParams } from "./contract";
 export { Halias } from "./halias";
 export type { HaliasConfig, DepositResult, SendResult, WithdrawResult, BalanceResult, LookupResult } from "./halias";
 
-export { buildPaymasterAndData } from "./paymaster";
-export type { PaymasterPath, PaymasterDataOptions } from "./paymaster";
 
 export { FileCache, BrowserCache } from "./cache";
 export type { CacheStore, CacheData } from "./cache";

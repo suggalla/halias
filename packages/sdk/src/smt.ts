@@ -55,6 +55,16 @@ export class SMT {
     this.root = current;
   }
 
+  // Snapshot used to build the tree state a pending registration WILL produce.
+  // claimInvite must prove against the post-registration root, because
+  // registerWithPoolNote registers before it verifies the proof.
+  clone(): SMT {
+    const copy = new SMT();
+    (copy as any).nodes = new Map((this as any).nodes);
+    copy.root = this.root;
+    return copy;
+  }
+
   getSiblings(key: bigint): bigint[] {
     const pathKey = key & ((1n << BigInt(REGISTRY_LEVELS)) - 1n);
     const zeros = getZeros();

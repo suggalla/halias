@@ -13,19 +13,14 @@ describe("Registry", function () {
     const poseidonT4 = await PoseidonT4.deploy();
     const TransactVerifier = await ethers.getContractFactory("TransactVerifier");
     const transactVerifier = await TransactVerifier.deploy();
-    const MockEntryPoint = await ethers.getContractFactory("MockEntryPoint");
-    const mockEntryPoint = await MockEntryPoint.deploy();
     const Halias = await ethers.getContractFactory("Halias", {
       libraries: {
         PoseidonT3: await poseidonT3.getAddress(),
         PoseidonT4: await poseidonT4.getAddress(),
       },
     });
-    const halias = await Halias.deploy(
-      await transactVerifier.getAddress(),
-      await mockEntryPoint.getAddress(),
-    );
-    return { halias, mockEntryPoint };
+    const halias = await Halias.deploy(await transactVerifier.getAddress());
+    return { halias };
   }
 
   // Valid field-element keys (pubkey = Poseidon(spendingPrivKey), but we use
@@ -573,7 +568,7 @@ describe("Registry", function () {
   // ── receive() — ETH push guard ─────────────────────────────────────────────
 
   describe("receive()", function () {
-    it("rejects direct ETH from non-EntryPoint", async function () {
+    it("rejects direct ETH transfers", async function () {
       const { halias } = await deployHalias();
       const [sender] = await ethers.getSigners();
       await expect(

@@ -38,19 +38,14 @@ describe("Halias (on-chain Transact)", function () {
     const poseidonT4 = await PoseidonT4.deploy();
     const TransactVerifier = await ethers.getContractFactory("TransactVerifier");
     const transactVerifier = await TransactVerifier.deploy();
-    const MockEntryPoint = await ethers.getContractFactory("MockEntryPoint");
-    const mockEntryPoint = await MockEntryPoint.deploy();
     const Halias = await ethers.getContractFactory("Halias", {
       libraries: {
         PoseidonT3: await poseidonT3.getAddress(),
         PoseidonT4: await poseidonT4.getAddress(),
       },
     });
-    const h = await Halias.deploy(
-      await transactVerifier.getAddress(),
-      await mockEntryPoint.getAddress(),
-    );
-    return { halias: h, mockEntryPoint };
+    const h = await Halias.deploy(await transactVerifier.getAddress());
+    return { halias: h };
   }
 
   before(async function () {

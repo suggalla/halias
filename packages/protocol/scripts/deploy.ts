@@ -12,16 +12,12 @@ import { loadDeployment, saveDeployment } from "./deployment";
  *   npx hardhat run scripts/deploy.ts --network sepolia
  *
  * Optional env:
- *   ENTRY_POINT    — ERC-4337 EntryPoint address (defaults to v0.7 canonical)
- *   STAKE_AMOUNT   — ETH to stake in EntryPoint for both Halias and HaliasPaymaster
  *                    (e.g. "0.1" — required for production bundlers, skip on local dev)
  *   VANITY_PREFIX  — hex prefix to mine (defaults to "a11a5")
  *   SKIP_VANITY=1  — skip vanity mining, deploy Halias with random salt
  */
 
 const TARGET_PREFIX = process.env.VANITY_PREFIX || "a11a5";
-const ENTRY_POINT  = process.env.ENTRY_POINT  || "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
-const STAKE_AMOUNT = process.env.STAKE_AMOUNT ? ethers.parseEther(process.env.STAKE_AMOUNT) : 0n;
 
 // poseidon-solidity ships precompiled, EIP-170-safe bytecode deployed via a deterministic
 // CREATE2 proxy to fixed addresses on every chain. We deploy through the proxy rather than
@@ -75,8 +71,7 @@ async function main() {
 
   console.log(`Deployer:     ${deployer.address}`);
   console.log(`Network:      ${process.env.HARDHAT_NETWORK || "localhost"}`);
-  console.log(`EntryPoint:   ${ENTRY_POINT}`);
-  console.log(`Stake amount: ${STAKE_AMOUNT > 0n ? ethers.formatEther(STAKE_AMOUNT) + " ETH" : "none (local dev)"}\n`);
+  console.log("");
 
   // ── Step 1: Create2Factory ──────────────────────────────────────────────────
   let factoryAddr = config.factory;
@@ -137,7 +132,7 @@ async function main() {
   const abiCoder = new AbiCoder();
   const encodedArgs = abiCoder.encode(
     ["address", "address"],
-    [verifierAddr, ENTRY_POINT]
+    [verifierAddr]
   );
   const initCode = ethers.concat([HaliasFactory.bytecode, encodedArgs]);
 
@@ -204,72 +199,6 @@ async function main() {
     saveDeployment({ halias: haliasAddr, deployTxHash: receipt?.hash, startBlock: receipt?.blockNumber });
   }
 
-  // ── Step 7: HaliasAccountImpl ──────────────────────────────────────────────
-  // Singleton EIP-7702 delegation target. One deploy shared by all users.
-  let accountImplAddr = config.haliasAccountImpl;
-  if (accountImplAddr) {
-    console.log(`[skip] HaliasAccountImpl:  ${accountImplAddr}`);
-  } else {
-    console.log("[deploy] HaliasAccountImpl...");
-    const AccountImpl = await ethers.getContractFactory("HaliasAccountImpl");
-    const impl = await AccountImpl.deploy(ENTRY_POINT);
-    const receipt = await impl.deploymentTransaction()!.wait();
-    accountImplAddr = await impl.getAddress();
-    console.log(`  -> ${accountImplAddr}`);
-    totalGasCost += logGas(receipt!);
-    saveDeployment({ haliasAccountImpl: accountImplAddr });
-  }
-
-  // ── Step 8: HaliasPaymaster ────────────────────────────────────────────────
-  let paymasterAddr = config.haliasPaymaster;
-  if (paymasterAddr) {
-    console.log(`[skip] HaliasPaymaster:    ${paymasterAddr}`);
-  } else {
-    console.log("[deploy] HaliasPaymaster...");
-    const Paymaster = await ethers.getContractFactory("HaliasPaymaster");
-    const pm = await Paymaster.deploy(ENTRY_POINT, haliasAddr);
-    const receipt = await pm.deploymentTransaction()!.wait();
-    paymasterAddr = await pm.getAddress();
-    console.log(`  -> ${paymasterAddr}`);
-    totalGasCost += logGas(receipt!);
-    saveDeployment({ haliasPaymaster: paymasterAddr });
-  }
-
-  // ── Step 9 & 10: Stake Halias + HaliasPaymaster ───────────────────────────
-  // Halias must be staked so HaliasPaymaster can read halias.registrationFee()
-  // during validatePaymasterUserOp (ERC-7562: a staked contract's storage may be
-  // read by other entities). The paymaster is staked so bundlers accept it.
-  const UNSTAKE_DELAY = 86400; // 1 day — increase to 7 days for mainnet
-  if (STAKE_AMOUNT > 0n) {
-    const halias   = await ethers.getContractAt("Halias",          haliasAddr);
-    const paymaster = await ethers.getContractAt("HaliasPaymaster", paymasterAddr);
-
-    const haliasStake = await ethers.provider.send("eth_call", [{
-      to: ENTRY_POINT,
-      data: ethers.id("getDepositInfo(address)").slice(0, 10) +
-            haliasAddr.slice(2).padStart(64, "0"),
-    }, "latest"]);
-    const alreadyStaked = haliasStake !== "0x" && BigInt(haliasStake.slice(0, 66)) > 0n;
-
-    if (alreadyStaked) {
-      console.log(`[skip] Halias stake:       already staked`);
-    } else {
-      console.log(`[stake] Halias (${ethers.formatEther(STAKE_AMOUNT)} ETH, ${UNSTAKE_DELAY}s delay)...`);
-      const tx1 = await halias.addStake(UNSTAKE_DELAY, { value: STAKE_AMOUNT });
-      totalGasCost += logGas((await tx1.wait())!);
-      console.log(`  -> staked`);
-    }
-
-    console.log(`[stake] HaliasPaymaster (${ethers.formatEther(STAKE_AMOUNT)} ETH, ${UNSTAKE_DELAY}s delay)...`);
-    const tx2 = await paymaster.addStake(UNSTAKE_DELAY, { value: STAKE_AMOUNT });
-    totalGasCost += logGas((await tx2.wait())!);
-    console.log(`  -> staked`);
-
-    saveDeployment({ stakeAmount: ethers.formatEther(STAKE_AMOUNT) });
-  } else {
-    console.log(`[skip] Staking — set STAKE_AMOUNT for production (e.g. STAKE_AMOUNT=0.1)`);
-  }
-
   // ── Summary ─────────────────────────────────────────────────────────────────
   console.log(`\n${"=".repeat(56)}`);
   console.log("Deployment complete:");
@@ -278,21 +207,11 @@ async function main() {
   console.log(`  PoseidonT4          ${poseidonT4Addr}`);
   console.log(`  TransactVerifier    ${verifierAddr}`);
   console.log(`  Halias              ${haliasAddr}`);
-  console.log(`  HaliasAccountImpl   ${accountImplAddr}`);
-  console.log(`  HaliasPaymaster     ${paymasterAddr}`);
-  console.log(`  Staked              ${STAKE_AMOUNT > 0n ? ethers.formatEther(STAKE_AMOUNT) + " ETH each" : "no (local dev)"}`);
   if (totalGasCost > 0n) console.log(`  Total gas cost      ${ethers.formatEther(totalGasCost)} ETH`);
   console.log(`${"=".repeat(56)}`);
   console.log("\nPost-deploy checklist:");
-  if (STAKE_AMOUNT === 0n) {
-    console.log("  [ ] Stake both contracts before using production bundlers:");
-    console.log(`        STAKE_AMOUNT=0.1 npx hardhat run scripts/deploy.ts --network sepolia`);
-  } else {
-    console.log(`  [x] Both contracts staked (${ethers.formatEther(STAKE_AMOUNT)} ETH each)`);
-  }
-  console.log("  [ ] Fund HaliasPaymaster EntryPoint deposit:");
-  console.log(`        entryPoint.depositTo(paymasterAddr, { value: parseEther("1") })`);
-  console.log(`  [ ] SDK config: update HALIAS_ADDRESS, ACCOUNT_IMPL_ADDRESS, PAYMASTER_ADDRESS`);
+  console.log(`  [ ] SDK config: update HALIAS_ADDRESS`);
+  console.log(`  [ ] Verify contracts on the block explorer`);
 }
 
 main().catch((error) => {
