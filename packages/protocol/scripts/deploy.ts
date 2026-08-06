@@ -1,5 +1,5 @@
 import { ethers } from "hardhat";
-import { keccak256, AbiCoder, solidityPacked, randomBytes } from "ethers";
+import { keccak256, solidityPacked, randomBytes } from "ethers";
 import { loadDeployment, saveDeployment } from "./deployment";
 
 /**
@@ -129,11 +129,10 @@ async function main() {
   const HaliasFactory = await ethers.getContractFactory("Halias", {
     libraries: { PoseidonT3: poseidonT3Addr, PoseidonT4: poseidonT4Addr },
   });
-  const abiCoder = new AbiCoder();
-  const encodedArgs = abiCoder.encode(
-    ["address", "address"],
-    [verifierAddr]
-  );
+  // Encode against the real ABI rather than a hand-written type list: the two cannot
+  // drift when the constructor changes, and a mismatch here produces an initCode that
+  // deploys a broken contract at a CREATE2 address nobody can recompute.
+  const encodedArgs = HaliasFactory.interface.encodeDeploy([verifierAddr]);
   const initCode = ethers.concat([HaliasFactory.bytecode, encodedArgs]);
 
   let salt = config.vanitySalt;
