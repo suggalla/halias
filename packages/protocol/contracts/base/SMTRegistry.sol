@@ -18,16 +18,28 @@ import "./Constants.sol";
 //
 // Birthday collision at 64 levels: P ≈ n²/2^65 — negligible at any realistic scale.
 // ---------------------------------------------------------------------------
+// Registry roots expire, unlike pool roots. The window bounds how stale a sender's view
+// of a recipient's keys may be: once someone rotates keys, a sender proving against an
+// old root would still pay the superseded (possibly compromised) key.
+//
+// The previous ring buffer expired by COUNT of registry updates, which made the real
+// window depend on registry traffic — minutes on a busy registry, years on a quiet one.
+// Recording the block a root was created gives a window in time, which is what the
+// freshness property actually needs, and makes the lookup O(1) instead of a 300-slot
+// scan that cost 726k gas to miss.
 abstract contract SMTRegistry {
     uint32 public constant REGISTRY_LEVELS = 64;
-    uint32  public constant REGISTRY_HISTORY_SIZE = 300;
+
+    // ~1 day at 12s blocks. A sender must refresh their registry view at least this
+    // often; a rotated key stops receiving after at most this long.
+    uint256 public constant REGISTRY_ROOT_MAX_AGE = 7200;
 
     error SMTCollision();
 
     bytes32 public smtRoot;
-    mapping(uint256 => bytes32) public smtRoots;
+    // root => block it became current. 0 means never seen.
+    mapping(bytes32 => uint256) public registryRootBlock;
     mapping(uint256 => bytes32) public smtKeyToAliasHash;
-    uint32 public currentSmtRootIndex = 0;
 
     // _smtNodes[level][nodePath] = node hash (0 = empty/unset, use _smtZeros[level])
     mapping(uint256 => mapping(uint256 => bytes32)) private _smtNodes;
@@ -41,7 +53,7 @@ abstract contract SMTRegistry {
         }
         _smtZeros[REGISTRY_LEVELS] = z;
         smtRoot = z;
-        smtRoots[0] = z;
+        registryRootBlock[z] = block.number;
     }
 
     // Leaf hash: Poseidon(key, value, 1) — circomlib SMTHash1.
@@ -75,22 +87,22 @@ abstract contract SMTRegistry {
             }
         }
         smtRoot = current;
-        currentSmtRootIndex = (currentSmtRootIndex + 1) % REGISTRY_HISTORY_SIZE;
-        smtRoots[currentSmtRootIndex] = current;
+        // Only record the first sighting: re-recording would silently extend the
+        // freshness window of a root that reappears after a rotate-and-revert.
+        if (registryRootBlock[current] == 0) registryRootBlock[current] = block.number;
     }
 
     function isKnownRegistryRoot(bytes32 root) public view returns (bool) {
         if (root == bytes32(0)) return false;
-        uint32 i = currentSmtRootIndex;
-        do {
-            if (smtRoots[i] == root) return true;
-            if (i == 0) i = REGISTRY_HISTORY_SIZE;
-            i--;
-        } while (i != currentSmtRootIndex);
-        return false;
+        // The current root is always acceptable, however long the registry has been
+        // idle — it is not stale, it is simply unchanged.
+        if (root == smtRoot) return true;
+        uint256 seen = registryRootBlock[root];
+        if (seen == 0) return false;
+        return block.number - seen <= REGISTRY_ROOT_MAX_AGE;
     }
 
-    // Returns all 32 SMT siblings for a given key (for off-chain proof construction).
+    // Returns all REGISTRY_LEVELS SMT siblings for a given key (for off-chain proof construction).
     function getSmtSiblings(uint256 key) external view returns (bytes32[64] memory siblings) {
         uint256 pathKey = key & ((1 << REGISTRY_LEVELS) - 1);
         for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
