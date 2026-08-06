@@ -72,6 +72,10 @@ error RescueExceedsAvailable();
 // Pool
 error DirectETHNotAllowed();
 
+// ERC-721 surface
+error UseTransferAliasWithKeys();
+error AliasApprovalsDisabled();
+
 // ── Halias ────────────────────────────────────────────────────────────────────
 
 contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
@@ -292,8 +296,8 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         bytes32 encryptionPubkey
     ) external nonReentrant {
         if (p.tokenAddress != 0)                              revert PoolNoteMustBeETH();
-        if (p.publicAmount < (FIELD_PRIME - MAX_ABS_AMOUNT))  revert NotAWithdrawal();
-        uint256 absAmount = FIELD_PRIME - p.publicAmount;
+        (bool isWithdraw, uint256 absAmount) = _payment(p.publicAmount);
+        if (!isWithdraw)                                      revert NotAWithdrawal();
         if (p.recipient != address(this))                     revert MustWithdrawToSelf();
 
         // The note covers the registration fee plus, optionally, a relayer's gas. Anything
@@ -436,10 +440,24 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         fee     = uint256(uint96(uint256(externalData)));
     }
 
+    // publicAmount is signed in the field: positive is a deposit, "negative"
+    // (p - amount) a withdrawal. Validation and settlement both need the sign and the
+    // magnitude, and they must never disagree, so the derivation lives in one place.
+    function _payment(uint256 publicAmount)
+        internal pure returns (bool isWithdraw, uint256 absAmount)
+    {
+        isWithdraw = publicAmount >= (FIELD_PRIME - MAX_ABS_AMOUNT);
+        absAmount  = isWithdraw ? FIELD_PRIME - publicAmount : publicAmount;
+    }
+
+    function _token(TransactParams calldata p) internal pure returns (address) {
+        return address(uint160(p.tokenAddress));
+    }
+
     // Cheap input validation — msg.value, destination, token sanity. Pure checks, no
     // state mutation or external calls, so it runs early (fail-fast, before the proof).
     function _checkPayment(TransactParams calldata p, bool retainToSelf) internal view {
-        bool isWithdraw = p.publicAmount >= (FIELD_PRIME - MAX_ABS_AMOUNT);
+        (bool isWithdraw, uint256 absAmount) = _payment(p.publicAmount);
 
         if (p.recipient == address(this) && !retainToSelf) revert RetainRequiresRegistration();
 
@@ -455,7 +473,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
             if (fee > 0 && relayer == address(this))  revert RelayerCannotBePool();
             // No cap beyond the outflow itself: the fee is committed in paramsHash, so it is
             // the prover's own authorised figure, not something a submitter can inflate.
-            if (fee > (FIELD_PRIME - p.publicAmount)) revert RelayerFeeExceedsWithdrawal();
+            if (fee > absAmount)                      revert RelayerFeeExceedsWithdrawal();
         }
 
         if (p.tokenAddress == 0) {
@@ -471,8 +489,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
             }
         } else {
             if (msg.value != 0) revert ERC20CannotHaveETH();
-            address token = address(uint160(p.tokenAddress));
-            if (token.code.length == 0) revert InvalidTokenAddress();
+            if (_token(p).code.length == 0) revert InvalidTokenAddress();
             if (isWithdraw && p.recipient == address(0)) revert NoDestination();
         }
     }
@@ -480,8 +497,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
     // Balance effects + external transfers — runs last (CEI), after inputs are spent
     // and outputs inserted, so settlement is safe independent of the nonReentrant guard.
     function _settlePayment(TransactParams calldata p) internal {
-        bool isWithdraw = p.publicAmount >= (FIELD_PRIME - MAX_ABS_AMOUNT);
-        uint256 absAmount = isWithdraw ? (FIELD_PRIME - p.publicAmount) : p.publicAmount;
+        (bool isWithdraw, uint256 absAmount) = _payment(p.publicAmount);
 
         if (p.tokenAddress == 0) {
             // recipient == address(this): registerWithPoolNote retains the ETH, which that
@@ -504,7 +520,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
                 emit Withdrawal(p.recipient, payout, 0);
             }
         } else {
-            address token = address(uint160(p.tokenAddress));
+            address token = _token(p);
             if (isWithdraw) {
                 poolTokenBalance[token] -= absAmount;
                 IERC20(token).safeTransfer(p.recipient, absAmount);
@@ -562,12 +578,35 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         emit AdminTransferred(old, admin);
     }
 
+    // ── ERC-721 surface ────────────────────────────────────────────────────────
+    //
+    // An alias is a token so wallets and explorers can display it, but it is not a
+    // tradeable one. A bare ERC-721 transfer would move ownership while leaving the
+    // registry leaf — and therefore the spending keys — untouched, so the previous owner
+    // could still spend notes sent to the alias afterwards. transferAliasWithKeys exists
+    // precisely to move ownership and rotate keys in one step.
+    //
+    // The approval calls are disabled for the same reason. With transfers blocked they
+    // could never authorise anything, so leaving them live would only offer a surface for
+    // sites to farm meaningless alias approvals and habituate users to signing them.
+    //
+    // safeTransferFrom(from, to, id) delegates to the 4-argument overload below, so both
+    // transfer entry points are covered.
+
     function transferFrom(address, address, uint256) public pure override {
-        revert("use transferAliasWithKeys");
+        revert UseTransferAliasWithKeys();
     }
 
     function safeTransferFrom(address, address, uint256, bytes memory) public pure override {
-        revert("use transferAliasWithKeys");
+        revert UseTransferAliasWithKeys();
+    }
+
+    function approve(address, uint256) public pure override {
+        revert AliasApprovalsDisabled();
+    }
+
+    function setApprovalForAll(address, bool) public pure override {
+        revert AliasApprovalsDisabled();
     }
 
     function _baseURI() internal view override returns (string memory) {

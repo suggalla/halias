@@ -298,7 +298,7 @@ describe("Registry", function () {
       await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
       await expect(
         halias["safeTransferFrom(address,address,uint256)"](owner.address, other.address, BigInt(aliasHash))
-      ).to.be.revertedWith("use transferAliasWithKeys");
+      ).to.be.revertedWithCustomError(halias, "UseTransferAliasWithKeys");
     });
   });
 
@@ -472,7 +472,7 @@ describe("Registry", function () {
       const [owner, other] = await ethers.getSigners();
       await expect(
         halias["transferFrom(address,address,uint256)"](owner.address, other.address, BigInt(aliasHash))
-      ).to.be.revertedWith("use transferAliasWithKeys");
+      ).to.be.revertedWithCustomError(halias, "UseTransferAliasWithKeys");
     });
   });
 
