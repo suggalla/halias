@@ -23,6 +23,15 @@ const TARGET_PREFIX = process.env.VANITY_PREFIX || "a11a5";
 const ENTRY_POINT  = process.env.ENTRY_POINT  || "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 const STAKE_AMOUNT = process.env.STAKE_AMOUNT ? ethers.parseEther(process.env.STAKE_AMOUNT) : 0n;
 
+// poseidon-solidity ships precompiled, EIP-170-safe bytecode deployed via a deterministic
+// CREATE2 proxy to fixed addresses on every chain. We deploy through the proxy rather than
+// recompiling from source (our viaIR settings bloat the libs past the 24,576-byte limit).
+const poseidon = require("poseidon-solidity") as {
+  proxy: { from: string; gas: bigint | number | string; tx: string; address: string };
+  PoseidonT3: { address: string; data: string };
+  PoseidonT4: { address: string; data: string };
+};
+
 function logGas(receipt: { gasUsed: bigint; gasPrice: bigint }): bigint {
   const cost = receipt.gasUsed * receipt.gasPrice;
   console.log(`  gas:  ${receipt.gasUsed.toLocaleString()} @ ${ethers.formatUnits(receipt.gasPrice, "gwei")} gwei = ${ethers.formatEther(cost)} ETH`);
@@ -35,6 +44,28 @@ async function deploy(name: string, factory: any, ...args: any[]): Promise<strin
   const addr = await contract.getAddress();
   console.log(`  -> ${addr}`);
   return addr;
+}
+
+// Deploy a poseidon-solidity library at its canonical address via the deterministic proxy.
+// Idempotent: skips if the library (or proxy) already has code on-chain.
+async function deployPoseidonLib(name: string, lib: { address: string; data: string }): Promise<string> {
+  const [sender] = await ethers.getSigners();
+
+  // Ensure the deterministic deployment proxy exists (present on virtually every chain).
+  if (await ethers.provider.getCode(poseidon.proxy.address) === "0x") {
+    console.log("  [proxy] funding keyless deployer + deploying CREATE2 proxy...");
+    await (await sender.sendTransaction({ to: poseidon.proxy.from, value: BigInt(poseidon.proxy.gas) })).wait();
+    await (await ethers.provider.broadcastTransaction(poseidon.proxy.tx)).wait();
+  }
+
+  if (await ethers.provider.getCode(lib.address) !== "0x") {
+    console.log(`  [skip] ${name} already deployed: ${lib.address}`);
+    return lib.address;
+  }
+
+  await (await sender.sendTransaction({ to: poseidon.proxy.address, data: lib.data })).wait();
+  console.log(`  -> ${name} ${lib.address}`);
+  return lib.address;
 }
 
 async function main() {
@@ -62,33 +93,23 @@ async function main() {
     saveDeployment({ deployer: deployer.address, factory: factoryAddr });
   }
 
-  // ── Step 2: PoseidonT3 ──────────────────────────────────────────────────────
+  // ── Step 2: PoseidonT3 (deterministic proxy → canonical address) ─────────────
   let poseidonT3Addr = config.poseidonT3;
   if (poseidonT3Addr) {
     console.log(`[skip] PoseidonT3:         ${poseidonT3Addr}`);
   } else {
-    console.log("[deploy] PoseidonT3...");
-    const PoseidonT3 = await ethers.getContractFactory("PoseidonT3");
-    const t3 = await PoseidonT3.deploy();
-    const receipt = await t3.deploymentTransaction()!.wait();
-    poseidonT3Addr = await t3.getAddress();
-    console.log(`  -> ${poseidonT3Addr}`);
-    totalGasCost += logGas(receipt!);
+    console.log("[deploy] PoseidonT3 (via deterministic proxy)...");
+    poseidonT3Addr = await deployPoseidonLib("PoseidonT3", poseidon.PoseidonT3);
     saveDeployment({ poseidonT3: poseidonT3Addr });
   }
 
-  // ── Step 3: PoseidonT4 ──────────────────────────────────────────────────────
+  // ── Step 3: PoseidonT4 (deterministic proxy → canonical address) ─────────────
   let poseidonT4Addr = config.poseidonT4;
   if (poseidonT4Addr) {
     console.log(`[skip] PoseidonT4:         ${poseidonT4Addr}`);
   } else {
-    console.log("[deploy] PoseidonT4...");
-    const PoseidonT4 = await ethers.getContractFactory("PoseidonT4");
-    const t4 = await PoseidonT4.deploy();
-    const receipt = await t4.deploymentTransaction()!.wait();
-    poseidonT4Addr = await t4.getAddress();
-    console.log(`  -> ${poseidonT4Addr}`);
-    totalGasCost += logGas(receipt!);
+    console.log("[deploy] PoseidonT4 (via deterministic proxy)...");
+    poseidonT4Addr = await deployPoseidonLib("PoseidonT4", poseidon.PoseidonT4);
     saveDeployment({ poseidonT4: poseidonT4Addr });
   }
 

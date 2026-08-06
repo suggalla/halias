@@ -13,7 +13,7 @@ const TRANSACT_ZKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony
 const TRANSACT_VKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/verification_key.json");
 
 const POOL_LEVELS = 32;
-const REGISTRY_LEVELS = 32;
+const REGISTRY_LEVELS = 64;
 const ETH_TOKEN = 0n;
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
@@ -47,7 +47,7 @@ describe("Transact Circuit", function () {
   }
 
   function computeNullifier(nullifierKey: bigint, leafIndex: number): bigint {
-    return poseidonHash([nullifierKey, BigInt(leafIndex)]);
+    return poseidonHash([nullifierKey, BigInt(leafIndex), 1314148940n]); // NULLIFIER_DOMAIN ("NULL")
   }
 
   // Register a keypair into the local SMT (mirroring what the contract does).

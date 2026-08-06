@@ -1,6 +1,6 @@
 import { poseidonHash } from "./crypto";
 
-const REGISTRY_LEVELS = 32;
+const REGISTRY_LEVELS = 64;
 
 // Lazily computed: zeros[i] = hash of an empty subtree of height i.
 // zeros[0] = 0n (sentinel for empty leaf), zeros[i+1] = Poseidon(zeros[i], zeros[i]).
@@ -27,8 +27,10 @@ function smtHash2(left: bigint, right: bigint): bigint {
   return poseidonHash([left, right]);
 }
 
-// Sparse Merkle Tree (32 levels) mirroring Halias.sol _smtUpdate/_smtZeros.
+// Sparse Merkle Tree (64 levels) mirroring Halias.sol _smtUpdate/_smtZeros.
 // Key = aliasHash % FIELD_PRIME. Value = RegistryLeaf hash.
+// Tree navigation uses the low REGISTRY_LEVELS bits of the key (matches the contract's
+// smtKey mask and the circuit's pathIndices); the full key stays in the leaf hash.
 // Supports in-place updates (key rotation, alias transfer).
 export class SMT {
   private nodes = new Map<string, bigint>();
@@ -39,10 +41,11 @@ export class SMT {
   }
 
   update(key: bigint, value: bigint): void {
+    const pathKey = key & ((1n << BigInt(REGISTRY_LEVELS)) - 1n);
     const zeros = getZeros();
     let current = smtHash1(key, value);
     for (let i = 0; i < REGISTRY_LEVELS; i++) {
-      const nodePath    = key >> BigInt(i);
+      const nodePath    = pathKey >> BigInt(i);
       const siblingPath = nodePath ^ 1n;
       const isRight     = (nodePath & 1n) === 1n;
       const sibling     = this.nodes.get(`${i}:${siblingPath}`) ?? zeros[i];
@@ -53,9 +56,10 @@ export class SMT {
   }
 
   getSiblings(key: bigint): bigint[] {
+    const pathKey = key & ((1n << BigInt(REGISTRY_LEVELS)) - 1n);
     const zeros = getZeros();
     return Array.from({ length: REGISTRY_LEVELS }, (_, i) => {
-      const siblingPath = (key >> BigInt(i)) ^ 1n;
+      const siblingPath = (pathKey >> BigInt(i)) ^ 1n;
       return this.nodes.get(`${i}:${siblingPath}`) ?? zeros[i];
     });
   }

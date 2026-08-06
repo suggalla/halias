@@ -11,7 +11,7 @@ import {
   decodeOutputBlob,
 } from "../src/crypto";
 import { MerkleTree } from "../src/merkle";
-import { buildEntry, computeNullifier, ETH_TOKEN_ADDRESS } from "../src/entry";
+import { buildEntry, computeNullifier, NULLIFIER_DOMAIN, ETH_TOKEN_ADDRESS } from "../src/entry";
 import { findMyOutputs, Output } from "../src/events";
 
 before(async () => {
@@ -160,7 +160,7 @@ describe("entry", () => {
     const n0 = computeNullifier(nullifierKey, 0);
     const n1 = computeNullifier(nullifierKey, 1);
     expect(n0).to.not.equal(n1);
-    expect(n0).to.equal(poseidonHash([nullifierKey, 0n]));
+    expect(n0).to.equal(poseidonHash([nullifierKey, 0n, NULLIFIER_DOMAIN]));
   });
 
   it("different pubkey gives different commitment", () => {
