@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { randomBytes } from "crypto";
+import { randomBytes, toHex } from "./random";
 import { poseidonHash } from "./crypto";
 import { computeNullifier } from "./entry";
 
@@ -102,8 +102,8 @@ const DUMMY_IDX_START = (1 << 30);
 
 export function dummyInput(leafIndex: number = 0, poolLevels: number = POOL_LEVELS): DummyInput {
   const finalIdx = DUMMY_IDX_START + leafIndex;
-  const spendingPrivKey = BigInt("0x" + randomBytes(31).toString("hex"));
-  const viewingPrivKey  = BigInt("0x" + randomBytes(31).toString("hex"));
+  const spendingPrivKey = BigInt("0x" + toHex(randomBytes(31)));
+  const viewingPrivKey  = BigInt("0x" + toHex(randomBytes(31)));
   const nullifierKey    = poseidonHash([viewingPrivKey]);
   const nullifier       = computeNullifier(nullifierKey, finalIdx);
   return {
