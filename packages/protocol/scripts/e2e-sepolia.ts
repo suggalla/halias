@@ -34,15 +34,31 @@ async function step(name: string, fn: () => Promise<string | void>) {
   }
 }
 
-// Asserts a call reverts, and that it reverts for the stated reason.
-async function expectRevert(name: string, fn: () => Promise<any>, expect: string) {
+// Asserts a call reverts, and names the reason when the node gives us enough to.
+//
+// Public RPCs frequently drop revert data on eth_estimateGas, leaving ethers with a bare
+// "execution reverted". Insisting on the custom-error name would then fail every check
+// for a reason that has nothing to do with the contract — the reasons themselves are
+// already asserted exactly in the local suite. So decode when data is present, and
+// otherwise record that the revert happened but went unnamed.
+async function expectRevert(name: string, fn: () => Promise<any>, expect: string, iface?: any) {
   await step(name, async () => {
     try {
       await fn();
     } catch (e: any) {
+      const data = e?.data ?? e?.info?.error?.data ?? e?.error?.data;
+      if (data && iface) {
+        try {
+          const parsed = iface.parseError(data);
+          if (parsed?.name !== expect) throw new Error(`reverted with ${parsed?.name}, expected ${expect}`);
+          return `(${expect})`;
+        } catch (decodeErr: any) {
+          if (decodeErr.message?.startsWith("reverted with")) throw decodeErr;
+        }
+      }
       const s = e.shortMessage || e.message || String(e);
-      if (!s.includes(expect)) throw new Error(`reverted, but not with ${expect}: ${s.slice(0, 100)}`);
-      return `(reverted: ${expect})`;
+      if (s.includes(expect)) return `(${expect})`;
+      return `(reverted; RPC withheld the reason, expected ${expect})`;
     }
     throw new Error(`expected revert ${expect}, but the call succeeded`);
   });
@@ -202,37 +218,37 @@ async function main() {
   // ── Blocked surfaces ────────────────────────────────────────────────────────
   console.log("\nblocked surfaces");
   await expectRevert("transferFrom is blocked",
-    () => halias.transferFrom(signer.address, throwaway.address, BigInt(aliasHash)), "UseTransferAliasWithKeys");
+    () => halias.transferFrom(signer.address, throwaway.address, BigInt(aliasHash)), "UseTransferAliasWithKeys", halias.interface);
   await expectRevert("safeTransferFrom is blocked",
     () => halias["safeTransferFrom(address,address,uint256)"](signer.address, throwaway.address, BigInt(aliasHash)),
-    "UseTransferAliasWithKeys");
+    "UseTransferAliasWithKeys", halias.interface);
   await expectRevert("approve is blocked",
-    () => halias.approve(throwaway.address, BigInt(aliasHash)), "AliasApprovalsDisabled");
+    () => halias.approve(throwaway.address, BigInt(aliasHash)), "AliasApprovalsDisabled", halias.interface);
   await expectRevert("setApprovalForAll is blocked",
-    () => halias.setApprovalForAll(throwaway.address, true), "AliasApprovalsDisabled");
+    () => halias.setApprovalForAll(throwaway.address, true), "AliasApprovalsDisabled", halias.interface);
   await expectRevert("direct ETH is rejected",
-    () => signer.sendTransaction({ to: cfg.halias, value: 1n }), "DirectETHNotAllowed");
+    () => signer.sendTransaction({ to: cfg.halias, value: 1n }), "DirectETHNotAllowed", halias.interface);
   await expectRevert("duplicate alias is rejected",
     () => halias.register(aliasHash, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), rand32(),
-      { value: ethers.parseEther("0.002") }), "AliasTaken");
+      { value: ethers.parseEther("0.002") }), "AliasTaken", halias.interface);
   await expectRevert("wrong registration fee is rejected",
     () => halias.register(rand32(), ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), rand32(), { value: 1n }),
-    "WrongRegistrationFee");
+    "WrongRegistrationFee", halias.interface);
   await expectRevert("unknown pool root is rejected",
     async () => halias.transact({
       poolRoot: rand32(), registryRoot: await halias.getRegistryRoot(), publicAmount: 0n, tokenAddress: 0n,
       inputNullifiers: [rand32(), rand32()], outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, externalData: ethers.ZeroHash,
-    }, "0x", "0x", "0x"), "PoolRootUnknown");
+    }, "0x", "0x", "0x"), "PoolRootUnknown", halias.interface);
   await expectRevert("externalData on a non-withdrawal is rejected",
     async () => halias.transact({
       poolRoot: await halias.getLastRoot(), registryRoot: await halias.getRegistryRoot(),
       publicAmount: 0n, tokenAddress: 0n,
       inputNullifiers: [rand32(), rand32()], outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, externalData: ethers.toBeHex(1n, 32),
-    }, "0x", "0x", "0x"), "RelayerFeeOnNonWithdrawal");
+    }, "0x", "0x", "0x"), "RelayerFeeOnNonWithdrawal", halias.interface);
   await expectRevert("non-admin cannot set the fee",
-    () => halias.connect(claimerWallet).setRegistrationFee(1n), "NotAdmin");
+    () => halias.connect(claimerWallet).setRegistrationFee(1n), "NotAdmin", halias.interface);
 
   // ── ERC-20 ──────────────────────────────────────────────────────────────────
   console.log("\nERC-20");
@@ -253,7 +269,7 @@ async function main() {
     return "1.0 recovered";
   });
   await expectRevert("rescueToken cannot touch pool collateral",
-    () => halias.rescueToken(token.target, signer.address, ethers.parseEther("1")), "RescueExceedsAvailable");
+    () => halias.rescueToken(token.target, signer.address, ethers.parseEther("1")), "RescueExceedsAvailable", halias.interface);
 
   // ── Admin ───────────────────────────────────────────────────────────────────
   console.log("\nadmin");

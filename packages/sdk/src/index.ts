@@ -22,3 +22,7 @@ export type { HaliasConfig, DepositResult, SendResult, WithdrawResult, BalanceRe
 
 export { FileCache, BrowserCache } from "./cache";
 export type { CacheStore, CacheData } from "./cache";
+
+// Exported so the protocol package can assert these match the compiled contract.
+export { TRANSACT_ABI, REGISTRY_ABI } from "./events";
+export { HALIAS_ABI } from "./contract";

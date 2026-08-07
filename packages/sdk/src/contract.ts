@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
-const HALIAS_ABI = [
+export const HALIAS_ABI = [
   // Core operation — deposit (publicAmount > 0), transfer (= 0), withdraw (field-negative)
   "function transact((bytes32 poolRoot, bytes32 registryRoot, uint256 publicAmount, uint256 tokenAddress, bytes32[2] inputNullifiers, bytes32[2] outputCommitments, address recipient, bytes32 externalData) p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof) external payable",
   // Alias registry

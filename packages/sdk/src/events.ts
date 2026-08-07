@@ -4,10 +4,10 @@ import { SMT, aliasHashToSmtKey } from "./smt";
 import { buildEntry, computeNullifier, OwnedEntry, ETH_TOKEN_ADDRESS } from "./entry";
 import { decodeOutputBlob, tryDecryptOutput, poseidonHash } from "./crypto";
 
-const TRANSACT_ABI = [
-  "event Transact(uint256 publicAmount, uint256 tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
+export const TRANSACT_ABI = [
+  "event Transact(uint256 publicAmount, uint256 indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
 ];
-const REGISTRY_ABI = [
+export const REGISTRY_ABI = [
   "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 registryLeafHash, bytes32 encryptionPubkey)",
   "event KeysUpdated(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 registryLeafHash, bytes32 encryptionPubkey)",
   "event AliasDataUpdated(bytes32 indexed aliasHash, bytes32 newDataHash, bytes32 newLeafHash)",
