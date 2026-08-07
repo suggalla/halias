@@ -1,6 +1,7 @@
 import { ethers } from "hardhat";
 import { keccak256, solidityPacked, randomBytes } from "ethers";
 import { loadDeployment, saveDeployment } from "./deployment";
+import { buildHaliasInitCode } from "./haliasInitCode";
 
 /**
  * Master deployment script — deploys the full Halias v1.5 stack.
@@ -12,7 +13,6 @@ import { loadDeployment, saveDeployment } from "./deployment";
  *   npx hardhat run scripts/deploy.ts --network sepolia
  *
  * Optional env:
- *                    (e.g. "0.1" — required for production bundlers, skip on local dev)
  *   VANITY_PREFIX  — hex prefix to mine (defaults to "a11a5")
  *   SKIP_VANITY=1  — skip vanity mining, deploy Halias with random salt
  */
@@ -126,14 +126,12 @@ async function main() {
   // ── Step 5: Mine vanity salt for Halias ────────────────────────────────────
   // initCode embeds PoseidonT3 + PoseidonT4 addresses (external library linking),
   // so salt must be (re)mined whenever either library is redeployed.
-  const HaliasFactory = await ethers.getContractFactory("Halias", {
-    libraries: { PoseidonT3: poseidonT3Addr, PoseidonT4: poseidonT4Addr },
+  const { initCode, initCodeHash } = await buildHaliasInitCode({
+    poseidonT3: poseidonT3Addr,
+    poseidonT4: poseidonT4Addr,
+    transactVerifier: verifierAddr,
+    admin: deployer.address,
   });
-  // Encode against the real ABI rather than a hand-written type list: the two cannot
-  // drift when the constructor changes, and a mismatch here produces an initCode that
-  // deploys a broken contract at a CREATE2 address nobody can recompute.
-  const encodedArgs = HaliasFactory.interface.encodeDeploy([verifierAddr, deployer.address]);
-  const initCode = ethers.concat([HaliasFactory.bytecode, encodedArgs]);
 
   let salt = config.vanitySalt;
   if (salt) {
@@ -144,7 +142,6 @@ async function main() {
     saveDeployment({ vanitySalt: salt });
   } else {
     console.log(`[mine] Searching for 0x${TARGET_PREFIX}... prefix`);
-    const initCodeHash = keccak256(initCode);
     let attempts = 0;
     const startTime = Date.now();
     let lastReport = startTime;
