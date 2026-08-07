@@ -42,7 +42,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
 
       const data = await halias.aliases(aliasHash);
       expect(data.spendingPubkey).to.equal(spendingPubkey);
@@ -55,7 +55,7 @@ describe("Registry", function () {
       const [owner] = await ethers.getSigners();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
 
       expect(await halias.ownerOf(BigInt(aliasHash))).to.equal(owner.address);
     });
@@ -65,7 +65,7 @@ describe("Registry", function () {
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("bob.hls"));
       const expectedLeaf = ethers.toBeHex(registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)), 32);
 
-      await expect(halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE }))
+      await expect(halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE }))
         .to.emit(halias, "AliasRegistered")
         .withArgs(aliasHash, spendingPubkey, expectedLeaf, encryptionPubkey, 1); // slot 1 = first alias, stored offset by one
     });
@@ -75,7 +75,7 @@ describe("Registry", function () {
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("bob.hls"));
 
       await expect(
-        halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: ethers.parseEther("0.001") })
+        halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: ethers.parseEther("0.001") })
       ).to.be.revertedWithCustomError(halias, "WrongRegistrationFee");
     });
 
@@ -85,7 +85,7 @@ describe("Registry", function () {
       const oversized = ethers.toBeHex(FIELD_PRIME, 32);
 
       await expect(
-        halias.register(aliasHash, oversized, nullifierKey, encryptionPubkey, { value: REGISTRATION_FEE })
+        halias.register(aliasHash, oversized, nullifierKey, encryptionPubkey, "", { value: REGISTRATION_FEE })
       ).to.be.revertedWithCustomError(halias, "PubkeyOutOfField");
     });
 
@@ -101,10 +101,10 @@ describe("Registry", function () {
 
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("charlie.hls"));
       await expect(
-        halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE })
+        halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE })
       ).to.be.revertedWithCustomError(halias, "WrongRegistrationFee");
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: newFee });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: newFee });
     });
 
     it("should reject fee update from non-admin", async function () {
@@ -120,9 +120,9 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await expect(
-        halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE })
+        halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE })
       ).to.be.revertedWithCustomError(halias, "AliasTaken");
     });
   });
@@ -137,7 +137,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await halias.updateKeys(aliasHash, newNullifierKeyHash, newEncryptionPubkey);
 
       const data = await halias.aliases(aliasHash);
@@ -150,7 +150,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       const expectedLeaf = ethers.toBeHex(registryLeaf(BigInt(spendingPubkey), BigInt(newNullifierKey)), 32);
       await expect(halias.updateKeys(aliasHash, newNullifierKeyHash, newEncryptionPubkey))
         .to.emit(halias, "KeysUpdated")
@@ -163,7 +163,7 @@ describe("Registry", function () {
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
       const key = aliasHashToKey(aliasHash);
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
       smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
 
@@ -181,7 +181,7 @@ describe("Registry", function () {
       const [, other] = await ethers.getSigners();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await expect(
         halias.connect(other).updateKeys(aliasHash, newNullifierKeyHash, newEncryptionPubkey)
       ).to.be.revertedWithCustomError(halias, "NotAliasOwner");
@@ -192,7 +192,7 @@ describe("Registry", function () {
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
       const oversized = ethers.toBeHex(FIELD_PRIME, 32);
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await expect(
         halias.updateKeys(aliasHash, oversized, newEncryptionPubkey)
       ).to.be.revertedWithCustomError(halias, "NullifierKeyHashOutOfField");
@@ -202,7 +202,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await expect(
         halias.updateKeys(aliasHash, newNullifierKeyHash, ethers.ZeroHash)
       ).to.be.revertedWithCustomError(halias, "InvalidEncryptionPubkey");
@@ -221,7 +221,7 @@ describe("Registry", function () {
       const [owner, newOwner] = await ethers.getSigners();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
 
       const expectedLeaf = ethers.toBeHex(registryLeaf(BigInt(newSpendingPubkey), BigInt(newNullifierKey)), 32);
       await expect(
@@ -244,7 +244,7 @@ describe("Registry", function () {
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
       const key = aliasHashToKey(aliasHash);
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
       smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
 
@@ -260,7 +260,7 @@ describe("Registry", function () {
       const [, other] = await ethers.getSigners();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await expect(
         halias.connect(other).transferAliasWithKeys(aliasHash, other.address, newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey)
       ).to.be.revertedWithCustomError(halias, "NotAliasOwner");
@@ -270,7 +270,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await expect(
         halias.transferAliasWithKeys(aliasHash, ethers.ZeroAddress, newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey)
       ).to.be.revertedWithCustomError(halias, "InvalidOwner");
@@ -283,7 +283,7 @@ describe("Registry", function () {
       const rotatedNullifierHash = ethers.toBeHex(toNullifierKeyHash(0xeeen), 32);
       const rotatedEncPubkey     = ethers.toBeHex(0xfffn, 32);
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await halias.transferAliasWithKeys(aliasHash, newOwner.address, newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey);
 
       await expect(
@@ -299,7 +299,7 @@ describe("Registry", function () {
       const [owner, other] = await ethers.getSigners();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       await expect(
         halias["safeTransferFrom(address,address,uint256)"](owner.address, other.address, BigInt(aliasHash))
       ).to.be.revertedWithCustomError(halias, "UseTransferAliasWithKeys");
@@ -329,7 +329,7 @@ describe("Registry", function () {
           aliasHash,
           ethers.toBeHex(a.pubkey, 32),
           ethers.toBeHex(toNullifierKeyHash(a.nk), 32),
-          encryptionPubkey,
+          encryptionPubkey, "",
           { value: REGISTRATION_FEE }
         );
         // Slots are handed out in registration order, so the local mirror follows the
@@ -350,7 +350,7 @@ describe("Registry", function () {
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
       const key = aliasHashToKey(aliasHash);
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
       smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
 
@@ -366,7 +366,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       const rootAfterRegister = await halias.getRegistryRoot();
 
       await halias.updateKeys(aliasHash, ethers.toBeHex(0x9999n, 32), ethers.toBeHex(0xaaaan, 32));
@@ -382,7 +382,7 @@ describe("Registry", function () {
     it("rejects zero aliasHash", async function () {
       const { halias } = await deployHalias();
       await expect(
-        halias.register(ethers.ZeroHash, spendingPubkey, nullifierKey, encryptionPubkey, { value: REGISTRATION_FEE })
+        halias.register(ethers.ZeroHash, spendingPubkey, nullifierKey, encryptionPubkey, "", { value: REGISTRATION_FEE })
       ).to.be.revertedWithCustomError(halias, "InvalidAliasHash");
     });
 
@@ -390,7 +390,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
       await expect(
-        halias.register(aliasHash, ethers.ZeroHash, nullifierKey, encryptionPubkey, { value: REGISTRATION_FEE })
+        halias.register(aliasHash, ethers.ZeroHash, nullifierKey, encryptionPubkey, "", { value: REGISTRATION_FEE })
       ).to.be.revertedWithCustomError(halias, "InvalidSpendingPubkey");
     });
 
@@ -398,7 +398,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
       await expect(
-        halias.register(aliasHash, spendingPubkey, ethers.ZeroHash, encryptionPubkey, { value: REGISTRATION_FEE })
+        halias.register(aliasHash, spendingPubkey, ethers.ZeroHash, encryptionPubkey, "", { value: REGISTRATION_FEE })
       ).to.be.revertedWithCustomError(halias, "InvalidNullifierKeyHash");
     });
 
@@ -406,7 +406,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
       await expect(
-        halias.register(aliasHash, spendingPubkey, nullifierKey, ethers.ZeroHash, { value: REGISTRATION_FEE })
+        halias.register(aliasHash, spendingPubkey, nullifierKey, ethers.ZeroHash, "", { value: REGISTRATION_FEE })
       ).to.be.revertedWithCustomError(halias, "InvalidEncryptionPubkey");
     });
 
@@ -415,7 +415,7 @@ describe("Registry", function () {
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
       const oversized = ethers.toBeHex(FIELD_PRIME, 32);
       await expect(
-        halias.register(aliasHash, spendingPubkey, oversized, encryptionPubkey, { value: REGISTRATION_FEE })
+        halias.register(aliasHash, spendingPubkey, oversized, encryptionPubkey, "", { value: REGISTRATION_FEE })
       ).to.be.revertedWithCustomError(halias, "NullifierKeyHashOutOfField");
     });
   });
@@ -432,7 +432,7 @@ describe("Registry", function () {
     async function registerAlice() {
       const { halias } = await deployHalias();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       return { halias, aliasHash };
     }
 
@@ -536,7 +536,7 @@ describe("Registry", function () {
       const [owner, recipient] = await ethers.getSigners();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       const accumulated = await halias.accumulatedFees();
       expect(accumulated).to.be.gt(0n);
 
@@ -550,7 +550,7 @@ describe("Registry", function () {
       const { halias } = await deployHalias();
       const [owner, recipient] = await ethers.getSigners();
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       const accumulated = await halias.accumulatedFees();
       await expect(halias.withdrawFees(recipient.address, accumulated))
         .to.emit(halias, "FeesWithdrawn")
@@ -568,7 +568,7 @@ describe("Registry", function () {
       await halias.setBaseTokenURI("https://halias.xyz/nft/");
       // Mint a token so tokenURI is callable
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
-      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
+      await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, "", { value: REGISTRATION_FEE });
       const tokenId = BigInt(aliasHash);
       expect(await halias.tokenURI(tokenId)).to.equal("https://halias.xyz/nft/" + tokenId.toString());
     });

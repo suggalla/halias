@@ -76,7 +76,7 @@ describe("ERC-20", function () {
       aliasHash,
       ethers.toBeHex(3n, 32),
       ethers.toBeHex(toNullifierKeyHash(5n), 32),
-      ethers.keccak256(ethers.randomBytes(32)),
+      ethers.keccak256(ethers.randomBytes(32)), "",
       { value: REGISTRATION_FEE }
     );
     const key  = aliasHashToKey(aliasHash);

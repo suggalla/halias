@@ -169,7 +169,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
       aliasHash,
       ethers.toBeHex(pubkey, 32),
       ethers.toBeHex(toNullifierKeyHash(nullifierKey), 32),
-      ethers.keccak256(ethers.randomBytes(32)),
+      ethers.keccak256(ethers.randomBytes(32)), "",
       { value: REGISTRATION_FEE },
     );
     const key  = aliasHashToKey(aliasHash);
@@ -285,6 +285,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
       ethers.toBeHex(own.pubkey, 32),
       ethers.toBeHex(ownNKHash, 32),
       ethers.keccak256(ethers.randomBytes(32)),
+      "",
     );
     return { tx, aliasHash, own, ownKey, nullifier, postSMT, changeAmt, params, proofBytes };
   }
@@ -370,6 +371,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
         ethers.toBeHex(own.pubkey, 32),
         ethers.toBeHex(toNullifierKeyHash(own.nullifierKey), 32),
         ethers.keccak256(ethers.randomBytes(32)),
+        "",
       ),
     ).to.be.revertedWithCustomError(halias, "PoolNoteWrongFee");
   });
@@ -384,6 +386,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
         ethers.toBeHex(own.pubkey, 32),
         ethers.toBeHex(toNullifierKeyHash(own.nullifierKey), 32),
         ethers.keccak256(ethers.randomBytes(32)),
+        "",
       ),
     ).to.be.revertedWithCustomError(halias, "RelayerCannotBePool");
   });
@@ -398,6 +401,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
         ethers.toBeHex(own.pubkey, 32),
         ethers.toBeHex(toNullifierKeyHash(own.nullifierKey), 32),
         ethers.keccak256(ethers.randomBytes(32)),
+        "",
       ),
     ).to.be.revertedWithCustomError(halias, "NoDestination");
   });
@@ -447,7 +451,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
         { ...ZERO_PARAMS, publicAmount: ethers.parseEther("1"), recipient: haliasAddress },
         "0x", "0x", "0x",
         ethers.keccak256(ethers.randomBytes(32)),
-        ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.keccak256(ethers.randomBytes(32)),
+        ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.keccak256(ethers.randomBytes(32)), "",
       ),
     ).to.be.revertedWithCustomError(halias, "NotAWithdrawal");
   });
@@ -458,7 +462,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
         { ...ZERO_PARAMS, tokenAddress: 1n, publicAmount: FIELD_PRIME - REGISTRATION_FEE, recipient: haliasAddress },
         "0x", "0x", "0x",
         ethers.keccak256(ethers.randomBytes(32)),
-        ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.keccak256(ethers.randomBytes(32)),
+        ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.keccak256(ethers.randomBytes(32)), "",
       ),
     ).to.be.revertedWithCustomError(halias, "PoolNoteMustBeETH");
   });
@@ -469,7 +473,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
         { ...ZERO_PARAMS, publicAmount: FIELD_PRIME - REGISTRATION_FEE, recipient: claimer.address },
         "0x", "0x", "0x",
         ethers.keccak256(ethers.randomBytes(32)),
-        ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.keccak256(ethers.randomBytes(32)),
+        ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.keccak256(ethers.randomBytes(32)), "",
       ),
     ).to.be.revertedWithCustomError(halias, "MustWithdrawToSelf");
   });

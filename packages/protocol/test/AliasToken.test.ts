@@ -19,7 +19,7 @@ describe("Alias token surface", function () {
 
     aliasHash = ethers.keccak256(ethers.randomBytes(32));
     await halias.register(
-      aliasHash, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.keccak256(ethers.randomBytes(32)),
+      aliasHash, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.keccak256(ethers.randomBytes(32)), "",
       { value: await halias.registrationFee() },
     );
   });

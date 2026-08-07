@@ -15,7 +15,7 @@ describe("Root history", function () {
 
   async function registerSomething() {
     await halias.register(
-      randRoot(), ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), randRoot(),
+      randRoot(), ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), randRoot(), "",
       { value: await halias.registrationFee() },
     );
   }

@@ -190,7 +190,7 @@ describe("Halias (on-chain Transact)", function () {
       aliasHash,
       ethers.toBeHex(pubkey, 32),
       ethers.toBeHex(toNullifierKeyHash(nullifierKey), 32),  // contract expects hash
-      ethers.keccak256(ethers.randomBytes(32)),
+      ethers.keccak256(ethers.randomBytes(32)), "",
       { value: REGISTRATION_FEE }
     );
     const key  = aliasHashToKey(aliasHash);
@@ -305,7 +305,7 @@ describe("Halias (on-chain Transact)", function () {
       const aliasHash = ethers.keccak256(ethers.randomBytes(32));
       await localHalias.register(
         aliasHash, ethers.toBeHex(pubkey, 32), ethers.toBeHex(toNullifierKeyHash(nk), 32),
-        ethers.keccak256(ethers.randomBytes(32)),
+        ethers.keccak256(ethers.randomBytes(32)), "",
         { value: REGISTRATION_FEE }
       );
       const key  = aliasHashToKey(aliasHash);
