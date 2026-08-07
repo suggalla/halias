@@ -46,7 +46,14 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(grep -iA6 \"deploy\\\\|deterministic\\\\|address\\\\|0x\" node_modules/poseidon-solidity/README.md)",
-      "Bash(SKIP_VANITY=1 npx hardhat run scripts/deploy.ts)"
+      "Bash(SKIP_VANITY=1 npx hardhat run scripts/deploy.ts)",
+      "Bash(NODE_OPTIONS=\"--max-old-space-size=12288\" npx hardhat coverage)",
+      "Read(//tmp/**)",
+      "Bash(pkill -f \"hardhat coverage\")",
+      "Bash(pkill -f solidity-coverage)",
+      "Bash(sync)",
+      "Bash(cp contracts/Halias.sol /tmp/Halias.bak)",
+      "Bash(cp contracts/base/SMTRegistry.sol /tmp/SMTRegistry.bak2)"
     ]
   }
 }
