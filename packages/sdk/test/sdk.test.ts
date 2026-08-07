@@ -15,6 +15,10 @@ import { buildEntry, computeNullifier, NULLIFIER_DOMAIN, ETH_TOKEN_ADDRESS } fro
 import { findMyOutputs, Output } from "../src/events";
 import { Halias } from "../src/halias";
 import { SMT } from "../src/smt";
+import {
+  deriveInviteKeys, packRelayerFee, unpackRelayerFee,
+  encodeInviteCode, decodeInviteCode,
+} from "../src/invite";
 
 before(async () => {
   await init();
@@ -262,5 +266,97 @@ describe("SMT lazy root", () => {
     b.update(2n, 99n);
     expect(a.root).to.equal(snapshot);
     expect(b.root).to.not.equal(snapshot);
+  });
+});
+
+// invite.ts is the newest code in the package and had no tests at all. Its byte layout is
+// a cross-package contract: packRelayerFee must produce exactly what Halias._decodeRelayerFee
+// reads back, or a claimer silently pays the wrong relayer — or nobody.
+describe("invite keys", () => {
+  it("derives deterministically from the secret", () => {
+    const s = 0xdeadbeefn;
+    const a = deriveInviteKeys(s), b = deriveInviteKeys(s);
+    expect(a.spendingPubkey).to.equal(b.spendingPubkey);
+    expect(a.nullifierKey).to.equal(b.nullifierKey);
+    expect(a.blinding).to.equal(b.blinding);
+    expect(ethers.hexlify(a.encryption.publicKey)).to.equal(ethers.hexlify(b.encryption.publicKey));
+  });
+
+  it("gives different secrets different keys", () => {
+    const a = deriveInviteKeys(1n), b = deriveInviteKeys(2n);
+    expect(a.spendingPubkey).to.not.equal(b.spendingPubkey);
+    expect(a.nullifierKey).to.not.equal(b.nullifierKey);
+    expect(a.blinding).to.not.equal(b.blinding);
+  });
+
+  it("keeps the four derived values distinct from each other", () => {
+    // A collision between, say, blinding and a private key would be catastrophic and
+    // silent, so pin that the domain tags actually separate them.
+    const k = deriveInviteKeys(12345n);
+    const vals = [k.spendingPrivKey, k.viewingPrivKey, k.blinding, k.nullifierKey];
+    expect(new Set(vals.map(String)).size).to.equal(vals.length);
+  });
+
+  it("derives nullifierKeyHash as Poseidon(nullifierKey, 1), matching the registry", () => {
+    const k = deriveInviteKeys(999n);
+    expect(k.nullifierKeyHash).to.equal(poseidonHash([k.nullifierKey, 1n]));
+  });
+
+  it("derives spendingPubkey as Poseidon(spendingPrivKey), matching the circuit", () => {
+    const k = deriveInviteKeys(777n);
+    expect(k.spendingPubkey).to.equal(poseidonHash([k.spendingPrivKey]));
+  });
+});
+
+describe("relayer fee packing", () => {
+  const addr = "0x1234567890AbcdEF1234567890aBcdef12345678";
+
+  it("round-trips through pack/unpack", () => {
+    const packed = packRelayerFee(addr, 12345n);
+    const { relayer, fee } = unpackRelayerFee(packed);
+    expect(relayer).to.equal(ethers.getAddress(addr));
+    expect(fee).to.equal(12345n);
+  });
+
+  it("packs the address into the high 160 bits and the fee into the low 96", () => {
+    // The layout Halias._decodeRelayerFee assumes: address << 96 | fee.
+    const packed = packRelayerFee(addr, 1n);
+    expect(BigInt(packed) >> 96n).to.equal(BigInt(addr));
+    expect(BigInt(packed) & ((1n << 96n) - 1n)).to.equal(1n);
+    expect(packed.length).to.equal(66); // 0x + 32 bytes
+  });
+
+  it("is zero for a zero relayer and zero fee, which means no relayer", () => {
+    expect(packRelayerFee(ethers.ZeroAddress, 0n)).to.equal(ethers.ZeroHash);
+  });
+
+  it("accepts the largest fee that fits", () => {
+    const max = (1n << 96n) - 1n;
+    expect(unpackRelayerFee(packRelayerFee(addr, max)).fee).to.equal(max);
+  });
+
+  it("rejects a fee that would overflow into the address", () => {
+    expect(() => packRelayerFee(addr, 1n << 96n)).to.throw(/uint96/);
+  });
+
+  it("rejects a non-zero fee with no relayer to pay", () => {
+    expect(() => packRelayerFee(ethers.ZeroAddress, 1n)).to.throw(/relayer/i);
+  });
+});
+
+describe("invite codes", () => {
+  it("round-trips", () => {
+    const s = BigInt("0x" + "ab".repeat(32)) >> 8n;
+    expect(decodeInviteCode(encodeInviteCode(s))).to.equal(s);
+  });
+
+  it("accepts a code with or without the 0x prefix", () => {
+    const code = encodeInviteCode(42n);
+    expect(decodeInviteCode(code)).to.equal(42n);
+    expect(decodeInviteCode(code.slice(2))).to.equal(42n);
+  });
+
+  it("rejects a zero code, which would derive keys anyone could guess", () => {
+    expect(() => decodeInviteCode(ethers.ZeroHash)).to.throw(/invalid/i);
   });
 });

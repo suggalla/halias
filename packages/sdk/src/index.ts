@@ -25,4 +25,9 @@ export type { CacheStore, CacheData } from "./cache";
 
 // Exported so the protocol package can assert these match the compiled contract.
 export { TRANSACT_ABI, REGISTRY_ABI } from "./events";
+export {
+  deriveInviteKeys, packRelayerFee, unpackRelayerFee,
+  encodeInviteCode, decodeInviteCode,
+} from "./invite";
+export type { InviteKeys } from "./invite";
 export { HALIAS_ABI } from "./contract";

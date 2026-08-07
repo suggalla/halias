@@ -109,4 +109,64 @@ describe("SDK ABI matches the compiled contract", function () {
     expect(parsed.args.encryptedOutput0).to.equal(enc0);
     expect(parsed.args.encryptedOutput1).to.equal("0x");
   });
+
+  // packRelayerFee is a cross-package byte layout: the SDK writes it, Halias reads it
+  // back in _decodeRelayerFee. A disagreement pays the wrong address, or nobody, and
+  // neither side can detect it alone.
+  describe("relayer fee layout", function () {
+    let halias: any;
+    let relayer: any;
+
+    beforeEach(async function () {
+      const [deployer, r] = await ethers.getSigners();
+      relayer = r;
+      const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
+      const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+      const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
+      halias = await (await ethers.getContractFactory("Halias", {
+        libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      })).deploy(await mv.getAddress(), deployer.address);
+    });
+
+    it("the contract pays exactly the relayer and fee the SDK packed", async function () {
+      const fee = ethers.parseEther("0.01");
+      const externalData = sdk.packRelayerFee(relayer.address, fee);
+
+      // Fund the pool so there is something to withdraw, then withdraw with the fee set.
+      const deposit = ethers.parseEther("1");
+      const proof = ethers.AbiCoder.defaultAbiCoder().encode(
+        ["uint256[2]", "uint256[2][2]", "uint256[2]"], [[0, 0], [[0, 0], [0, 0]], [0, 0]]);
+      const base = {
+        poolRoot: await halias.getLastRoot(), registryRoot: await halias.getRegistryRoot(),
+        tokenAddress: 0n, recipient: ethers.ZeroAddress, externalData: ethers.ZeroHash,
+        inputNullifiers: [ethers.keccak256("0xa1"), ethers.keccak256("0xa2")],
+        outputCommitments: [ethers.keccak256("0xa3"), ethers.keccak256("0xa4")],
+      };
+      await (await halias.transact({ ...base, publicAmount: deposit }, "0x", "0x", proof,
+        { value: deposit })).wait();
+
+      const [, , dest] = await ethers.getSigners();
+      const withdrawAmt = ethers.parseEther("0.5");
+      const FIELD_PRIME_ = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+      const beforeRelayer = await ethers.provider.getBalance(relayer.address);
+      const beforeDest    = await ethers.provider.getBalance(dest.address);
+
+      await (await halias.transact({
+        ...base,
+        poolRoot: await halias.getLastRoot(),
+        publicAmount: FIELD_PRIME_ - withdrawAmt,
+        recipient: dest.address,
+        externalData,
+        inputNullifiers: [ethers.keccak256("0xb1"), ethers.keccak256("0xb2")],
+        outputCommitments: [ethers.keccak256("0xb3"), ethers.keccak256("0xb4")],
+      }, "0x", "0x", proof)).wait();
+
+      expect(await ethers.provider.getBalance(relayer.address) - beforeRelayer).to.equal(fee);
+      expect(await ethers.provider.getBalance(dest.address) - beforeDest).to.equal(withdrawAmt - fee);
+    });
+
+    it("a zero packing means no relayer is paid", async function () {
+      expect(sdk.packRelayerFee(ethers.ZeroAddress, 0n)).to.equal(ethers.ZeroHash);
+    });
+  });
 });
