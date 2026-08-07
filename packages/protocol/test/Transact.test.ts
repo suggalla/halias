@@ -13,7 +13,7 @@ const TRANSACT_ZKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony
 const TRANSACT_VKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/verification_key.json");
 
 const POOL_LEVELS = 32;
-const REGISTRY_LEVELS = 64;
+const REGISTRY_LEVELS = 32;
 const ETH_TOKEN = 0n;
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
@@ -51,15 +51,18 @@ describe("Transact Circuit", function () {
   }
 
   // Register a keypair into the local SMT (mirroring what the contract does).
-  // Returns the SMT key and aliasHash for building output proofs.
-  function registerInSMT(pubkey: bigint, nullifierKey: bigint): { key: bigint; aliasHash: bigint } {
+  // Slots are handed out in registration order exactly as _smtUpdate does, so a
+  // circuit-only test still sees the positions a real deployment would produce.
+  let nextSlot = 0;
+  function registerInSMT(pubkey: bigint, nullifierKey: bigint): { key: bigint; aliasHash: bigint; slot: number } {
     // Use a deterministic alias derived from pubkey for repeatability in tests.
     const aliasHash = BigInt(ethers.keccak256(ethers.concat([
       ethers.toBeHex(pubkey, 32), ethers.toBeHex(nullifierKey, 32)
     ])));
-    const key = aliasHashToKey(ethers.toBeHex(aliasHash, 32));
-    registrySMT.update(key, registryLeaf(pubkey, nullifierKey));
-    return { key, aliasHash };
+    const key  = aliasHashToKey(ethers.toBeHex(aliasHash, 32));
+    const slot = nextSlot++;
+    registrySMT.update(slot, key, registryLeaf(pubkey, nullifierKey));
+    return { key, aliasHash, slot };
   }
 
   // paramsHash for circuit: any field-prime-reduced hash (circuit just squares it for wire inclusion).
@@ -144,6 +147,7 @@ describe("Transact Circuit", function () {
       outNullifierKeyHash:    opts.outputs.map(o => s(o.nullifierKeyHash)),
       outDataHash:            opts.outputs.map(o => s(o.dataHash)),
       outAliasHash:           opts.outputs.map(o => s(o.aliasHash)),
+      outRegistryIndex:             opts.outputs.map((o: any) => String(o.registrySlot ?? 0)),
       outRegistrySiblings:    opts.outputs.map(o => o.registrySiblings.map(s)),
     };
   }
@@ -162,7 +166,7 @@ describe("Transact Circuit", function () {
   describe("Deposit (publicAmount > 0)", function () {
     it("should accept a valid deposit with dummy inputs", async function () {
       const alice = generateKeypair();
-      const { key: aliceKey, aliasHash: aliceAliasHash } = registerInSMT(alice.pubkey, alice.nullifierKey);
+      const { key: aliceKey, aliasHash: aliceAliasHash, slot: aliceSlot } = registerInSMT(alice.pubkey, alice.nullifierKey);
 
       const amount  = ethers.parseEther("1");
       const blinding = BigInt("0x" + crypto.randomBytes(31).toString("hex"));
@@ -187,7 +191,7 @@ describe("Transact Circuit", function () {
             aliasHash:        aliceKey,
             blinding,
             amount,
-            registrySiblings: registrySMT.getSiblings(aliceKey),
+            registrySiblings: registrySMT.getSiblings(aliceSlot),
           },
           dummyOutput(),
         ],
@@ -207,7 +211,7 @@ describe("Transact Circuit", function () {
       const alice = generateKeypair();
       const bob   = generateKeypair();
       registerInSMT(alice.pubkey, alice.nullifierKey);
-      const { key: bobKey } = registerInSMT(bob.pubkey, bob.nullifierKey);
+      const { key: bobKey, slot: bobSlot } = registerInSMT(bob.pubkey, bob.nullifierKey);
 
       const amount = ethers.parseEther("1");
       const aliceBlinding  = BigInt("0x" + crypto.randomBytes(31).toString("hex"));
@@ -234,7 +238,7 @@ describe("Transact Circuit", function () {
           dummyInput(),
         ],
         outputs: [
-          { pubkey: bob.pubkey, nullifierKeyHash: bobNKHash, dataHash: 0n, aliasHash: bobKey, blinding: bobBlinding, amount, registrySiblings: registrySMT.getSiblings(bobKey) },
+          { pubkey: bob.pubkey, nullifierKeyHash: bobNKHash, dataHash: 0n, aliasHash: bobKey, registrySlot: bobSlot, blinding: bobBlinding, amount, registrySiblings: registrySMT.getSiblings(bobSlot) },
           dummyOutput(),
         ],
         inputNullifiers:   [aliceNullifier, dummyNullifier()],
@@ -248,8 +252,8 @@ describe("Transact Circuit", function () {
     it("should transfer with change output (two real outputs)", async function () {
       const alice = generateKeypair();
       const bob   = generateKeypair();
-      const { key: aliceKey } = registerInSMT(alice.pubkey, alice.nullifierKey);
-      const { key: bobKey }   = registerInSMT(bob.pubkey, bob.nullifierKey);
+      const { key: aliceKey, slot: aliceSlot } = registerInSMT(alice.pubkey, alice.nullifierKey);
+      const { key: bobKey, slot: bobSlot } = registerInSMT(bob.pubkey, bob.nullifierKey);
 
       const depositAmount = ethers.parseEther("1");
       const sendAmount    = ethers.parseEther("0.3");
@@ -281,8 +285,8 @@ describe("Transact Circuit", function () {
           dummyInput(),
         ],
         outputs: [
-          { pubkey: bob.pubkey,   nullifierKeyHash: bobNKHash2,   dataHash: 0n, aliasHash: bobKey,   blinding: bobBlinding,    amount: sendAmount,   registrySiblings: registrySMT.getSiblings(bobKey) },
-          { pubkey: alice.pubkey, nullifierKeyHash: aliceNKHash2, dataHash: 0n, aliasHash: aliceKey, blinding: changeBlinding, amount: changeAmount, registrySiblings: registrySMT.getSiblings(aliceKey) },
+          { pubkey: bob.pubkey,   nullifierKeyHash: bobNKHash2,   dataHash: 0n, aliasHash: bobKey, registrySlot: bobSlot,   blinding: bobBlinding,    amount: sendAmount,   registrySiblings: registrySMT.getSiblings(bobSlot) },
+          { pubkey: alice.pubkey, nullifierKeyHash: aliceNKHash2, dataHash: 0n, aliasHash: aliceKey, registrySlot: aliceSlot, blinding: changeBlinding, amount: changeAmount, registrySiblings: registrySMT.getSiblings(aliceSlot) },
         ],
         inputNullifiers:   [aliceNullifier, dummyNullifier()],
         outputCommitments: [bobCommitment, changeCommitment],
@@ -294,7 +298,7 @@ describe("Transact Circuit", function () {
 
     it("should merge two notes into one", async function () {
       const alice = generateKeypair();
-      const { key: aliceKey } = registerInSMT(alice.pubkey, alice.nullifierKey);
+      const { key: aliceKey, slot: aliceSlot } = registerInSMT(alice.pubkey, alice.nullifierKey);
 
       const amount1      = ethers.parseEther("0.5");
       const amount2      = ethers.parseEther("0.3");
@@ -323,7 +327,7 @@ describe("Transact Circuit", function () {
           { spendingPrivateKey: alice.spendingPrivateKey, viewingPrivateKey: alice.viewingPrivateKey, blinding: blinding2, amount: amount2, pathIndices: poolTree.getProof(1).pathIndices, pathElements: poolTree.getProof(1).pathElements },
         ],
         outputs: [
-          { pubkey: alice.pubkey, nullifierKeyHash: aliceNKHash3, dataHash: 0n, aliasHash: aliceKey, blinding: mergedBlinding, amount: totalAmount, registrySiblings: registrySMT.getSiblings(aliceKey) },
+          { pubkey: alice.pubkey, nullifierKeyHash: aliceNKHash3, dataHash: 0n, aliasHash: aliceKey, registrySlot: aliceSlot, blinding: mergedBlinding, amount: totalAmount, registrySiblings: registrySMT.getSiblings(aliceSlot) },
           dummyOutput(),
         ],
         inputNullifiers:   [computeNullifier(alice.nullifierKey, 0), computeNullifier(alice.nullifierKey, 1)],
@@ -372,7 +376,7 @@ describe("Transact Circuit", function () {
 
     it("should allow partial withdrawal with change output", async function () {
       const alice = generateKeypair();
-      const { key: aliceKey } = registerInSMT(alice.pubkey, alice.nullifierKey);
+      const { key: aliceKey, slot: aliceSlot } = registerInSMT(alice.pubkey, alice.nullifierKey);
 
       const depositAmount  = ethers.parseEther("1");
       const withdrawAmount = ethers.parseEther("0.6");
@@ -400,7 +404,7 @@ describe("Transact Circuit", function () {
           dummyInput(),
         ],
         outputs: [
-          { pubkey: alice.pubkey, nullifierKeyHash: toNullifierKeyHash(alice.nullifierKey), dataHash: 0n, aliasHash: aliceKey, blinding: changeBlinding, amount: changeAmount, registrySiblings: registrySMT.getSiblings(aliceKey) },
+          { pubkey: alice.pubkey, nullifierKeyHash: toNullifierKeyHash(alice.nullifierKey), dataHash: 0n, aliasHash: aliceKey, registrySlot: aliceSlot, blinding: changeBlinding, amount: changeAmount, registrySiblings: registrySMT.getSiblings(aliceSlot) },
           dummyOutput(),
         ],
         inputNullifiers:   [nullifier, dummyNullifier()],
@@ -417,7 +421,7 @@ describe("Transact Circuit", function () {
   describe("Security: amount conservation", function () {
     it("should reject when outputs exceed inputs + publicAmount", async function () {
       const alice = generateKeypair();
-      const { key: aliceKey } = registerInSMT(alice.pubkey, alice.nullifierKey);
+      const { key: aliceKey, slot: aliceSlot } = registerInSMT(alice.pubkey, alice.nullifierKey);
 
       const depositAmount  = ethers.parseEther("1");
       const inflatedAmount = ethers.parseEther("2");
@@ -442,7 +446,7 @@ describe("Transact Circuit", function () {
           dummyInput(),
         ],
         outputs: [
-          { pubkey: alice.pubkey, nullifierKeyHash: toNullifierKeyHash(alice.nullifierKey), dataHash: 0n, aliasHash: aliceKey, blinding: inflatedBlinding, amount: inflatedAmount, registrySiblings: registrySMT.getSiblings(aliceKey) },
+          { pubkey: alice.pubkey, nullifierKeyHash: toNullifierKeyHash(alice.nullifierKey), dataHash: 0n, aliasHash: aliceKey, registrySlot: aliceSlot, blinding: inflatedBlinding, amount: inflatedAmount, registrySiblings: registrySMT.getSiblings(aliceSlot) },
           dummyOutput(),
         ],
         inputNullifiers:   [nullifier, dummyNullifier()],
@@ -513,6 +517,8 @@ describe("Transact Circuit", function () {
 
       // Fake a random key that is NOT in the SMT
       const fakeKey = BigInt("0x" + crypto.randomBytes(31).toString("hex")) % FIELD_PRIME;
+      // An arbitrary empty slot: no leaf there commits to this alias, so the proof fails.
+      const fakeSlot = 9999;
       const outBlinding    = BigInt("0x" + crypto.randomBytes(31).toString("hex"));
       const outCommitment  = createCommitment(unregistered.pubkey, toNullifierKeyHash(unregistered.nullifierKey), outBlinding, amount);
 
@@ -527,7 +533,7 @@ describe("Transact Circuit", function () {
           dummyInput(),
         ],
         outputs: [
-          { pubkey: unregistered.pubkey, nullifierKeyHash: toNullifierKeyHash(unregistered.nullifierKey), dataHash: 0n, aliasHash: fakeKey, blinding: outBlinding, amount, registrySiblings: registrySMT.getSiblings(fakeKey) },
+          { pubkey: unregistered.pubkey, nullifierKeyHash: toNullifierKeyHash(unregistered.nullifierKey), dataHash: 0n, aliasHash: fakeKey, registrySlot: fakeSlot, blinding: outBlinding, amount, registrySiblings: registrySMT.getSiblings(fakeSlot) },
           dummyOutput(),
         ],
         inputNullifiers:   [nullifier, dummyNullifier()],

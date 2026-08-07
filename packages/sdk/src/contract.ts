@@ -17,7 +17,7 @@ export const HALIAS_ABI = [
   // SMT state
   "function smtRoot() external view returns (bytes32)",
   "function getRegistryRoot() external view returns (bytes32)",
-  "function getSmtSiblings(uint256 key) external view returns (bytes32[64] memory siblings)",
+  "function getSmtSiblings(uint256 slot) external view returns (bytes32[32] memory siblings)",
   // Pool state queries
   "function isKnownPoolRoot(bytes32) external view returns (bool)",
   "function spentNullifiers(bytes32) external view returns (bool)",

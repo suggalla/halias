@@ -8,7 +8,7 @@ export const TRANSACT_ABI = [
   "event Transact(uint256 publicAmount, uint256 indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
 ];
 export const REGISTRY_ABI = [
-  "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 registryLeafHash, bytes32 encryptionPubkey)",
+  "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 registryLeafHash, bytes32 encryptionPubkey, uint32 registrySlot)",
   "event KeysUpdated(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 registryLeafHash, bytes32 encryptionPubkey)",
   "event AliasDataUpdated(bytes32 indexed aliasHash, bytes32 newDataHash, bytes32 newLeafHash)",
   "event AliasTransferred(bytes32 indexed aliasHash, address indexed previousOwner, address indexed newOwner, bytes32 newSpendingPubkey, bytes32 newRegistryLeafHash, bytes32 newEncryptionPubkey)",
@@ -31,6 +31,7 @@ export interface Output {
 
 export interface RegistryEntry {
   aliasHash: string;
+  registrySlot: number;        // position in the SMT, assigned at registration and never reused
   spendingPubkey: bigint;
   nullifierKeyHash: bigint;    // Poseidon(nullifierKey, 1) — not in events; read from contract for proof construction
   leafHash: bigint;            // Poseidon(spendingPubkey, nullifierKeyHash, dataHash) — emitted in events; used for SMT
@@ -116,6 +117,7 @@ export async function scanEvents(
       const spendingPubkey = BigInt(e.args[1]);
       const entry: RegistryEntry = {
         aliasHash,
+        registrySlot:      Number(e.args[4]) - 1,  // stored offset by one on-chain
         spendingPubkey,
         nullifierKeyHash:  0n,            // not in event; fetch from contract when building proofs
         leafHash:          BigInt(e.args[2]),  // Poseidon(pubkey, nullifierKeyHash, dataHash)
@@ -132,6 +134,7 @@ export async function scanEvents(
       const existing       = registryByAlias.get(aliasHash);
       const entry: RegistryEntry = {
         aliasHash,
+        registrySlot:      existing ? existing.registrySlot : 0,  // rotation keeps the original slot
         spendingPubkey,
         nullifierKeyHash:  0n,
         leafHash:          BigInt(e.args[2]),
@@ -159,6 +162,7 @@ export async function scanEvents(
       const existing = registryByAlias.get(aliasHash);
       const entry: RegistryEntry = {
         aliasHash,
+        registrySlot:     existing ? existing.registrySlot : 0,  // transfer keeps the slot
         spendingPubkey:  newSpendingPubkey,
         nullifierKeyHash: 0n,
         leafHash:         BigInt(e.args[4]),
@@ -181,8 +185,7 @@ export async function scanEvents(
   const registryEntries = [...registryByAlias.values()];
   const smt = new SMT();
   for (const entry of registryEntries) {
-    const smtKey = aliasHashToSmtKey(BigInt(entry.aliasHash));
-    smt.update(smtKey, entry.leafHash);
+    smt.update(entry.registrySlot, aliasHashToSmtKey(BigInt(entry.aliasHash)), entry.leafHash);
   }
 
   return { poolTree, smt, outputs: sortedOutputs, registryEntries, aliasHashByPubkey, spentNullifiers };

@@ -68,6 +68,7 @@ export function deserializeCache(raw: string): CacheData {
 
   const registryEntries: RegistryEntry[] = d.registryEntries.map(e => ({
     aliasHash:        e.aliasHash,
+    registrySlot:     Number((e as any).registrySlot ?? 0),
     spendingPubkey:   BigInt(e.spendingPubkey),
     nullifierKeyHash: BigInt(e.nullifierKeyHash),
     leafHash:         BigInt(e.leafHash),

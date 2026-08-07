@@ -254,16 +254,25 @@ describe("SMT lazy root", () => {
     expect(() => new SMT()).to.not.throw();
     const a = new SMT(), b = new SMT();
     expect(a.root).to.equal(b.root);       // two empty trees agree
-    a.update(1n, 42n);
+    a.update(0, 1n, 42n);                  // slot 0, alias key 1n
     expect(a.root).to.not.equal(b.root);   // an update moves the root
+  });
+
+  it("places the same leaf differently depending on the slot", () => {
+    // Position and identity are separate now: the same alias key in a different slot is
+    // a different tree. This is what makes assigned slots collision-free.
+    const a = new SMT(), b = new SMT();
+    a.update(0, 7n, 42n);
+    b.update(1, 7n, 42n);
+    expect(a.root).to.not.equal(b.root);
   });
 
   it("clone snapshots without aliasing the original", () => {
     const a = new SMT();
-    a.update(1n, 42n);
+    a.update(0, 1n, 42n);
     const snapshot = a.root;
     const b = a.clone();
-    b.update(2n, 99n);
+    b.update(1, 2n, 99n);
     expect(a.root).to.equal(snapshot);
     expect(b.root).to.not.equal(snapshot);
   });

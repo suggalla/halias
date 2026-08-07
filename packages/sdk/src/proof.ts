@@ -24,9 +24,10 @@ export interface TransactOutput {
   nullifierKeyHash: bigint;    // Poseidon(nullifierKey, 1) — read from registry; raw key never leaves recipient
   blinding: bigint;
   amount: bigint;
-  aliasHash: bigint;           // aliasHash % FIELD_PRIME — private SMT key for this recipient
+  aliasHash: bigint;           // aliasHash % FIELD_PRIME — identity bound into the leaf
+  registrySlot: number;        // slot assigned at registration — the tree position for this recipient
   dataHash: bigint;            // attestation/reputation data commitment
-  registrySiblings: bigint[];  // length = registry levels (64); SMT proof
+  registrySiblings: bigint[];  // length = registry levels (32); SMT proof
 }
 
 export interface TransactProveInput {
@@ -64,6 +65,7 @@ function serializeForCircuit(inp: TransactProveInput): Record<string, unknown> {
     outNullifierKeyHash:  inp.outputs.map(o => s(o.nullifierKeyHash)),
     outDataHash:          inp.outputs.map(o => s(o.dataHash)),
     outAliasHash:         inp.outputs.map(o => s(o.aliasHash)),
+    outRegistryIndex:     inp.outputs.map(o => String(o.registrySlot)),
     outRegistrySiblings:  inp.outputs.map(o => o.registrySiblings.map(s)),
   };
 }
@@ -88,7 +90,7 @@ export async function proveTransact(
 
 // ── Dummy input/output helpers ────────────────────────────────────────────────
 
-const REGISTRY_LEVELS = 64;
+const REGISTRY_LEVELS = 32;
 const POOL_LEVELS     = 32;
 
 export interface DummyInput {
@@ -124,6 +126,7 @@ export function dummyOutput(blinding: bigint = 0n): TransactOutput {
     blinding,
     amount:             0n,
     aliasHash:          0n,
+    registrySlot:       0,
     dataHash:           0n,
     registrySiblings:   new Array(REGISTRY_LEVELS).fill(0n),
   };

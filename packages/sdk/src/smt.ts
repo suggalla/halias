@@ -1,6 +1,6 @@
 import { poseidonHash } from "./crypto";
 
-const REGISTRY_LEVELS = 64;
+const REGISTRY_LEVELS = 32;
 
 // Lazily computed: zeros[i] = hash of an empty subtree of height i.
 // zeros[0] = 0n (sentinel for empty leaf), zeros[i+1] = Poseidon(zeros[i], zeros[i]).
@@ -27,10 +27,10 @@ function smtHash2(left: bigint, right: bigint): bigint {
   return poseidonHash([left, right]);
 }
 
-// Sparse Merkle Tree (64 levels) mirroring Halias.sol _smtUpdate/_smtZeros.
-// Key = aliasHash % FIELD_PRIME. Value = RegistryLeaf hash.
-// Tree navigation uses the low REGISTRY_LEVELS bits of the key (matches the contract's
-// smtKey mask and the circuit's pathIndices); the full key stays in the leaf hash.
+// Sparse Merkle Tree (32 levels) mirroring Halias.sol _smtUpdate/_smtZeros.
+// Position = the slot the contract assigned at registration. Value = RegistryLeaf hash.
+// The leaf still hashes aliasKey (aliasHash % FIELD_PRIME), so identity is bound by the
+// leaf while the path follows the slot — matching the circuit exactly.
 // Supports in-place updates (key rotation, alias transfer).
 export class SMT {
   private nodes = new Map<string, bigint>();
@@ -49,10 +49,10 @@ export class SMT {
     this._root = value;
   }
 
-  update(key: bigint, value: bigint): void {
-    const pathKey = key & ((1n << BigInt(REGISTRY_LEVELS)) - 1n);
+  update(slot: number, aliasKey: bigint, value: bigint): void {
+    const pathKey = BigInt(slot);
     const zeros = getZeros();
-    let current = smtHash1(key, value);
+    let current = smtHash1(aliasKey, value);
     for (let i = 0; i < REGISTRY_LEVELS; i++) {
       const nodePath    = pathKey >> BigInt(i);
       const siblingPath = nodePath ^ 1n;
@@ -74,8 +74,8 @@ export class SMT {
     return copy;
   }
 
-  getSiblings(key: bigint): bigint[] {
-    const pathKey = key & ((1n << BigInt(REGISTRY_LEVELS)) - 1n);
+  getSiblings(slot: number): bigint[] {
+    const pathKey = BigInt(slot);
     const zeros = getZeros();
     return Array.from({ length: REGISTRY_LEVELS }, (_, i) => {
       const siblingPath = (pathKey >> BigInt(i)) ^ 1n;

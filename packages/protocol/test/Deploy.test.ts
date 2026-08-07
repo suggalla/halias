@@ -86,7 +86,7 @@ describe("CREATE2 deployment", function () {
 
     // Libraries linked, SMT initialised, and a registration actually works.
     expect(await halias.LEVELS()).to.equal(32n);
-    expect(await halias.REGISTRY_LEVELS()).to.equal(64n);
+    expect(await halias.REGISTRY_LEVELS()).to.equal(32n);
     expect(await halias.getRegistryRoot()).to.not.equal(ethers.ZeroHash);
 
     const aliasHash = ethers.keccak256(ethers.randomBytes(32));

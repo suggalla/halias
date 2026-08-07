@@ -162,11 +162,11 @@ describe("Guards", function () {
 
   // ── Registry slot collision ───────────────────────────────────────
 
-  it("rejects a second alias landing on an occupied SMT slot", async function () {
-    // The tree path uses the low REGISTRY_LEVELS bits of aliasHash % p, so two distinct
-    // aliases can want the same slot. The contract refuses rather than overwriting,
-    // which is what stops a collision from silently replacing someone's keys — and is
-    // the guarantee the 64-level depth exists to make expensive to attack.
+  it("gives alias hashes that would once have collided their own slots", async function () {
+    // Positions used to be derived from aliasHash, so two names sharing the low
+    // REGISTRY_LEVELS bits contended for one slot and the second was refused outright —
+    // a grindable way to block a name forever. Slots are assigned in registration order
+    // now, so this pair is unremarkable and both register.
     const levels = BigInt(await halias.REGISTRY_LEVELS());
     const a = BigInt(rand32()) % (1n << 200n);       // comfortably < p
     const b = a + (1n << levels);                     // identical low `levels` bits
@@ -176,18 +176,43 @@ describe("Guards", function () {
     const fee = await halias.registrationFee();
     const pk = ethers.toBeHex(1n, 32), nk = ethers.toBeHex(2n, 32);
     await (await halias.register(ethers.toBeHex(a, 32), pk, nk, rand32(), { value: fee })).wait();
-
     await expect(halias.register(ethers.toBeHex(b, 32), pk, nk, rand32(), { value: fee }))
-      .to.be.revertedWithCustomError(halias, "SMTCollision");
+      .to.not.be.reverted;
+
+    expect(await halias.aliasSlot(ethers.toBeHex(a, 32))).to.equal(1n);
+    expect(await halias.aliasSlot(ethers.toBeHex(b, 32))).to.equal(2n);
   });
 
-  it("lets the same alias update in place without tripping the collision guard", async function () {
-    // The guard keys on aliasHash, so re-registering the same alias via updateKeys must
-    // still work — otherwise key rotation would break for everyone.
+  it("keeps an alias in its original slot across rotation and transfer", async function () {
+    // In-place update is the point of an SMT over an append-only tree. If a rotation
+    // moved the alias, every sender holding a proof against the old position would fail.
+    const [, newOwner] = await ethers.getSigners();
     const aliasHash = rand32();
     const fee = await halias.registrationFee();
     await (await halias.register(aliasHash, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32),
       rand32(), { value: fee })).wait();
-    await expect(halias.updateKeys(aliasHash, ethers.toBeHex(3n, 32), rand32())).to.not.be.reverted;
+    const slot = await halias.aliasSlot(aliasHash);
+
+    await (await halias.updateKeys(aliasHash, ethers.toBeHex(3n, 32), rand32())).wait();
+    expect(await halias.aliasSlot(aliasHash)).to.equal(slot);
+
+    await (await halias.transferAliasWithKeys(aliasHash, newOwner.address,
+      ethers.toBeHex(4n, 32), ethers.toBeHex(5n, 32), rand32())).wait();
+    expect(await halias.aliasSlot(aliasHash)).to.equal(slot);
+  });
+
+  it("hands out slots in registration order, never reusing one", async function () {
+    const fee = await halias.registrationFee();
+    const seen = new Set<string>();
+    for (let i = 0; i < 4; i++) {
+      const h = rand32();
+      await (await halias.register(h, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32),
+        rand32(), { value: fee })).wait();
+      const slot = (await halias.aliasSlot(h)).toString();
+      expect(slot).to.equal(String(i + 1));
+      expect(seen.has(slot), "slot reused").to.equal(false);
+      seen.add(slot);
+    }
+    expect(await halias.nextAliasSlot()).to.equal(4n);
   });
 });

@@ -12,7 +12,7 @@ const TRANSACT_WASM = path.resolve(__dirname, "../circuits/out/transact/transact
 const TRANSACT_ZKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/transact_final.zkey");
 const TRANSACT_VKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/verification_key.json");
 const POOL_LEVELS = 32;
-const REGISTRY_LEVELS = 64;
+const REGISTRY_LEVELS = 32;
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 describe("Halias (on-chain Transact)", function () {
@@ -103,6 +103,7 @@ describe("Halias (on-chain Transact)", function () {
       nullifierKeyHash: 0n,
       dataHash:         0n,
       aliasHash:        0n,
+      registrySlot:     0,
       blinding:         0n,
       amount:           0n,
       registrySiblings: new Array(REGISTRY_LEVELS).fill(0n),
@@ -159,6 +160,7 @@ describe("Halias (on-chain Transact)", function () {
       outNullifierKeyHash:    opts.outputs.map((o: any) => s(o.nullifierKeyHash)),
       outDataHash:            opts.outputs.map((o: any) => s(o.dataHash)),
       outAliasHash:           opts.outputs.map((o: any) => s(o.aliasHash)),
+      outRegistryIndex:       opts.outputs.map((o: any) => String(o.registrySlot ?? 0)),
       outRegistrySiblings:    opts.outputs.map((o: any) => o.registrySiblings.map(s)),
     };
   }
@@ -191,9 +193,10 @@ describe("Halias (on-chain Transact)", function () {
       ethers.keccak256(ethers.randomBytes(32)),
       { value: REGISTRATION_FEE }
     );
-    const key = aliasHashToKey(aliasHash);
-    registrySMT.update(key, registryLeaf(pubkey, nullifierKey));  // registryLeaf hashes internally
-    return { key };
+    const key  = aliasHashToKey(aliasHash);
+    const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
+    registrySMT.update(slot, key, registryLeaf(pubkey, nullifierKey));  // registryLeaf hashes internally
+    return { key, slot };
   }
 
   // ── Contract validation (table-driven, no ZK proofs) ─────────────
@@ -305,9 +308,10 @@ describe("Halias (on-chain Transact)", function () {
         ethers.keccak256(ethers.randomBytes(32)),
         { value: REGISTRATION_FEE }
       );
-      const key = aliasHashToKey(aliasHash);
-      localSMT.update(key, registryLeaf(pubkey, nk));
-      return { key };
+      const key  = aliasHashToKey(aliasHash);
+      const slot = Number(await localHalias.aliasSlot(aliasHash)) - 1;
+      localSMT.update(slot, key, registryLeaf(pubkey, nk));
+      return { key, slot };
     }
 
     it("rejects withdrawal when recipient is swapped after proof generation", async function () {
@@ -315,7 +319,7 @@ describe("Halias (on-chain Transact)", function () {
       const alice    = generateKeypair();
       const poolTree = new MerkleTree(POOL_LEVELS);
 
-      const { key: aliceKey } = await localRegister(alice.pubkey, alice.nullifierKey);
+      const { key: aliceKey, slot: aliceSlot } = await localRegister(alice.pubkey, alice.nullifierKey);
       let dummyIdx = 600;
 
       const amount     = ethers.parseEther("1");
@@ -329,7 +333,7 @@ describe("Halias (on-chain Transact)", function () {
         paramsHash:      await computeTransactParamsHash(ZERO_TRANSACT_PARAMS, localHalias),
         inputs:           [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs:          [
-          { pubkey: alice.pubkey, nullifierKeyHash: toNullifierKeyHash(alice.nullifierKey), dataHash: 0n, aliasHash: aliceKey, blinding, amount, registrySiblings: localSMT.getSiblings(aliceKey) },
+          { pubkey: alice.pubkey, nullifierKeyHash: toNullifierKeyHash(alice.nullifierKey), dataHash: 0n, aliasHash: aliceKey, registrySlot: aliceSlot, registrySlot: aliceSlot, blinding, amount, registrySiblings: localSMT.getSiblings(aliceSlot) },
           dummyOutput(),
         ],
         inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
@@ -385,8 +389,8 @@ describe("Halias (on-chain Transact)", function () {
       const bob   = generateKeypair();
       const poolTree = new MerkleTree(POOL_LEVELS);
 
-      const { key: aliceKey } = await register(alice.pubkey, alice.nullifierKey);
-      const { key: bobKey }   = await register(bob.pubkey, bob.nullifierKey);
+      const { key: aliceKey, slot: aliceSlot } = await register(alice.pubkey, alice.nullifierKey);
+      const { key: bobKey, slot: bobSlot }   = await register(bob.pubkey, bob.nullifierKey);
 
       let dummyIdx = 200;
 
@@ -404,7 +408,7 @@ describe("Halias (on-chain Transact)", function () {
         paramsHash:      await computeTransactParamsHash(ZERO_TRANSACT_PARAMS),
         inputs:           [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs:          [
-          { pubkey: alice.pubkey, nullifierKeyHash: aliceNKHash, dataHash: 0n, aliasHash: aliceKey, blinding: aliceBlinding, amount: depositAmount, registrySiblings: registrySMT.getSiblings(aliceKey) },
+          { pubkey: alice.pubkey, nullifierKeyHash: aliceNKHash, dataHash: 0n, aliasHash: aliceKey, registrySlot: aliceSlot, registrySlot: aliceSlot, blinding: aliceBlinding, amount: depositAmount, registrySiblings: registrySMT.getSiblings(aliceSlot) },
           dummyOutput(),
         ],
         inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
@@ -452,8 +456,8 @@ describe("Halias (on-chain Transact)", function () {
           dummyInput(dummyIdx),
         ],
         outputs: [
-          { pubkey: bob.pubkey,   nullifierKeyHash: bobNKHash,   dataHash: 0n, aliasHash: bobKey,   blinding: bobBlinding,   amount: sendAmount,   registrySiblings: registrySMT.getSiblings(bobKey) },
-          { pubkey: alice.pubkey, nullifierKeyHash: aliceNKHash, dataHash: 0n, aliasHash: aliceKey, blinding: changeBlinding, amount: changeAmount, registrySiblings: registrySMT.getSiblings(aliceKey) },
+          { pubkey: bob.pubkey,   nullifierKeyHash: bobNKHash,   dataHash: 0n, aliasHash: bobKey, registrySlot: bobSlot,   blinding: bobBlinding,   amount: sendAmount,   registrySiblings: registrySMT.getSiblings(bobSlot) },
+          { pubkey: alice.pubkey, nullifierKeyHash: aliceNKHash, dataHash: 0n, aliasHash: aliceKey, registrySlot: aliceSlot, registrySlot: aliceSlot, blinding: changeBlinding, amount: changeAmount, registrySiblings: registrySMT.getSiblings(aliceSlot) },
         ],
         inputNullifiers:   [aliceNullifier, dummyNullifier(dummyIdx)],
         outputCommitments: [bobCommitment, changeCommitment],

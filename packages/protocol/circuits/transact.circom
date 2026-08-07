@@ -147,12 +147,18 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     // === Private inputs — registry proofs (per output) ===
     signal input outNullifierKeyHash[nOuts];                         // Poseidon(nullifierKey, 1) — hash stored in registry; raw key stays with recipient
     signal input outDataHash[nOuts];                                 // recipient's dataHash (from registry)
-    signal input outAliasHash[nOuts];                                // aliasHash % FIELD_PRIME — private SMT key
+    signal input outAliasHash[nOuts];                                // aliasHash % FIELD_PRIME — identity bound into the leaf
+    signal input outRegistryIndex[nOuts];                            // registration slot — the tree position
     signal input outRegistrySiblings[nOuts][registryLevels];         // SMT sibling hashes
-    // Path bits for the SMT are derived internally from outAliasHash via Num2Bits_strict.
-    // The strict decomposition enforces the canonical (< p) bits, so path indices match
-    // outAliasHash exactly — eliminating a separate outRegistryPathIndices input and
-    // tightening the path-to-key binding. Low registryLevels (64) bits drive the path.
+    // Position and identity are separate. The leaf hashes outAliasHash, so membership
+    // still proves "this alias holds these keys"; the path follows outRegistryIndex, the
+    // slot the contract assigned at registration.
+    //
+    // Deriving the path from outAliasHash instead would let two aliases contend for one
+    // slot, which at any depth cheap enough to be worth having is a grindable way to
+    // block a name permanently. Assigned slots cannot collide at all, so the tree can be
+    // half as deep. It also removes the need for Num2Bits_strict: an index below
+    // 2^registryLevels has only one decomposition, whereas a full field element has two.
 
     // -----------------------------------------------------------------------
     // INPUT VERIFICATION
@@ -245,7 +251,7 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
 
     component outCommitment[nOuts];
     component outAmountCheck[nOuts];
-    component outAliasHashBits[nOuts];
+    component outIndexBits[nOuts];
     component outRegistryLeaf[nOuts];
     component outRegistryLeafHash[nOuts];
     component outRegistryProof[nOuts];
@@ -278,31 +284,31 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
         outRegistryLeaf[i].dataHash         <== outDataHash[i];
 
         // 5. Fixed-depth registry Merkle proof.
-        // The registry uses a fixed-depth tree of depth registryLevels.
-        // Key = outAliasHash[i] (aliasHash % FIELD_PRIME). Path bits = key bits.
-        // Leaf hash = SMTHash1(key, leafValue) = Poseidon(key, leafValue, 1).
+        // Leaf hash = SMTHash1(aliasKey, leafValue) = Poseidon(aliasKey, leafValue, 1).
         // Internal node hash = Poseidon(left, right) — matches MerkleProof.circom.
         // Proof skipped for zero-amount (dummy) outputs via enabled=0.
-        // outAliasHash is private — does not reveal which alias is receiving.
+        // Both the alias and its slot stay private, so nothing reveals who is receiving.
 
-        // Leaf hash: Poseidon(key, leafValue, 1) — SMTHash1 convention
+        // The leaf commits to the alias itself. That is what makes the index safe to take
+        // as an input: only one leaf in the tree hashes this aliasHash, so a prover cannot
+        // point at some other alias's slot and still satisfy this.
         outRegistryLeafHash[i] = Poseidon(3);
         outRegistryLeafHash[i].inputs[0] <== outAliasHash[i];
         outRegistryLeafHash[i].inputs[1] <== outRegistryLeaf[i].out;
         outRegistryLeafHash[i].inputs[2] <== 1;
 
-        // Derive path bits from outAliasHash. Bits 0..registryLevels-1 are the SMT path.
-        // _strict enforces the canonical (< p) decomposition — non-strict would also admit
-        // bits of (outAliasHash + p), unbinding the path from the alias key.
-        outAliasHashBits[i] = Num2Bits_strict();
-        outAliasHashBits[i].in <== outAliasHash[i];
+        // Path bits come from the slot. Num2Bits(registryLevels) both decomposes and
+        // bounds it: a value >= 2^registryLevels has no satisfying decomposition, and
+        // below that the representation is unique, so no aliasing is possible.
+        outIndexBits[i] = Num2Bits(registryLevels);
+        outIndexBits[i].in <== outRegistryIndex[i];
 
         // Verify Merkle path from leaf hash to registry root
         outRegistryProof[i] = MerkleProof(registryLevels);
         outRegistryProof[i].leaf <== outRegistryLeafHash[i].out;
         for (var j = 0; j < registryLevels; j++) {
             outRegistryProof[i].pathElements[j] <== outRegistrySiblings[i][j];
-            outRegistryProof[i].pathIndices[j]  <== outAliasHashBits[i].out[j];
+            outRegistryProof[i].pathIndices[j]  <== outIndexBits[i].out[j];
         }
 
         // Only enforce root equality for non-dummy (non-zero-amount) outputs
@@ -368,8 +374,8 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     signal paramsHashSquare <== paramsHash * paramsHash;
 }
 
-// Registry uses 64 levels (bits 0-63 of aliasHash % FIELD_PRIME).
-// P(collision) ≈ n²/2^65 — negligible at any realistic scale.
+// Registry slots are assigned sequentially, so 32 levels holds 4.29e9 aliases with no
+// possibility of collision — the depth is a capacity bound, not a birthday bound.
 component main {public [
     poolRoot,
     registryRoot,
@@ -378,4 +384,4 @@ component main {public [
     paramsHash,
     inputNullifier,
     outputCommitment
-]} = Transact(32, 64, 2, 2);
+]} = Transact(32, 32, 2, 2);
