@@ -154,7 +154,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
     const tv = await (await ethers.getContractFactory("TransactVerifier")).deploy();
     halias = await (await ethers.getContractFactory("Halias", {
       libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
-    })).deploy(await tv.getAddress());
+    })).deploy(await tv.getAddress(), (await ethers.getSigners())[0].address);
     haliasAddress    = await halias.getAddress();
     REGISTRATION_FEE = await halias.registrationFee();
     registrySMT      = new SMT();

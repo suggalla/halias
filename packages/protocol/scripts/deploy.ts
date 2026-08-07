@@ -132,7 +132,7 @@ async function main() {
   // Encode against the real ABI rather than a hand-written type list: the two cannot
   // drift when the constructor changes, and a mismatch here produces an initCode that
   // deploys a broken contract at a CREATE2 address nobody can recompute.
-  const encodedArgs = HaliasFactory.interface.encodeDeploy([verifierAddr]);
+  const encodedArgs = HaliasFactory.interface.encodeDeploy([verifierAddr, deployer.address]);
   const initCode = ethers.concat([HaliasFactory.bytecode, encodedArgs]);
 
   let salt = config.vanitySalt;

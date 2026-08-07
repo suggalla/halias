@@ -129,15 +129,29 @@ export class Halias {
 
   async refresh(): Promise<void> {
     this.ensureInit();
+    // Always rescan from the deployment block rather than from lastBlock + 1.
+    //
+    // scanEvents rebuilds the registry SMT from the events it sees, and the assignments
+    // below replace rather than merge, so an incremental scan would return a tree built
+    // only from the new range and silently discard every earlier registration. Combined
+    // with lastBlock jumping to head after the first scan, a freshly registered account
+    // could not find itself — which is exactly what the live Sepolia run hit.
+    //
+    // Rescanning is correct but O(history); making scanEvents merge into an existing
+    // tree, so the cache can warm-start an incremental scan, is the follow-up.
+    const fromBlock = this.config.startBlock ?? 0;
     const result = await scanEvents(
       this.config.provider,
       this.config.contractAddress,
-      this.lastBlock + 1,
+      fromBlock,
       this.config.rpcChunkSize,
       this.config.onProgress,
     );
 
-    // Merge new pool commitments
+    // Rebuilt from scratch, so start from an empty tree rather than appending to the
+    // commitments already inserted by a previous refresh.
+    this.poolTree = new MerkleTree(POOL_LEVELS);
+
     for (const out of result.outputs) {
       this.poolTree.insert(out.commitment);
     }
@@ -147,10 +161,7 @@ export class Halias {
     this.registryEntries = result.registryEntries;
     this.aliasHashByPubkey = result.aliasHashByPubkey;
 
-    // Merge spent nullifiers
-    for (const sn of result.spentNullifiers) {
-      this.spentNullifiers.add(sn);
-    }
+    this.spentNullifiers = new Set(result.spentNullifiers);
 
     this.lastBlock = await this.config.provider.getBlockNumber();
 
@@ -164,7 +175,9 @@ export class Halias {
     );
 
     // Retained so an invite claimer can locate the note belonging to a derived keypair.
-    this.allOutputs.push(...result.outputs);
+    // Assigned, not appended: refresh() rescans from the start, so appending would
+    // duplicate every output on each call.
+    this.allOutputs = result.outputs;
 
     await this.saveCache();
   }

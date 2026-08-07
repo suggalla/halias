@@ -58,7 +58,7 @@ describe("ERC-20", function () {
     const Halias = await ethers.getContractFactory("Halias", {
       libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
     });
-    halias = await Halias.deploy(await mv.getAddress());
+    halias = await Halias.deploy(await mv.getAddress(), (await ethers.getSigners())[0].address);
     haliasAddress = await halias.getAddress();
     REGISTRATION_FEE = await halias.registrationFee();
 

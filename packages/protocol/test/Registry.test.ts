@@ -19,7 +19,7 @@ describe("Registry", function () {
         PoseidonT4: await poseidonT4.getAddress(),
       },
     });
-    const halias = await Halias.deploy(await transactVerifier.getAddress());
+    const halias = await Halias.deploy(await transactVerifier.getAddress(), (await ethers.getSigners())[0].address);
     return { halias };
   }
 
