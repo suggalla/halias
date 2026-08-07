@@ -13,6 +13,8 @@ import {
 import { MerkleTree } from "../src/merkle";
 import { buildEntry, computeNullifier, NULLIFIER_DOMAIN, ETH_TOKEN_ADDRESS } from "../src/entry";
 import { findMyOutputs, Output } from "../src/events";
+import { Halias } from "../src/halias";
+import { SMT } from "../src/smt";
 
 before(async () => {
   await init();
@@ -211,5 +213,54 @@ describe("findMyOutputs", () => {
     ];
 
     expect(findMyOutputs(outputs, myPubkey, myVK, myKey.secretKey)).to.have.lengthOf(0);
+  });
+});
+
+// The Halias class is the package's main entry point and, until this was added, no test
+// had ever constructed one — which let a constructor that threw unconditionally pass CI.
+describe("Halias construction", () => {
+  const cfg = (): any => ({
+    provider: new ethers.JsonRpcProvider("http://127.0.0.1:8545"),
+    signer: ethers.Wallet.createRandom(),
+    chainId: 31337,
+    contractAddress: "0x" + "11".repeat(20),
+    artifacts: { transactWasm: "/dev/null", transactZkey: "/dev/null" },
+  });
+
+  it("constructs without Poseidon being initialised", () => {
+    // A caller cannot await init() before the constructor runs, so nothing in it may
+    // depend on global crypto setup. SMT used to compute its empty root eagerly, which
+    // made `new Halias(...)` throw unconditionally.
+    expect(() => new Halias(cfg())).to.not.throw();
+  });
+
+  it("reports a clear error when used before init()", async () => {
+    const h = new Halias(cfg());
+    try {
+      await h.balance();
+      expect.fail("expected a pre-init call to be rejected");
+    } catch (e: any) {
+      expect(e.message).to.match(/init/i);
+    }
+  });
+});
+
+describe("SMT lazy root", () => {
+  it("constructs eagerly but resolves the empty root on demand", () => {
+    expect(() => new SMT()).to.not.throw();
+    const a = new SMT(), b = new SMT();
+    expect(a.root).to.equal(b.root);       // two empty trees agree
+    a.update(1n, 42n);
+    expect(a.root).to.not.equal(b.root);   // an update moves the root
+  });
+
+  it("clone snapshots without aliasing the original", () => {
+    const a = new SMT();
+    a.update(1n, 42n);
+    const snapshot = a.root;
+    const b = a.clone();
+    b.update(2n, 99n);
+    expect(a.root).to.equal(snapshot);
+    expect(b.root).to.not.equal(snapshot);
   });
 });

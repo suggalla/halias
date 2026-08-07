@@ -34,10 +34,19 @@ function smtHash2(left: bigint, right: bigint): bigint {
 // Supports in-place updates (key rotation, alias transfer).
 export class SMT {
   private nodes = new Map<string, bigint>();
-  public root: bigint;
+  private _root: bigint | null = null;
 
-  constructor() {
-    this.root = getZeros()[REGISTRY_LEVELS];
+  // Lazy, matching MerkleTree.zeros. Computing the empty root needs Poseidon, and
+  // callers legitimately construct a tree before awaiting initCrypto() — Halias holds
+  // one as a field, so doing this work in the constructor made `new Halias(...)` throw
+  // before init() could ever be called.
+  get root(): bigint {
+    if (this._root === null) this._root = getZeros()[REGISTRY_LEVELS];
+    return this._root;
+  }
+
+  set root(value: bigint) {
+    this._root = value;
   }
 
   update(key: bigint, value: bigint): void {
