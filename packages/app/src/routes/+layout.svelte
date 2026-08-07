@@ -8,10 +8,8 @@
 	import Taskbar from '$lib/components/Taskbar.svelte';
 	import CrtOverlay from '$lib/components/CrtOverlay.svelte';
 	import InfoWindow from '$lib/windows/InfoWindow.svelte';
-	import SendWindow from '$lib/windows/SendWindow.svelte';
-	import DepositWindow from '$lib/windows/DepositWindow.svelte';
-	import BalanceWindow from '$lib/windows/BalanceWindow.svelte';
-	import RegistryWindow from '$lib/windows/RegistryWindow.svelte';
+	import WalletWindow from '$lib/windows/WalletWindow.svelte';
+	import MoveWindow from '$lib/windows/MoveWindow.svelte';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -21,41 +19,29 @@
 
 		// The working panels open by default. Leaving them hidden is what made the desktop
 		// look empty — the user had to assemble a workspace before the app did anything.
+		// Welcome is registered first so it gets the lowest z-index. Registering it last
+		// put it on top of the whole workspace, which is why nothing else was visible.
 		windowStore.register([
-			{
-				id: 'balance',
-				title: 'Balance',
-				component: BalanceWindow,
-				defaultRect: ws.balance,
-				visible: true
-			},
-			{
-				id: 'registry',
-				title: 'Registry',
-				component: RegistryWindow,
-				defaultRect: ws.registry,
-				visible: true
-			},
-			{
-				id: 'deposit',
-				title: 'Deposit',
-				component: DepositWindow,
-				defaultRect: ws.deposit,
-				visible: true
-			},
-			{
-				id: 'send',
-				title: 'Send',
-				component: SendWindow,
-				defaultRect: ws.send,
-				visible: true
-			},
 			{
 				id: 'info',
 				title: 'Welcome',
 				component: InfoWindow,
 				defaultRect: ws.welcome,
 				visible: firstVisit
+			},
+			{
+				id: 'wallet',
+				title: 'Wallet',
+				component: WalletWindow,
+				defaultRect: ws.wallet,
+				visible: true
+			},
+			{
+				id: 'move',
+				title: 'Move',
+				component: MoveWindow,
+				defaultRect: ws.move,
+				visible: true
 			}
 		]);
 
