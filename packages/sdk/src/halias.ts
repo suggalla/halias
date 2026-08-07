@@ -499,6 +499,15 @@ export class Halias {
     return { total, entries };
   }
 
+  // The aliasHash this account's spending key is registered under, or null if it has
+  // never registered. A name cannot be recovered from it — aliasHash is a keccak — so a
+  // caller that wants to display the name must remember what it registered.
+  async myAliasHash(): Promise<bigint | null> {
+    this.ensureInit();
+    await this.ensureSync();
+    return this.aliasHashByPubkey.get(this.keys!.spendingPubkey) ?? null;
+  }
+
   async lookup(alias: string): Promise<LookupResult> {
     this.ensureInit();
     const cleanAlias = alias.replace(/\.hls$/, "").toLowerCase();

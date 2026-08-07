@@ -1,59 +1,37 @@
 <script lang="ts">
-	const denominations = ['0.001', '0.01', '0.1', '1', '10'];
-	let selected = $state('0.1');
+	import { clientState, getClient, run } from '../sdk/client.js';
 
-	function handleDeposit() {
-		console.log('deposit', { denomination: selected });
+	let amount = $state('');
+	let result = $state<string | null>(null);
+
+	const busy = $derived($clientState.status === 'syncing');
+	const ready = $derived($clientState.status === 'ready');
+
+	async function handleDeposit() {
+		result = null;
+		const r = await run(() => getClient().deposit(amount.trim()));
+		if (r) result = `Deposited. ${r.txHash.slice(0, 14)}…`;
 	}
 </script>
 
-<div class="deposit-form">
-	<span class="label">Denomination (ETH)</span>
-	<div class="denom-row">
-		{#each denominations as d}
-			<button
-				class="denom-btn"
-				class:active={selected === d}
-				onclick={() => (selected = d)}
-			>
-				{d}
-			</button>
-		{/each}
-	</div>
+<div class="form">
+	{#if !ready && !busy}<p class="hint">Connect a wallet to deposit.</p>{/if}
 
-	<button class="btn btn-primary" onclick={handleDeposit}>Deposit</button>
+	<label class="label" for="dep-amt">Amount (ETH)</label>
+	<input id="dep-amt" class="input" type="text" placeholder="0.01" bind:value={amount} disabled={busy} />
+
+	<button class="btn btn-primary" onclick={handleDeposit} disabled={busy || !ready || !amount}>
+		{busy ? 'Proving…' : 'Deposit'}
+	</button>
+
+	<p class="hint">Shields ETH into the pool. The amount is public on this step and private thereafter.</p>
+	{#if result}<p class="ok">{result}</p>{/if}
+	{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
 </div>
 
 <style>
-	.deposit-form {
-		display: flex;
-		flex-direction: column;
-		gap: 14px;
-	}
-
-	.denom-row {
-		display: flex;
-		gap: 6px;
-		flex-wrap: wrap;
-	}
-
-	.denom-btn {
-		padding: 8px 14px;
-		border: 1px solid var(--border);
-		background: var(--bg-input);
-		color: var(--text);
-		font-family: inherit;
-		font-size: 14px;
-		cursor: pointer;
-	}
-
-	.denom-btn:hover {
-		border-color: var(--accent);
-	}
-
-	.denom-btn.active {
-		border-color: var(--accent);
-		color: var(--accent);
-		box-shadow: 0 0 6px var(--accent-glow);
-	}
+	.form { display: flex; flex-direction: column; gap: 12px; }
+	.hint { font-size: 11px; opacity: 0.7; margin: 0; }
+	.ok   { font-size: 11px; color: #2b7; margin: 0; }
+	.err  { font-size: 11px; color: #c33; margin: 0; word-break: break-word; }
 </style>
