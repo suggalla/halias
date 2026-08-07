@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { windowStore } from '../wm/store.js';
-	import { walletStore, connectMetaMask, disconnect } from '../wallet/connect.js';
+	import { clientState, connect, disconnect } from '../sdk/client.js';
 
 	function handleWalletClick() {
-		if ($walletStore.address) {
+		if ($clientState.address) {
 			disconnect();
 		} else {
-			connectMetaMask();
+			connect();
 		}
 	}
 
@@ -30,11 +30,11 @@
 	</div>
 	<div class="taskbar-right">
 		<button class="wallet-pill" onclick={handleWalletClick}>
-			<span class="status-dot" class:connected={$walletStore.address}></span>
-			{#if $walletStore.connecting}
+			<span class="status-dot" class:connected={$clientState.address}></span>
+			{#if ($clientState.status === 'connecting' || $clientState.status === 'syncing')}
 				connecting...
-			{:else if $walletStore.address}
-				{shortAddr($walletStore.address)}
+			{:else if $clientState.address}
+				{shortAddr($clientState.address)}
 			{:else}
 				Connect
 			{/if}

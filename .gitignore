@@ -50,3 +50,6 @@ coverage.json
 lib/
 cache_forge/
 out/
+
+# Proof artifacts are copied from packages/protocol at build time
+static/artifacts/
