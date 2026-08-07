@@ -67,7 +67,7 @@ describe("Registry", function () {
 
       await expect(halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE }))
         .to.emit(halias, "AliasRegistered")
-        .withArgs(aliasHash, spendingPubkey, expectedLeaf, encryptionPubkey);
+        .withArgs(aliasHash, spendingPubkey, expectedLeaf, encryptionPubkey, 1); // slot 1 = first alias, stored offset by one
     });
 
     it("should reject wrong fee", async function () {
@@ -164,12 +164,14 @@ describe("Registry", function () {
       const key = aliasHashToKey(aliasHash);
 
       await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
-      smt.update(key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
+      const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
+      smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
 
       expect(await halias.smtRoot()).to.equal(ethers.toBeHex(smt.root, 32), "root mismatch after registration");
 
       await halias.updateKeys(aliasHash, newNullifierKeyHash, newEncryptionPubkey);
-      smt.update(key, registryLeaf(BigInt(spendingPubkey), BigInt(newNullifierKey)));
+      // Rotation reuses the same slot — that is what keeps the update in place.
+      smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(newNullifierKey)));
 
       expect(await halias.smtRoot()).to.equal(ethers.toBeHex(smt.root, 32), "root mismatch after updateKeys");
     });
@@ -243,10 +245,12 @@ describe("Registry", function () {
       const key = aliasHashToKey(aliasHash);
 
       await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
-      smt.update(key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
+      const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
+      smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
 
       await halias.transferAliasWithKeys(aliasHash, newOwner.address, newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey);
-      smt.update(key, registryLeaf(BigInt(newSpendingPubkey), BigInt(newNullifierKey)));
+      // Transfer keeps the slot too: the alias moves owner, not position.
+      smt.update(slot, key, registryLeaf(BigInt(newSpendingPubkey), BigInt(newNullifierKey)));
 
       expect(await halias.smtRoot()).to.equal(ethers.toBeHex(smt.root, 32));
     });
@@ -328,7 +332,10 @@ describe("Registry", function () {
           encryptionPubkey,
           { value: REGISTRATION_FEE }
         );
-        smt.update(aliasHashToKey(aliasHash), registryLeaf(a.pubkey, a.nk));
+        // Slots are handed out in registration order, so the local mirror follows the
+        // same sequence the contract used rather than deriving a position from the name.
+        const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
+        smt.update(slot, aliasHashToKey(aliasHash), registryLeaf(a.pubkey, a.nk));
 
         expect(await halias.smtRoot()).to.equal(
           ethers.toBeHex(smt.root, 32),
@@ -344,10 +351,12 @@ describe("Registry", function () {
       const key = aliasHashToKey(aliasHash);
 
       await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
-      smt.update(key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
+      const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
+      smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
 
-      const contractSiblings = await halias.getSmtSiblings(key);
-      const localSiblings    = smt.getSiblings(key);
+      // getSmtSiblings takes the slot now, not the alias key.
+      const contractSiblings = await halias.getSmtSiblings(slot);
+      const localSiblings    = smt.getSiblings(slot);
       for (let i = 0; i < 32; i++) {
         expect(contractSiblings[i]).to.equal(ethers.toBeHex(localSiblings[i], 32));
       }

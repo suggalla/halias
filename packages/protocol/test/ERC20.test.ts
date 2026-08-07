@@ -79,8 +79,9 @@ describe("ERC-20", function () {
       ethers.keccak256(ethers.randomBytes(32)),
       { value: REGISTRATION_FEE }
     );
-    const key = aliasHashToKey(aliasHash);
-    registrySMT.update(key, registryLeaf(3n, 5n));
+    const key  = aliasHashToKey(aliasHash);
+    const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
+    registrySMT.update(slot, key, registryLeaf(3n, 5n));
   });
 
   async function poolRoot(): Promise<string> {

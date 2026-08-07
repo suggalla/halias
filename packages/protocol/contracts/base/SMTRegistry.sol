@@ -8,15 +8,13 @@ import "./Constants.sol";
 // ---------------------------------------------------------------------------
 // SMTRegistry — abstract Sparse Merkle Tree registry base
 //
-// 64-level SMT. Key = aliasHash % FIELD_PRIME. Value = RegistryLeaf hash.
+// 32-level SMT. Position = the slot assigned at registration. Value = RegistryLeaf hash.
 // Supports in-place updates (key rotation, alias transfer) so the root always
 // reflects the *latest* keys — unlike an append-only Merkle tree.
 //
-// Leaf hash:     SMTHash1(key, value) = Poseidon(key, value, 1)  [PoseidonT4]
-// Internal node: SMTHash2(L, R)       = Poseidon(L, R)           [PoseidonT3]
+// Leaf hash:     SMTHash1(aliasKey, value) = Poseidon(aliasKey, value, 1)  [PoseidonT4]
+// Internal node: SMTHash2(L, R)            = Poseidon(L, R)               [PoseidonT3]
 // Empty subtree: zeros[i], pre-computed from zeros[0] = 0
-//
-// Birthday collision at 64 levels: P ≈ n²/2^65 — negligible at any realistic scale.
 // ---------------------------------------------------------------------------
 // Registry roots expire, unlike pool roots. The window bounds how stale a sender's view
 // of a recipient's keys may be: once someone rotates keys, a sender proving against an
@@ -28,22 +26,29 @@ import "./Constants.sol";
 // freshness property actually needs, and makes the lookup O(1) instead of a 300-slot
 // scan that cost 726k gas to miss.
 abstract contract SMTRegistry {
-    uint32 public constant REGISTRY_LEVELS = 64;
+    // Slots are assigned in registration order, so depth is a capacity bound rather than
+    // a birthday bound: 32 levels holds 4.29e9 aliases and two can never contend for one
+    // position. Deriving the position from aliasHash instead needed 64 levels purely to
+    // make collisions expensive to grind, and cost twice the hashing to get there.
+    uint32 public constant REGISTRY_LEVELS = 32;
 
     // ~1 day at 12s blocks. A sender must refresh their registry view at least this
     // often; a rotated key stops receiving after at most this long.
     uint256 public constant REGISTRY_ROOT_MAX_AGE = 7200;
 
-    error SMTCollision();
-
     bytes32 public smtRoot;
     // root => block it became current. 0 means never seen.
     mapping(bytes32 => uint256) public registryRootBlock;
-    mapping(uint256 => bytes32) public smtKeyToAliasHash;
+
+    // alias => its slot, stored offset by one so that zero reads as "not yet assigned".
+    // uint32 is deliberate: the counter cannot exceed the tree without overflowing first,
+    // so capacity is enforced by the type rather than by a check that can be forgotten.
+    mapping(bytes32 => uint32) public aliasSlot;
+    uint32 public nextAliasSlot;
 
     // _smtNodes[level][nodePath] = node hash (0 = empty/unset, use _smtZeros[level])
     mapping(uint256 => mapping(uint256 => bytes32)) private _smtNodes;
-    bytes32[65] private _smtZeros;
+    bytes32[33] private _smtZeros;
 
     function _initSMT() internal {
         bytes32 z = bytes32(0);
@@ -56,22 +61,23 @@ abstract contract SMTRegistry {
         registryRootBlock[z] = block.number;
     }
 
-    // Leaf hash: Poseidon(key, value, 1) — circomlib SMTHash1.
+    // Leaf hash: Poseidon(aliasKey, value, 1) — circomlib SMTHash1.
     // Internal node hash: Poseidon(left, right) — circomlib SMTHash2.
-    // key = uint256(aliasHash) % FIELD_PRIME.
+    //
+    // Identity and position are separate. The leaf commits to aliasKey, so the circuit
+    // still proves "this alias holds these keys"; the path follows the slot assigned on
+    // first registration, which is what makes collisions impossible rather than merely
+    // expensive. A rotation reuses the alias's existing slot and updates in place.
     function _smtUpdate(bytes32 aliasHash, bytes32 value) internal {
         uint256 key = uint256(aliasHash) % FIELD_PRIME;
 
-        // Prevent collisions in the fixed-depth tree (32-bit key space).
-        uint256 smtKey = key & ((1 << REGISTRY_LEVELS) - 1);
-        if (smtKeyToAliasHash[smtKey] != bytes32(0) && smtKeyToAliasHash[smtKey] != aliasHash) {
-            revert SMTCollision();
+        uint32 slot = aliasSlot[aliasHash];
+        if (slot == 0) {
+            slot = ++nextAliasSlot;   // uint32: reverts before the tree can overflow
+            aliasSlot[aliasHash] = slot;
         }
-        smtKeyToAliasHash[smtKey] = aliasHash;
+        uint256 pathKey = slot - 1;
 
-        // Use lower REGISTRY_LEVELS bits for tree navigation (matches circuit pathIndices).
-        // Full key stays in the leaf hash, binding the specific alias identity.
-        uint256 pathKey = smtKey;
         bytes32 current = bytes32(PoseidonT4.hash([key, uint256(value), 1]));
         for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
             uint256 nodePath    = pathKey >> i;
@@ -102,9 +108,9 @@ abstract contract SMTRegistry {
         return block.number - seen <= REGISTRY_ROOT_MAX_AGE;
     }
 
-    // Returns all REGISTRY_LEVELS SMT siblings for a given key (for off-chain proof construction).
-    function getSmtSiblings(uint256 key) external view returns (bytes32[64] memory siblings) {
-        uint256 pathKey = key & ((1 << REGISTRY_LEVELS) - 1);
+    // Siblings for a given slot (for off-chain proof construction). Takes the slot, not
+    // the alias — resolve it with aliasSlot(aliasHash) - 1.
+    function getSmtSiblings(uint256 pathKey) external view returns (bytes32[32] memory siblings) {
         for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
             uint256 siblingPath = (pathKey >> i) ^ 1;
             bytes32 s = _smtNodes[i][siblingPath];

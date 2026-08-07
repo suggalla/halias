@@ -32,7 +32,7 @@ import { randomBytes } from "crypto";
 
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const POOL_LEVELS     = 32;
-const REGISTRY_LEVELS = 64;
+const REGISTRY_LEVELS = 32;
 
 export interface HaliasConfig {
   provider: ethers.Provider;
@@ -195,27 +195,33 @@ export class Halias {
     };
   }
 
-  // Returns aliasHash as the field-reduced SMT key (aliasHash % FIELD_PRIME) — this is the
-  // value the circuit consumes as outAliasHash (leaf key + Num2Bits_strict path source), and
-  // it matches the on-chain leaf key. The raw aliasHash (256-bit keccak) is ≥ p ~81% of the
-  // time, so passing it unreduced would fail Num2Bits_strict and mismatch the leaf.
+  // Identity and position are separate, matching the circuit: aliasHash is the
+  // field-reduced key hashed into the leaf, registrySlot is the tree position the
+  // contract assigned. aliasHash must be reduced — a raw 256-bit keccak is >= p about
+  // 81% of the time and would not match the on-chain leaf.
   private selfSmtProof() {
     const pubkey = this.keys!.spendingPubkey;
     const aliasHash = this.aliasHashByPubkey.get(pubkey);
     if (aliasHash === undefined) throw new Error("Account not registered or not synced");
-    const smtKey = aliasHashToSmtKey(aliasHash);
-    const siblings = this.smt.getSiblings(smtKey);
     const entry = this.registryEntries.find(e => BigInt(e.aliasHash) === aliasHash)!;
-    return { aliasHash: smtKey, siblings, dataHash: entry.dataHash };
+    return {
+      aliasHash: aliasHashToSmtKey(aliasHash),
+      registrySlot: entry.registrySlot,
+      siblings: this.smt.getSiblings(entry.registrySlot),
+      dataHash: entry.dataHash,
+    };
   }
 
   private recipientSmtProof(pubkey: bigint) {
     const aliasHash = this.aliasHashByPubkey.get(pubkey);
     if (aliasHash === undefined) throw new Error("Recipient pubkey not found in registry");
-    const smtKey = aliasHashToSmtKey(aliasHash);
-    const siblings = this.smt.getSiblings(smtKey);
     const entry = this.registryEntries.find(e => BigInt(e.aliasHash) === aliasHash)!;
-    return { aliasHash: smtKey, siblings, dataHash: entry.dataHash };
+    return {
+      aliasHash: aliasHashToSmtKey(aliasHash),
+      registrySlot: entry.registrySlot,
+      siblings: this.smt.getSiblings(entry.registrySlot),
+      dataHash: entry.dataHash,
+    };
   }
 
   private selectEntry(amount: bigint, tokenAddress: bigint): OwnedEntry {
@@ -282,6 +288,7 @@ export class Halias {
         {
           pubkey: keys.spendingPubkey,
           nullifierKeyHash,
+          registrySlot:     selfProof.registrySlot,
           blinding,
           amount,
           aliasHash: selfProof.aliasHash,
@@ -339,6 +346,7 @@ export class Halias {
     const recipientOut: TransactOutput = {
       pubkey:           recipient.spendingPubkey,
       nullifierKeyHash: recipient.nullifierKeyHash,
+      registrySlot:     recProof.registrySlot,
       blinding:         recipientBlinding,
       amount:           sendAmount,
       aliasHash:        recProof.aliasHash,
@@ -348,6 +356,7 @@ export class Halias {
     const changeOut: TransactOutput = {
       pubkey:           keys.spendingPubkey,
       nullifierKeyHash: selfNullifierKeyHash,
+      registrySlot:     selfProof.registrySlot,
       blinding:         changeBlinding,
       amount:           changeAmount,
       aliasHash:        selfProof.aliasHash,
@@ -427,6 +436,7 @@ export class Halias {
       out0 = {
         pubkey:           keys.spendingPubkey,
         nullifierKeyHash,
+        registrySlot:     selfProof.registrySlot,
         blinding:         changeBlinding,
         amount:           changeAmount,
         aliasHash:        selfProof.aliasHash,
@@ -615,7 +625,9 @@ export class Halias {
     const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, encryptedOutput0, "0x", BigInt(this.config.chainId), this.config.contractAddress);
     const poolRoot     = this.poolTree.getRoot();
     const registryRoot = this.smt.root;
-    const siblings     = this.smt.getSiblings(tempAliasHash);
+    const tempEntry    = this.registryEntries.find(e => BigInt(e.aliasHash) === tempAliasHash);
+    if (!tempEntry) throw new Error("Invite account did not appear in the registry after refresh");
+    const siblings     = this.smt.getSiblings(tempEntry.registrySlot);
 
     const { proofBytes } = await proveTransact({
       poolRoot, registryRoot, publicAmount: amount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
@@ -624,7 +636,8 @@ export class Halias {
       inputs: [dummy0.input, dummy1.input],
       outputs: [
         { pubkey: temp.spendingPubkey, nullifierKeyHash: temp.nullifierKeyHash, blinding: temp.blinding,
-          amount, aliasHash: tempAliasHash, dataHash: 0n, registrySiblings: siblings },
+          amount, aliasHash: tempAliasHash, registrySlot: tempEntry.registrySlot,
+          dataHash: 0n, registrySiblings: siblings },
         out1,
       ],
     }, this.getArtifacts());
@@ -680,15 +693,19 @@ export class Halias {
     if (note.amount < absAmount)
       throw new Error(`Invite note ${ethers.formatEther(note.amount)} ETH cannot cover fee + relayer (${ethers.formatEther(absAmount)} ETH)`);
 
-    // Mirror _doRegister locally: the change output must prove against the post-register root.
+    // Mirror _doRegister locally: the change output must prove against the post-register
+    // root. The slot is the next one the contract will hand out — registerWithPoolNote
+    // registers before it verifies, so by proof-check time this is the claimer's slot.
+    const ownSlot = Number(await this.contract.nextAliasSlot() as bigint);
     const postSmt = this.smt.clone();
-    postSmt.update(smtKey, poseidonHash([keys.spendingPubkey, nullifierKeyHash, 0n]));
+    postSmt.update(ownSlot, smtKey, poseidonHash([keys.spendingPubkey, nullifierKeyHash, 0n]));
 
     const changeAmount = note.amount - absAmount;
     const changeBlind  = randomBlinding();
     const changeOut = changeAmount > 0n
       ? { pubkey: keys.spendingPubkey, nullifierKeyHash, blinding: changeBlind, amount: changeAmount,
-          aliasHash: smtKey, dataHash: 0n, registrySiblings: postSmt.getSiblings(smtKey) }
+          aliasHash: smtKey, registrySlot: ownSlot, dataHash: 0n,
+          registrySiblings: postSmt.getSiblings(ownSlot) }
       : dummyOutput(randomBlinding());
     const comm0 = poseidonHash([changeOut.pubkey, changeOut.nullifierKeyHash, changeOut.blinding, changeOut.amount, ETH_TOKEN_ADDRESS]);
 

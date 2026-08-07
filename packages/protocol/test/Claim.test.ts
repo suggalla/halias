@@ -11,7 +11,7 @@ const snarkjs = require("snarkjs");
 const TRANSACT_WASM = path.resolve(__dirname, "../circuits/out/transact/transact_js/transact.wasm");
 const TRANSACT_ZKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/transact_final.zkey");
 const POOL_LEVELS = 32;
-const REGISTRY_LEVELS = 64;
+const REGISTRY_LEVELS = 32;
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 // Invite claim, end to end, against the REAL Groth16 verifier.
@@ -81,7 +81,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
   const dummyNullifier = (leafIndex: number) => computeNullifier(DUMMY_NULLIFIER_KEY, leafIndex);
 
   const dummyOutput = () => ({
-    pubkey: DUMMY_OUT_PUBKEY, nullifierKeyHash: 0n, dataHash: 0n, aliasHash: 0n,
+    pubkey: DUMMY_OUT_PUBKEY, nullifierKeyHash: 0n, dataHash: 0n, aliasHash: 0n, registrySlot: 0,
     blinding: 0n, amount: 0n, registrySiblings: new Array(REGISTRY_LEVELS).fill(0n),
   });
 
@@ -126,6 +126,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
       outNullifierKeyHash:  o.outputs.map((x: any) => s(x.nullifierKeyHash)),
       outDataHash:          o.outputs.map((x: any) => s(x.dataHash)),
       outAliasHash:         o.outputs.map((x: any) => s(x.aliasHash)),
+      outRegistryIndex:     o.outputs.map((x: any) => String(x.registrySlot ?? 0)),
       outRegistrySiblings:  o.outputs.map((x: any) => x.registrySiblings.map(s)),
     };
   }
@@ -171,16 +172,17 @@ describe("Invite claim (registerWithPoolNote)", function () {
       ethers.keccak256(ethers.randomBytes(32)),
       { value: REGISTRATION_FEE },
     );
-    const key = aliasHashToKey(aliasHash);
-    registrySMT.update(key, registryLeaf(pubkey, nullifierKey));
-    return { aliasHash, key };
+    const key  = aliasHashToKey(aliasHash);
+    const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
+    registrySMT.update(slot, key, registryLeaf(pubkey, nullifierKey));
+    return { aliasHash, key, slot };
   }
 
   // Step 1 of the invite: inviter registers the unnamed account and funds it.
   // Returns everything the claimer would derive from the invite secret.
   async function createInvite(noteAmount: bigint) {
     const temp = generateKeypair();
-    const { key: tempKey } = await registerOnChain(inviter, temp.pubkey, temp.nullifierKey);
+    const { key: tempKey, slot: tempSlot } = await registerOnChain(inviter, temp.pubkey, temp.nullifierKey);
 
     const blinding   = BigInt("0x" + crypto.randomBytes(31).toString("hex"));
     const nkHash     = toNullifierKeyHash(temp.nullifierKey);
@@ -191,8 +193,8 @@ describe("Invite claim (registerWithPoolNote)", function () {
       publicAmount: noteAmount, paramsHash: await paramsHashFor({}),
       inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
       outputs: [
-        { pubkey: temp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: tempKey,
-          blinding, amount: noteAmount, registrySiblings: registrySMT.getSiblings(tempKey) },
+        { pubkey: temp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: tempKey, registrySlot: tempSlot,
+          blinding, amount: noteAmount, registrySiblings: registrySMT.getSiblings(tempSlot) },
         dummyOutput(),
       ],
       inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
@@ -213,7 +215,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
 
     const leafIndex = poolTree.insert(commitment);
     poolTree.insert(DUMMY_OUT_COMMITMENT);
-    return { temp, blinding, noteAmount, leafIndex: leafIndex ?? 0 };
+    return { temp, blinding, noteAmount, leafIndex: leafIndex ?? 0, tempSlot };
   }
 
   // Step 2: the claimer registers their own name, paying the fee from the note.
@@ -228,10 +230,12 @@ describe("Invite claim (registerWithPoolNote)", function () {
     const ownKey    = aliasHashToKey(aliasHash);
     const ownNKHash = toNullifierKeyHash(own.nullifierKey);
 
-    // The proof must see the tree AFTER this registration, because the change output
-    // is addressed to it. Mirror _doRegister locally before building the witness.
+    // The proof must see the tree AFTER this registration, because the change output is
+    // addressed to it. registerWithPoolNote registers before it verifies, so the slot the
+    // contract is about to hand out is the one this proof must use.
+    const ownSlot = Number(await halias.nextAliasSlot());
     const postSMT = registrySMT.clone();
-    postSMT.update(ownKey, registryLeaf(own.pubkey, own.nullifierKey));
+    postSMT.update(ownSlot, ownKey, registryLeaf(own.pubkey, own.nullifierKey));
 
     const absAmount   = REGISTRATION_FEE + relayerFee;
     const changeAmt   = invite.noteAmount - absAmount;
@@ -242,8 +246,8 @@ describe("Invite claim (registerWithPoolNote)", function () {
     const poolProof    = poolTree.getProof(invite.leafIndex);
 
     const changeOut = changeAmt > 0n
-      ? { pubkey: own.pubkey, nullifierKeyHash: ownNKHash, dataHash: 0n, aliasHash: ownKey,
-          blinding: changeBlind, amount: changeAmt, registrySiblings: postSMT.getSiblings(ownKey) }
+      ? { pubkey: own.pubkey, nullifierKeyHash: ownNKHash, dataHash: 0n, aliasHash: ownKey, registrySlot: ownSlot,
+          blinding: changeBlind, amount: changeAmt, registrySiblings: postSMT.getSiblings(ownSlot) }
       : dummyOutput();
     const changeCommitment = changeAmt > 0n ? changeComm : DUMMY_OUT_COMMITMENT;
 
@@ -403,6 +407,7 @@ describe("Invite claim (registerWithPoolNote)", function () {
     const own    = generateKeypair();
     const aliasHash = ethers.keccak256(ethers.randomBytes(32));
     const ownKey    = aliasHashToKey(aliasHash);
+    const ownSlot   = Number(await halias.nextAliasSlot());
     const ownNKHash = toNullifierKeyHash(own.nullifierKey);
 
     const absAmount = REGISTRATION_FEE;
@@ -427,8 +432,8 @@ describe("Invite claim (registerWithPoolNote)", function () {
         dummyInput(dummyIdx),
       ],
       outputs: [
-        { pubkey: own.pubkey, nullifierKeyHash: ownNKHash, dataHash: 0n, aliasHash: ownKey,
-          blinding: blind, amount: changeAmt, registrySiblings: registrySMT.getSiblings(ownKey) },
+        { pubkey: own.pubkey, nullifierKeyHash: ownNKHash, dataHash: 0n, aliasHash: ownKey, registrySlot: ownSlot,
+          blinding: blind, amount: changeAmt, registrySiblings: registrySMT.getSiblings(ownSlot) },
         dummyOutput(),
       ],
       inputNullifiers:   [nullifier, dummyNullifier(dummyIdx)],

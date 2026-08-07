@@ -11,7 +11,7 @@ const snarkjs = require("snarkjs");
 const TRANSACT_WASM = path.resolve(__dirname, "../circuits/out/transact/transact_js/transact.wasm");
 const TRANSACT_ZKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/transact_final.zkey");
 const POOL_LEVELS = 32;
-const REGISTRY_LEVELS = 64;
+const REGISTRY_LEVELS = 32;
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 // Circuit <-> contract alignment.
@@ -64,7 +64,7 @@ describe("Circuit/contract alignment", function () {
   }
 
   const dummyOutput = () => ({
-    pubkey: DUMMY_OUT_PUBKEY, nullifierKeyHash: 0n, dataHash: 0n, aliasHash: 0n,
+    pubkey: DUMMY_OUT_PUBKEY, nullifierKeyHash: 0n, dataHash: 0n, aliasHash: 0n, registrySlot: 0,
     blinding: 0n, amount: 0n, registrySiblings: new Array(REGISTRY_LEVELS).fill(0n),
   });
 
@@ -85,6 +85,7 @@ describe("Circuit/contract alignment", function () {
       outNullifierKeyHash:  o.outputs.map((x: any) => s(x.nullifierKeyHash)),
       outDataHash:          o.outputs.map((x: any) => s(x.dataHash)),
       outAliasHash:         o.outputs.map((x: any) => s(x.aliasHash)),
+      outRegistryIndex:     o.outputs.map((x: any) => String(x.registrySlot ?? 0)),
       outRegistrySiblings:  o.outputs.map((x: any) => x.registrySiblings.map(s)),
     };
   }
@@ -115,9 +116,10 @@ describe("Circuit/contract alignment", function () {
     await halias.register(
       aliasHash, ethers.toBeHex(pubkey, 32), ethers.toBeHex(toNullifierKeyHash(nk), 32),
       ethers.keccak256(ethers.randomBytes(32)), { value: REGISTRATION_FEE });
-    const key = aliasHashToKey(aliasHash);
-    registrySMT.update(key, registryLeaf(pubkey, nk));
-    return { aliasHash, key };
+    const key  = aliasHashToKey(aliasHash);
+    const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
+    registrySMT.update(slot, key, registryLeaf(pubkey, nk));
+    return { aliasHash, key, slot };
   }
 
   // ── Hash-function agreement ───────────────────────────────────────

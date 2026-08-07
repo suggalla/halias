@@ -110,11 +110,14 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
     // nullifierKey is never emitted or stored raw — only its Poseidon hash is retained,
     // preventing observers from enumerating nullifiers to trace spending patterns.
     // spendingPubkey is emitted for off-chain indexers (already public in registry storage).
+    // registrySlot is the alias's position in the SMT, assigned on first registration.
+    // Emitted so an indexer can place the leaf without one extra call per alias.
     event AliasRegistered(
         bytes32 indexed aliasHash,
         bytes32 spendingPubkey,
         bytes32 registryLeafHash,
-        bytes32 encryptionPubkey
+        bytes32 encryptionPubkey,
+        uint32  registrySlot
     );
     event KeysUpdated(
         bytes32 indexed aliasHash,
@@ -198,7 +201,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         bytes32 leaf = bytes32(PoseidonT4.hash([uint256(spendingPubkey), uint256(nullifierKeyHash), 0]));
         _smtUpdate(aliasHash, leaf);
 
-        emit AliasRegistered(aliasHash, spendingPubkey, leaf, encryptionPubkey);
+        emit AliasRegistered(aliasHash, spendingPubkey, leaf, encryptionPubkey, aliasSlot[aliasHash]);
     }
 
     function register(

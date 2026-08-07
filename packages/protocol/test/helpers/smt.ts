@@ -1,6 +1,6 @@
 import { poseidonHash } from "./poseidon";
 
-const REGISTRY_LEVELS = 64;
+const REGISTRY_LEVELS = 32;
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 // Must be called after initPoseidon().
@@ -38,12 +38,12 @@ export class SMT {
     this.root = getZeros()[REGISTRY_LEVELS];
   }
 
-  update(key: bigint, value: bigint): void {
-    // Use lower registryLevels bits for tree navigation (matches the circuit's pathIndices).
-    // Full key is only used in the leaf hash (smtHash1), binding the specific alias.
-    const pathKey = key & ((1n << BigInt(REGISTRY_LEVELS)) - 1n);
+  // Position is the slot the contract assigned; the leaf still hashes aliasKey, so
+  // identity is bound by the leaf rather than by where it sits. Mirrors _smtUpdate.
+  update(slot: number, aliasKey: bigint, value: bigint): void {
+    const pathKey = BigInt(slot);
     const zeros = getZeros();
-    let current = smtHash1(key, value);
+    let current = smtHash1(aliasKey, value);
     for (let i = 0; i < REGISTRY_LEVELS; i++) {
       const nodePath    = pathKey >> BigInt(i);
       const siblingPath = nodePath ^ 1n;
@@ -65,8 +65,8 @@ export class SMT {
     return copy;
   }
 
-  getSiblings(key: bigint): bigint[] {
-    const pathKey = key & ((1n << BigInt(REGISTRY_LEVELS)) - 1n);
+  getSiblings(slot: number): bigint[] {
+    const pathKey = BigInt(slot);
     const zeros = getZeros();
     return Array.from({ length: REGISTRY_LEVELS }, (_, i) => {
       const siblingPath = (pathKey >> BigInt(i)) ^ 1n;

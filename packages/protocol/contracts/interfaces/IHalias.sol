@@ -37,7 +37,7 @@ interface IHalias {
     function poolTokenBalance(address token) external view returns (uint256);
     function smtRoot() external view returns (bytes32);
     function getRegistryRoot() external view returns (bytes32);
-    function getSmtSiblings(uint256 key) external view returns (bytes32[64] memory);
+    function getSmtSiblings(uint256 slot) external view returns (bytes32[32] memory);
     function isKnownPoolRoot(bytes32 root) external view returns (bool);
     function isKnownRegistryRoot(bytes32 root) external view returns (bool);
     function getLastRoot() external view returns (bytes32);
