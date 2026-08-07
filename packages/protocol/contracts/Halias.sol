@@ -413,9 +413,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         spentNullifiers[p.inputNullifiers[0]] = true;
         spentNullifiers[p.inputNullifiers[1]] = true;
 
-        uint32 idx0 = _insert(p.outputCommitments[0]);
-        uint32 idx1 = _insert(p.outputCommitments[1]);
-        // One publish for both inserts — the intermediate root is never observable.
+        (uint32 idx0, uint32 idx1) = _insertPair(p.outputCommitments[0], p.outputCommitments[1]);
         _commitPoolRoot();
 
         // Interactions — ETH/token movement last (CEI: safe independent of nonReentrant).
