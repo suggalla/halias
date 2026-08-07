@@ -139,3 +139,97 @@ describe("Root history", function () {
     });
   });
 });
+
+// Pairwise insertion must produce a byte-identical tree to inserting the two leaves one
+// at a time — that equivalence is the entire licence for halving the hash count, and it
+// is the difference between an optimisation and a silent consensus change. Compared here
+// against a preserved copy of the original implementation rather than argued in a comment.
+describe("Pairwise insertion equivalence", function () {
+  this.timeout(300000);
+
+  let halias: any, seq: any;
+
+  const rand = () => ethers.keccak256(ethers.randomBytes(32));
+  const proof = ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint256[2]", "uint256[2][2]", "uint256[2]"], [[0, 0], [[0, 0], [0, 0]], [0, 0]]);
+
+  beforeEach(async function () {
+    const [deployer] = await ethers.getSigners();
+    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
+    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
+    halias = await (await ethers.getContractFactory("Halias", {
+      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+    })).deploy(await mv.getAddress(), deployer.address);
+    seq = await (await ethers.getContractFactory("MockTreeSequential", {
+      libraries: { PoseidonT3: await t3.getAddress() },
+    })).deploy();
+  });
+
+  async function transactWith(c0: string, c1: string) {
+    const amt = ethers.parseEther("0.01");
+    await (await halias.transact({
+      poolRoot: await halias.getLastRoot(), registryRoot: await halias.getRegistryRoot(),
+      publicAmount: amt, tokenAddress: 0n,
+      inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
+      recipient: ethers.ZeroAddress, externalData: ethers.ZeroHash,
+    }, "0x", "0x", proof, { value: amt })).wait();
+  }
+
+  it("starts from the same empty root", async function () {
+    expect(await halias.getLastRoot()).to.equal(await seq.lastRoot());
+  });
+
+  it("matches after one pair", async function () {
+    const c0 = rand(), c1 = rand();
+    await transactWith(c0, c1);
+    await (await seq.insertPairSequentially(c0, c1)).wait();
+    expect(await halias.getLastRoot()).to.equal(await seq.lastRoot());
+    expect(await halias.nextIndex()).to.equal(await seq.nextIndex());
+  });
+
+  it("matches across many pairs, covering both parity branches at every level", async function () {
+    // Eight pairs exercises the even/odd branch at levels 1..3 and beyond, which is where
+    // an off-by-one in the starting index or level would first show up.
+    for (let i = 0; i < 8; i++) {
+      const c0 = rand(), c1 = rand();
+      await transactWith(c0, c1);
+      await (await seq.insertPairSequentially(c0, c1)).wait();
+      expect(await halias.getLastRoot(), `divergence after pair ${i + 1}`)
+        .to.equal(await seq.lastRoot());
+    }
+    expect(await halias.nextIndex()).to.equal(16n);
+  });
+
+  it("assigns the same leaf indices the sequential version would", async function () {
+    const c0 = rand(), c1 = rand();
+    const amt = ethers.parseEther("0.01");
+    const receipt = await (await halias.transact({
+      poolRoot: await halias.getLastRoot(), registryRoot: await halias.getRegistryRoot(),
+      publicAmount: amt, tokenAddress: 0n,
+      inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
+      recipient: ethers.ZeroAddress, externalData: ethers.ZeroHash,
+    }, "0x", "0x", proof, { value: amt })).wait();
+
+    // Indices feed the nullifier, so shifting them would invalidate every proof.
+    const ev = receipt!.logs
+      .map((l: any) => { try { return halias.interface.parseLog(l); } catch { return null; } })
+      .find((p: any) => p?.name === "Transact");
+    expect(ev!.args.outputLeafIndex0).to.equal(0n);
+    expect(ev!.args.outputLeafIndex1).to.equal(1n);
+  });
+
+  it("still rejects a zero commitment in either slot", async function () {
+    const amt = ethers.parseEther("0.01");
+    const base = async (c0: string, c1: string) => ({
+      poolRoot: await halias.getLastRoot(), registryRoot: await halias.getRegistryRoot(),
+      publicAmount: amt, tokenAddress: 0n,
+      inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
+      recipient: ethers.ZeroAddress, externalData: ethers.ZeroHash,
+    });
+    await expect(halias.transact(await base(ethers.ZeroHash, rand()), "0x", "0x", proof, { value: amt }))
+      .to.be.revertedWithCustomError(halias, "ZeroCommitment");
+    await expect(halias.transact(await base(rand(), ethers.ZeroHash), "0x", "0x", proof, { value: amt }))
+      .to.be.revertedWithCustomError(halias, "ZeroCommitment");
+  });
+});

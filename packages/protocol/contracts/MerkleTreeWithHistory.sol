@@ -38,17 +38,34 @@ contract MerkleTreeWithHistory {
         knownPoolRoots[currentZero] = true;
     }
 
-    // Updates the tree but does NOT publish the root. A transact inserts twice, and the
-    // intermediate root is never observable — the two inserts are atomic and reentrancy
-    // is blocked — so publishing it would just pay for a slot nobody can prove against.
-    // Callers must follow their inserts with _commitPoolRoot().
-    function _insert(bytes32 leaf) internal returns (uint32 index) {
-        if (leaf == bytes32(0)) revert ZeroCommitment();
-        if (nextIndex >= (1 << LEVELS) - 1) revert PoolFull();
-        uint32 currentIndex = nextIndex;
+    // Inserts both of a transact's outputs in one walk up the tree.
+    //
+    // Inserting them one at a time costs LEVELS hashes each. But a transact always adds
+    // exactly two leaves, so nextIndex is always even and the pair always occupies an
+    // aligned (even, odd) slot — which means their common parent can be computed
+    // directly and the walk starts at level 1. That is LEVELS + 1 hashes instead of
+    // 2 * LEVELS: 32 rather than 64, for an identical tree.
+    //
+    // Equivalence, briefly. Sequentially, inserting A at 2k writes filledSubtrees[0] = A
+    // and carries H(A, zeros[0]) upward; inserting B at 2k+1 then reads that back and
+    // carries H(A, B) upward from level 1 with the same currentIndex = k. Every level
+    // above 0 therefore sees exactly what it sees here, and the level-0 slot only ever
+    // existed to hold A until B arrived. RootHistory pins this against the old behaviour.
+    //
+    // Does NOT publish the root — callers follow with _commitPoolRoot(). The root is
+    // only meaningful once both leaves are in.
+    function _insertPair(bytes32 left, bytes32 right)
+        internal returns (uint32 indexLeft, uint32 indexRight)
+    {
+        if (left == bytes32(0) || right == bytes32(0)) revert ZeroCommitment();
+        if (nextIndex + 1 >= (1 << LEVELS) - 1) revert PoolFull();
 
-        bytes32 currentHash = leaf;
-        for (uint32 i = 0; i < LEVELS; i++) {
+        // Level 0 is skipped: with both leaves in hand their parent is direct, and
+        // filledSubtrees[0] has no reader once single insertion is gone.
+        bytes32 currentHash  = _hashLeftRight(left, right);
+        uint32  currentIndex = nextIndex >> 1;
+
+        for (uint32 i = 1; i < LEVELS; i++) {
             if (currentIndex % 2 == 0) {
                 filledSubtrees[i] = currentHash;
                 currentHash = _hashLeftRight(currentHash, poolZeros[i]);
@@ -58,9 +75,10 @@ contract MerkleTreeWithHistory {
             currentIndex /= 2;
         }
 
-        lastRoot = currentHash;
-        nextIndex = nextIndex + 1;
-        return nextIndex - 1;
+        lastRoot   = currentHash;
+        indexLeft  = nextIndex;
+        indexRight = nextIndex + 1;
+        nextIndex  = nextIndex + 2;
     }
 
     function _commitPoolRoot() internal {
