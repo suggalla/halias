@@ -44,7 +44,7 @@ describe("Halias (on-chain Transact)", function () {
         PoseidonT4: await poseidonT4.getAddress(),
       },
     });
-    const h = await Halias.deploy(await transactVerifier.getAddress());
+    const h = await Halias.deploy(await transactVerifier.getAddress(), (await ethers.getSigners())[0].address);
     return { halias: h };
   }
 

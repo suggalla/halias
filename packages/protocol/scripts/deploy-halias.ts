@@ -32,7 +32,7 @@ async function main() {
   const abiCoder = new ethers.AbiCoder();
   const encodedArgs = abiCoder.encode(
     ["address", "address"],
-    [transactVerifier]
+    [transactVerifier, deployer.address]
   );
   const initCode = ethers.concat([Halias.bytecode, encodedArgs]);
 

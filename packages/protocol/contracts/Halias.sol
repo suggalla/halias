@@ -152,11 +152,16 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
 
     // ── Logic ──────────────────────────────────────────────────────────────────
 
-    constructor(address _transactVerifier) ERC721("Halias", "HLS") {
+    // admin is an explicit argument, never msg.sender. Halias is deployed through a
+    // CREATE2 factory, so msg.sender in the constructor is the factory — which has no
+    // way to call anything, and would leave every admin function permanently
+    // unreachable on an immutable contract.
+    constructor(address _transactVerifier, address _admin) ERC721("Halias", "HLS") {
         if (_transactVerifier == address(0)) revert InvalidVerifier();
+        if (_admin == address(0))            revert InvalidAdmin();
 
         transactVerifier = ITransactVerifier(_transactVerifier);
-        admin = msg.sender;
+        admin = _admin;
 
         _initSMT();
     }

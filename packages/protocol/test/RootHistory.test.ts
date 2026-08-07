@@ -26,7 +26,7 @@ describe("Root history", function () {
     const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
     halias = await (await ethers.getContractFactory("Halias", {
       libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
-    })).deploy(await mv.getAddress());
+    })).deploy(await mv.getAddress(), (await ethers.getSigners())[0].address);
     MAX_AGE = await halias.REGISTRY_ROOT_MAX_AGE();
   });
 
