@@ -6,14 +6,14 @@ export const HALIAS_ABI = [
   // Core operation — deposit (publicAmount > 0), transfer (= 0), withdraw (field-negative)
   "function transact((bytes32 poolRoot, bytes32 registryRoot, uint256 publicAmount, uint256 tokenAddress, bytes32[2] inputNullifiers, bytes32[2] outputCommitments, address recipient, bytes32 externalData) p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof) external payable",
   // Alias registry
-  "function register(bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external payable",
+  "function register(bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, string name) external payable",
   "function updateKeys(bytes32 aliasHash, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey) external",
   "function updateAliasData(bytes32 aliasHash, bytes32 newDataHash) external",
   "function transferAliasWithKeys(bytes32 aliasHash, address newOwner, bytes32 newSpendingPubkey, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey) external",
   "function aliases(bytes32 aliasHash) external view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint64 registeredAt)",
   "function registrationFee() external view returns (uint256)",
   // Invite claim (pool-note model — spend a pool note atomically with registration)
-  "function registerWithPoolNote((bytes32 poolRoot, bytes32 registryRoot, uint256 publicAmount, uint256 tokenAddress, bytes32[2] inputNullifiers, bytes32[2] outputCommitments, address recipient, bytes32 externalData) p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external",
+  "function registerWithPoolNote((bytes32 poolRoot, bytes32 registryRoot, uint256 publicAmount, uint256 tokenAddress, bytes32[2] inputNullifiers, bytes32[2] outputCommitments, address recipient, bytes32 externalData) p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, string name) external",
   // SMT state
   
   "function getRegistryRoot() external view returns (bytes32)",
@@ -87,12 +87,17 @@ export async function register(
   nullifierKeyHash: bigint,   // Poseidon(nullifierKey, 1) — caller must pre-compute
   encryptionPubkeyX: bigint,
   fee: bigint = ethers.parseEther("0.002"),
+  // Publishing the plaintext costs a little log gas and makes the name recoverable from
+  // chain history by anyone. Pass "" to keep it off chain, which is what an unguessable
+  // alias or an unnamed invite account wants.
+  name: string = "",
 ): Promise<ethers.ContractTransactionResponse> {
   return contract.register(
     h32(aliasHash),
     h32(spendingPubkey),
     h32(nullifierKeyHash),
     h32(encryptionPubkeyX),
+    name,
     { value: fee },
   );
 }
@@ -155,6 +160,7 @@ export async function registerWithPoolNote(
   spendingPubkey: bigint,
   nullifierKeyHash: bigint,
   encryptionPubkeyX: bigint,
+  name: string = "",
 ): Promise<ethers.ContractTransactionResponse> {
   return contract.registerWithPoolNote(
     {
@@ -174,6 +180,7 @@ export async function registerWithPoolNote(
     h32(spendingPubkey),
     h32(nullifierKeyHash),
     h32(encryptionPubkeyX),
+    name,
   );
 }
 

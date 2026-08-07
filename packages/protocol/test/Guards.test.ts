@@ -175,8 +175,8 @@ describe("Guards", function () {
 
     const fee = await halias.registrationFee();
     const pk = ethers.toBeHex(1n, 32), nk = ethers.toBeHex(2n, 32);
-    await (await halias.register(ethers.toBeHex(a, 32), pk, nk, rand32(), { value: fee })).wait();
-    await expect(halias.register(ethers.toBeHex(b, 32), pk, nk, rand32(), { value: fee }))
+    await (await halias.register(ethers.toBeHex(a, 32), pk, nk, rand32(), "", { value: fee })).wait();
+    await expect(halias.register(ethers.toBeHex(b, 32), pk, nk, rand32(), "", { value: fee }))
       .to.not.be.reverted;
 
     expect(await halias.aliasSlot(ethers.toBeHex(a, 32))).to.equal(1n);
@@ -190,7 +190,7 @@ describe("Guards", function () {
     const aliasHash = rand32();
     const fee = await halias.registrationFee();
     await (await halias.register(aliasHash, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32),
-      rand32(), { value: fee })).wait();
+      rand32(), "", { value: fee })).wait();
     const slot = await halias.aliasSlot(aliasHash);
 
     await (await halias.updateKeys(aliasHash, ethers.toBeHex(3n, 32), rand32())).wait();
@@ -207,7 +207,7 @@ describe("Guards", function () {
     for (let i = 0; i < 4; i++) {
       const h = rand32();
       await (await halias.register(h, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32),
-        rand32(), { value: fee })).wait();
+        rand32(), "", { value: fee })).wait();
       const slot = (await halias.aliasSlot(h)).toString();
       expect(slot).to.equal(String(i + 1));
       expect(seen.has(slot), "slot reused").to.equal(false);

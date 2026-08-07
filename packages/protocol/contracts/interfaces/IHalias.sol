@@ -16,7 +16,7 @@ struct TransactParams {
 
 interface IHalias {
     // ── Registration ───────────────────────────────────────────────────────────
-    function register(bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external payable;
+    function register(bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, string calldata name) external payable;
     function updateKeys(bytes32 aliasHash, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey) external;
     function updateAliasData(bytes32 aliasHash, bytes32 newDataHash) external;
     function transferAliasWithKeys(bytes32 aliasHash, address newOwner, bytes32 newSpendingPubkey, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey) external;
@@ -29,7 +29,7 @@ interface IHalias {
     // The inviter funds a pool note held by a temp keypair derived from the invite secret.
     // The claimer derives it and registers a name in one tx, paying registrationFee out of
     // the note. absAmount must equal registrationFee exactly; excess goes to a change output.
-    function registerWithPoolNote(TransactParams calldata core, bytes calldata encryptedOutput0, bytes calldata encryptedOutput1, bytes calldata proof, bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external;
+    function registerWithPoolNote(TransactParams calldata core, bytes calldata encryptedOutput0, bytes calldata encryptedOutput1, bytes calldata proof, bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, string calldata name) external;
 
     // ── State queries ──────────────────────────────────────────────────────────
     function registrationFee() external view returns (uint256);

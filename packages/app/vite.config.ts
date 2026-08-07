@@ -22,5 +22,14 @@ export default defineConfig({
 	},
 	define: {
 		global: 'globalThis'
+	},
+	server: {
+		watch: {
+			// The repo lives on /mnt/e, a Windows drive mounted through drvfs, where inotify
+			// does not fire. Without polling Vite never sees a file change: it keeps serving
+			// cached transforms and HMR goes silent, so edits appear to have no effect.
+			usePolling: true,
+			interval: 300
+		}
 	}
 });

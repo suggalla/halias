@@ -115,7 +115,7 @@ describe("Circuit/contract alignment", function () {
     const aliasHash = ethers.keccak256(ethers.randomBytes(32));
     await halias.register(
       aliasHash, ethers.toBeHex(pubkey, 32), ethers.toBeHex(toNullifierKeyHash(nk), 32),
-      ethers.keccak256(ethers.randomBytes(32)), { value: REGISTRATION_FEE });
+      ethers.keccak256(ethers.randomBytes(32)), "", { value: REGISTRATION_FEE });
     const key  = aliasHashToKey(aliasHash);
     const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
     registrySMT.update(slot, key, registryLeaf(pubkey, nk));

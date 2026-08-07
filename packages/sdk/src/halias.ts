@@ -236,7 +236,11 @@ export class Halias {
 
   // ── Operations ─────────────────────────────────────────────────────────────
 
-  async register(alias: string): Promise<{ txHash: string }> {
+  // publishName defaults on: without it the plaintext exists nowhere and a client that
+  // loses local storage cannot recover the name. Pass false for an alias meant to be
+  // unguessable — the hash is already public either way, so this only affects whether the
+  // name can be read back rather than brute-forced.
+  async register(alias: string, publishName: boolean = true): Promise<{ txHash: string }> {
     this.ensureInit();
     const cleanAlias = alias.replace(/\.hls$/, "").toLowerCase();
     const aliasHash  = BigInt(ethers.keccak256(ethers.toUtf8Bytes(cleanAlias + ".hls")));
@@ -245,8 +249,10 @@ export class Halias {
     const encBytes32      = BigInt(ethers.hexlify(this.keys!.encryption.publicKey));
 
     const nullifierKeyHash = poseidonHash([this.keys!.nullifierKey, 1n]);
+    const fee = await this.contract.registrationFee() as bigint;
     const tx = await contractRegister(
       this.contract, aliasHash, spendingBytes32, nullifierKeyHash, encBytes32,
+      fee, publishName ? `${cleanAlias}.hls` : "",
     );
     const receipt = await tx.wait();
     await this.refresh();
@@ -637,9 +643,11 @@ export class Halias {
     const tempAliasHash = BigInt(ethers.hexlify(randomBytes(32))) % FIELD_PRIME;
     const registrationFee = await this.contract.registrationFee() as bigint;
 
+    // No name: the invite account's aliasHash is random, so there is no plaintext behind
+    // it and nothing to publish.
     const regTx = await contractRegister(
       this.contract, tempAliasHash, temp.spendingPubkey,
-      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
+      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee, "",
     );
     await regTx.wait();
     await this.refresh();
@@ -779,7 +787,7 @@ export class Halias {
       [nullifier0, dummy.nullifier],
       [comm0, comm1],
       params, "0x", "0x", proofBytes,
-      aliasHash, keys.spendingPubkey, nullifierKeyHash, encBytes32,
+      aliasHash, keys.spendingPubkey, nullifierKeyHash, encBytes32, `${cleanAlias}.hls`,
     );
     const receipt = await tx.wait();
     await this.refresh();

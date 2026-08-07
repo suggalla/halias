@@ -92,7 +92,7 @@ describe("CREATE2 deployment", function () {
     const aliasHash = ethers.keccak256(ethers.randomBytes(32));
     await expect(halias.register(
       aliasHash, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32),
-      ethers.keccak256(ethers.randomBytes(32)),
+      ethers.keccak256(ethers.randomBytes(32)), "",
       { value: await halias.registrationFee() },
     )).to.not.be.reverted;
     expect(await halias.ownerOf(BigInt(aliasHash))).to.equal(deployer.address);

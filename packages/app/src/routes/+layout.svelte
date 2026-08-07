@@ -9,7 +9,7 @@
 	import CrtOverlay from '$lib/components/CrtOverlay.svelte';
 	import InfoWindow from '$lib/windows/InfoWindow.svelte';
 	import WalletWindow from '$lib/windows/WalletWindow.svelte';
-	import MoveWindow from '$lib/windows/MoveWindow.svelte';
+	import TransactWindow from '$lib/windows/TransactWindow.svelte';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -37,10 +37,10 @@
 				visible: true
 			},
 			{
-				id: 'move',
-				title: 'Move',
-				component: MoveWindow,
-				defaultRect: ws.move,
+				id: 'transact',
+				title: 'Transact',
+				component: TransactWindow,
+				defaultRect: ws.transact,
 				visible: true
 			}
 		]);

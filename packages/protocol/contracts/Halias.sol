@@ -34,6 +34,7 @@ error PubkeyOutOfField();
 error NullifierKeyHashOutOfField();
 error AliasTaken();
 error WrongRegistrationFee();
+error NameDoesNotMatchAlias();
 
 // Pool-note registration (invite claim)
 error PoolNoteWrongFee();
@@ -125,6 +126,12 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         bytes32 registryLeafHash,
         bytes32 encryptionPubkey
     );
+    // Emitted only when a registrant chooses to publish the plaintext behind their alias.
+    // aliasHash is keccak(name), which is one-way, so without this the name exists nowhere
+    // on chain and a client that loses its local copy cannot recover it. Kept separate from
+    // AliasRegistered so that event stays fixed-size and cheap for the invite path, which
+    // registers unnamed accounts.
+    event NamePublished(bytes32 indexed aliasHash, string name);
     event AliasDataUpdated(bytes32 indexed aliasHash, bytes32 newDataHash, bytes32 newLeafHash);
     event AliasTransferred(
         bytes32 indexed aliasHash,
@@ -204,17 +211,32 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         emit AliasRegistered(aliasHash, spendingPubkey, leaf, encryptionPubkey, aliasSlot[aliasHash]);
     }
 
+    // Publishes the plaintext name when one is supplied, verified against the hash so a
+    // false name cannot be attached to someone else's alias. Empty means do not publish:
+    // an alias meant to be unguessable, or an unnamed invite account, simply passes "".
+    //
+    // Registration is the only moment this is useful. Someone who has forgotten their name
+    // cannot supply it later either, so a publish-afterwards function would not address the
+    // failure it exists for.
+    function _publishName(bytes32 aliasHash, string calldata name) internal {
+        if (bytes(name).length == 0) return;
+        if (keccak256(bytes(name)) != aliasHash) revert NameDoesNotMatchAlias();
+        emit NamePublished(aliasHash, name);
+    }
+
     function register(
         bytes32 aliasHash,
         bytes32 spendingPubkey,
         bytes32 nullifierKeyHash,   // Poseidon(nullifierKey, 1) — compute off-chain before calling
-        bytes32 encryptionPubkey
+        bytes32 encryptionPubkey,
+        string calldata name        // "" to keep the name off chain
     ) external payable nonReentrant {
         if (msg.value != registrationFee) revert WrongRegistrationFee();
 
         accumulatedFees += msg.value;
 
         _doRegister(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey);
+        _publishName(aliasHash, name);
     }
 
     function updateKeys(
@@ -301,7 +323,8 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         bytes32 aliasHash,
         bytes32 spendingPubkey,
         bytes32 nullifierKeyHash,
-        bytes32 encryptionPubkey
+        bytes32 encryptionPubkey,
+        string calldata name        // "" to keep the name off chain
     ) external nonReentrant {
         if (p.tokenAddress != 0)                              revert PoolNoteMustBeETH();
         (bool isWithdraw, uint256 absAmount) = _payment(p.publicAmount);
@@ -317,6 +340,7 @@ contract Halias is MerkleTreeWithHistory, SMTRegistry, ReentrancyGuard, ERC721 {
         if (absAmount != registrationFee + relayerFee)        revert PoolNoteWrongFee();
 
         _doRegister(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey);
+        _publishName(aliasHash, name);
 
         // Spend the pool note. recipient == address(this) retains the ETH here rather than
         // sending it out, so this function is responsible for splitting it.
