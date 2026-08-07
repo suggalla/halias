@@ -167,13 +167,13 @@ describe("Registry", function () {
       const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
       smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(nullifierKey)));
 
-      expect(await halias.smtRoot()).to.equal(ethers.toBeHex(smt.root, 32), "root mismatch after registration");
+      expect(await halias.getRegistryRoot()).to.equal(ethers.toBeHex(smt.root, 32), "root mismatch after registration");
 
       await halias.updateKeys(aliasHash, newNullifierKeyHash, newEncryptionPubkey);
       // Rotation reuses the same slot — that is what keeps the update in place.
       smt.update(slot, key, registryLeaf(BigInt(spendingPubkey), BigInt(newNullifierKey)));
 
-      expect(await halias.smtRoot()).to.equal(ethers.toBeHex(smt.root, 32), "root mismatch after updateKeys");
+      expect(await halias.getRegistryRoot()).to.equal(ethers.toBeHex(smt.root, 32), "root mismatch after updateKeys");
     });
 
     it("should reject updateKeys from non-owner", async function () {
@@ -252,7 +252,7 @@ describe("Registry", function () {
       // Transfer keeps the slot too: the alias moves owner, not position.
       smt.update(slot, key, registryLeaf(BigInt(newSpendingPubkey), BigInt(newNullifierKey)));
 
-      expect(await halias.smtRoot()).to.equal(ethers.toBeHex(smt.root, 32));
+      expect(await halias.getRegistryRoot()).to.equal(ethers.toBeHex(smt.root, 32));
     });
 
     it("should reject transferAliasWithKeys from non-owner", async function () {
@@ -310,7 +310,7 @@ describe("Registry", function () {
     it("starts with the empty-tree root", async function () {
       const { halias } = await deployHalias();
       const smt = new SMT();
-      expect(await halias.smtRoot()).to.equal(ethers.toBeHex(smt.root, 32));
+      expect(await halias.getRegistryRoot()).to.equal(ethers.toBeHex(smt.root, 32));
     });
 
     it("updates smtRoot after each registration", async function () {
@@ -337,7 +337,7 @@ describe("Registry", function () {
         const slot = Number(await halias.aliasSlot(aliasHash)) - 1;
         smt.update(slot, aliasHashToKey(aliasHash), registryLeaf(a.pubkey, a.nk));
 
-        expect(await halias.smtRoot()).to.equal(
+        expect(await halias.getRegistryRoot()).to.equal(
           ethers.toBeHex(smt.root, 32),
           `root mismatch after registering ${a.name}`
         );
@@ -367,10 +367,10 @@ describe("Registry", function () {
       const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("alice.hls"));
 
       await halias.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, { value: REGISTRATION_FEE });
-      const rootAfterRegister = await halias.smtRoot();
+      const rootAfterRegister = await halias.getRegistryRoot();
 
       await halias.updateKeys(aliasHash, ethers.toBeHex(0x9999n, 32), ethers.toBeHex(0xaaaan, 32));
-      const rootAfterUpdate = await halias.smtRoot();
+      const rootAfterUpdate = await halias.getRegistryRoot();
 
       expect(rootAfterRegister).to.not.equal(rootAfterUpdate);
     });

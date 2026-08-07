@@ -15,7 +15,7 @@ export const HALIAS_ABI = [
   // Invite claim (pool-note model — spend a pool note atomically with registration)
   "function registerWithPoolNote((bytes32 poolRoot, bytes32 registryRoot, uint256 publicAmount, uint256 tokenAddress, bytes32[2] inputNullifiers, bytes32[2] outputCommitments, address recipient, bytes32 externalData) p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external",
   // SMT state
-  "function smtRoot() external view returns (bytes32)",
+  
   "function getRegistryRoot() external view returns (bytes32)",
   "function getSmtSiblings(uint256 slot) external view returns (bytes32[32] memory siblings)",
   // Pool state queries

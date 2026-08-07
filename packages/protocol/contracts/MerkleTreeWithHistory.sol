@@ -21,11 +21,14 @@ error ZeroCommitment();
 contract MerkleTreeWithHistory {
     uint32 public constant LEVELS = 32;
 
-    mapping(uint256 => bytes32) public filledSubtrees;
-    mapping(uint256 => bytes32) public poolZeros;
-    mapping(bytes32 => bool)    public knownPoolRoots;
-    bytes32 public lastRoot;
-    uint32  public nextIndex = 0;
+    // Internal scaffolding, not part of the interface: nothing outside the tree reads
+    // these, and a public getter is one more thing an auditor has to rule out as a
+    // surface. getLastRoot() and isKnownPoolRoot() are the read API.
+    mapping(uint256 => bytes32) private filledSubtrees;
+    mapping(uint256 => bytes32) private poolZeros;
+    mapping(bytes32 => bool)    public  knownPoolRoots;
+    bytes32 internal lastRoot;
+    uint32  public   nextIndex = 0;
 
     constructor() {
         bytes32 currentZero = bytes32(0);
