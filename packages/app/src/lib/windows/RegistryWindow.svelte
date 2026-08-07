@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { formatEther, keccak256, toUtf8Bytes } from 'ethers';
-	import { clientState, getClient, run, rememberName } from '../sdk/client.js';
+	import { clientState, getClient, run, rememberName, refresh } from '../sdk/client.js';
 
 	let name = $state('');
 	let lookupName = $state('');
@@ -21,14 +21,33 @@
 		const clean = name.trim().toLowerCase().replace(/\.hls$/, '');
 		if (!clean) return;
 		const full = `${clean}.hls`;
+		// Recorded before the call, not after: run() refreshes the alias list as soon as the
+		// transaction lands, and that refresh reads this map. Writing it afterwards meant the
+		// freshly registered alias always appeared unnamed until the next refresh. A stale
+		// entry from a failed registration is harmless — it labels a hash nobody owns.
+		rememberName(keccak256(toUtf8Bytes(full)), full);
 		const r = await run(() => getClient().register(clean));
 		if (r) {
-			// The chain stores keccak(name), so it can never give the name back. Record the
-			// mapping locally; losing it loses the label, not the alias.
-			rememberName(keccak256(toUtf8Bytes(full)), full);
 			result = `Registered ${full}`;
 			name = '';
 		}
+	}
+
+	let labelError = $state<string | null>(null);
+
+	// Verifies before saving: hashing the supplied name must reproduce the alias hash,
+	// so a wrong guess is rejected rather than silently mislabelling someone's alias.
+	function labelAlias(aliasHash: string, input: string) {
+		labelError = null;
+		const clean = input.trim().toLowerCase().replace(/\.hls$/, '');
+		if (!clean) return;
+		const full = `${clean}.hls`;
+		if (keccak256(toUtf8Bytes(full)).toLowerCase() !== aliasHash.toLowerCase()) {
+			labelError = `${full} is not this alias`;
+			return;
+		}
+		rememberName(aliasHash, full);
+		refresh();
 	}
 
 	async function handleLookup() {
@@ -53,8 +72,14 @@
 					<span class="alias-slot">slot {a.slot}</span>
 				</div>
 				{#if !a.name}
-					<!-- Registered from another browser, so the name is not recoverable here. -->
-					<p class="empty">Name unknown — registered elsewhere.</p>
+					<!-- Registered in another browser: the chain stores keccak(name), so the name
+					     cannot be recovered. It can only be re-supplied and checked. -->
+					<div class="name-row">
+						<input class="input" type="text" placeholder="name it: alice"
+							onkeydown={(e) => e.key === 'Enter' && labelAlias(a.aliasHash, (e.currentTarget as HTMLInputElement).value)} />
+						<span class="suffix">.hls</span>
+					</div>
+					{#if labelError}<p class="err">{labelError}</p>{/if}
 				{/if}
 			{/each}
 		{/if}
