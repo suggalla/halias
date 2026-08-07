@@ -1,3 +1,4 @@
+import { ethers } from "ethers";
 import { MerkleTree } from "./merkle";
 import { SMT } from "./smt";
 import type { RegistryEntry } from "./events";
@@ -45,7 +46,7 @@ export function serializeCache(d: CacheData): string {
       spendingPubkey:   "0x" + e.spendingPubkey.toString(16),
       nullifierKeyHash: "0x" + e.nullifierKeyHash.toString(16),
       leafHash:         "0x" + e.leafHash.toString(16),
-      encryptionPubkey: "0x" + Buffer.from(e.encryptionPubkey).toString("hex"),
+      encryptionPubkey: ethers.hexlify(e.encryptionPubkey),
       dataHash:         "0x" + e.dataHash.toString(16),
     })),
     aliasHashByPubkey: Object.fromEntries(
@@ -72,7 +73,7 @@ export function deserializeCache(raw: string): CacheData {
     spendingPubkey:   BigInt(e.spendingPubkey),
     nullifierKeyHash: BigInt(e.nullifierKeyHash),
     leafHash:         BigInt(e.leafHash),
-    encryptionPubkey: Uint8Array.from(Buffer.from(e.encryptionPubkey.slice(2), "hex")),
+    encryptionPubkey: ethers.getBytes(e.encryptionPubkey),
     dataHash:         BigInt(e.dataHash),
   }));
 
@@ -85,25 +86,28 @@ export function deserializeCache(raw: string): CacheData {
   return { poolTree, smt, registryEntries, aliasHashByPubkey, spentNullifiers, lastBlock: d.lastBlock };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const fs   = require("fs")   as typeof import("fs");
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const path = require("path") as typeof import("path");
+// Required lazily inside the methods, not at module scope. BrowserCache lives in this
+// same module, so a top-level require("fs") would drag Node built-ins into every browser
+// bundle that imports the cache at all.
+function nodeFs() {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return { fs: require("fs") as typeof import("fs"), path: require("path") as typeof import("path") };
+}
 
 export class FileCache implements CacheStore {
   constructor(private dir: string) {}
 
   async load(key: string): Promise<string | null> {
     try {
-      return fs.readFileSync(path.join(this.dir, `${key}.json`), "utf-8");
+      return nodeFs().fs.readFileSync(nodeFs().path.join(this.dir, `${key}.json`), "utf-8");
     } catch {
       return null;
     }
   }
 
   async save(key: string, data: string): Promise<void> {
-    fs.mkdirSync(this.dir, { recursive: true });
-    fs.writeFileSync(path.join(this.dir, `${key}.json`), data);
+    nodeFs().fs.mkdirSync(this.dir, { recursive: true });
+    nodeFs().fs.writeFileSync(nodeFs().path.join(this.dir, `${key}.json`), data);
   }
 }
 

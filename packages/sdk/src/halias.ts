@@ -28,7 +28,7 @@ import {
   ZERO_TRANSACT_PARAMS,
 } from "./contract";
 import { CacheStore, serializeCache, deserializeCache } from "./cache";
-import { randomBytes } from "crypto";
+import { randomBytes, toHex } from "./random";
 
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const POOL_LEVELS     = 32;
@@ -506,6 +506,33 @@ export class Halias {
     this.ensureInit();
     await this.ensureSync();
     return this.aliasHashByPubkey.get(this.keys!.spendingPubkey) ?? null;
+  }
+
+  // Current registration fee, read from the contract rather than assumed — it is
+  // admin-settable, so a hardcoded figure in the UI would eventually be wrong.
+  async registrationFee(): Promise<bigint> {
+    this.ensureInit();
+    return await this.contract.registrationFee() as bigint;
+  }
+
+  // Alias hashes this address owns, found by scanning registrations and checking the
+  // ERC-721 owner. The contract does not implement ERC721Enumerable, so there is no
+  // cheaper on-chain route — and the NAME cannot come back either, since aliasHash is a
+  // keccak. A caller that wants to display names must remember what it registered.
+  async myAliases(): Promise<{ aliasHash: string; slot: number }[]> {
+    this.ensureInit();
+    await this.ensureSync();
+    const me = await this.config.signer.getAddress();
+    const owned: { aliasHash: string; slot: number }[] = [];
+    for (const e of this.registryEntries) {
+      try {
+        const owner = await this.contract.ownerOf(BigInt(e.aliasHash)) as string;
+        if (owner.toLowerCase() === me.toLowerCase()) {
+          owned.push({ aliasHash: e.aliasHash, slot: e.registrySlot });
+        }
+      } catch { /* burned or unowned */ }
+    }
+    return owned;
   }
 
   async lookup(alias: string): Promise<LookupResult> {

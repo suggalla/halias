@@ -1,4 +1,5 @@
 import { poseidonHash } from "./crypto";
+import { randomFieldElement } from "./random";
 
 export const ETH_TOKEN_ADDRESS = 0n;
 
@@ -36,5 +37,5 @@ export function computeNullifier(nullifierKey: bigint, leafIndex: number): bigin
 }
 
 export function randomBlinding(): bigint {
-  return BigInt("0x" + require("crypto").randomBytes(31).toString("hex"));
+  return randomFieldElement();
 }
