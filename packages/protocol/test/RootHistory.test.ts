@@ -188,17 +188,37 @@ describe("Pairwise insertion equivalence", function () {
     expect(await halias.nextIndex()).to.equal(await seq.nextIndex());
   });
 
-  it("matches across many pairs, covering both parity branches at every level", async function () {
-    // Eight pairs exercises the even/odd branch at levels 1..3 and beyond, which is where
-    // an off-by-one in the starting index or level would first show up.
-    for (let i = 0; i < 8; i++) {
+  it("matches across many pairs, exercising both parity branches at levels 1-5", async function () {
+    // A pair's parent sits at level-1 index nextIndex/2, so N pairs exercise the even/odd
+    // branch up to level log2(N). Thirty-two pairs reaches level 5; beyond that the loop
+    // body is identical for every i, differing only in which filledSubtrees/poolZeros
+    // slot it touches, so the remaining levels are covered by construction.
+    // The invariant that makes the whole optimisation valid is also checked each round:
+    // nextIndex must stay even, or nextIndex >> 1 would collide two pairs onto one slot.
+    for (let i = 0; i < 32; i++) {
       const c0 = rand(), c1 = rand();
       await transactWith(c0, c1);
       await (await seq.insertPairSequentially(c0, c1)).wait();
       expect(await halias.getLastRoot(), `divergence after pair ${i + 1}`)
         .to.equal(await seq.lastRoot());
+      expect((await halias.nextIndex()) % 2n, `nextIndex went odd at pair ${i + 1}`).to.equal(0n);
     }
-    expect(await halias.nextIndex()).to.equal(16n);
+    expect(await halias.nextIndex()).to.equal(64n);
+  });
+
+  it("advances nextIndex only in steps of two", async function () {
+    // Pins the invariant on its own, so a future version that reintroduces single-leaf
+    // insertion fails here rather than corrupting the tree in a way only a diverging
+    // root would reveal. The deployed contract is immutable, so this guards the next
+    // version, not this one.
+    let prev = await halias.nextIndex();
+    expect(prev).to.equal(0n);
+    for (let i = 0; i < 3; i++) {
+      await transactWith(rand(), rand());
+      const now = await halias.nextIndex();
+      expect(now - prev).to.equal(2n);
+      prev = now;
+    }
   });
 
   it("assigns the same leaf indices the sequential version would", async function () {

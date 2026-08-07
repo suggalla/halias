@@ -1,0 +1,25 @@
+# Foundry sits alongside Hardhat: Hardhat runs the integration and ZK-proof suites,
+# Foundry runs fuzz and invariant tests, which is the tooling Solidity audits expect and
+# the one gap this repo had. `forge test` and `npx hardhat test` are both expected to pass.
+[profile.default]
+src           = "packages/protocol/contracts"
+test          = "packages/protocol/testFuzz"
+libs          = ["node_modules", "lib"]
+solc_version  = "0.8.28"
+optimizer     = true
+optimizer_runs = 200
+via_ir        = true
+evm_version   = "cancun"
+
+# PoseidonT3/T4 compiled from source exceed EIP-170. Production deploys the canonical
+# precompiled bytecode via the deterministic proxy, so this limit only ever applies to
+# tests building them locally.
+code_size_limit = 100000
+
+[fuzz]
+runs = 512
+
+[invariant]
+runs        = 128
+depth       = 64
+fail_on_revert = false

@@ -45,3 +45,8 @@ dist/
 coverage/
 coverage.json
 *.tsbuildinfo
+
+# Foundry (fuzz + invariant tests). Restore with: forge install foundry-rs/forge-std --no-git
+lib/
+cache_forge/
+out/
