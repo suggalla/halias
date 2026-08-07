@@ -3,6 +3,7 @@
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
 	import { windowStore } from '$lib/wm/store.js';
+	import { computeWorkspace, shouldShowWelcome, markWelcomeSeen } from '$lib/wm/layout.js';
 	import Desktop from '$lib/components/Desktop.svelte';
 	import Taskbar from '$lib/components/Taskbar.svelte';
 	import CrtOverlay from '$lib/components/CrtOverlay.svelte';
@@ -15,52 +16,50 @@
 	let { children }: { children: Snippet } = $props();
 
 	onMount(() => {
-		const vw = window.innerWidth;
-		const vh = window.innerHeight - 42; // minus taskbar
+		const ws = computeWorkspace(window.innerWidth, window.innerHeight);
+		const firstVisit = shouldShowWelcome();
 
-		// Welcome centered
-		const infoW = Math.min(480, vw - 40);
-		const infoH = Math.min(460, vh - 40);
-		const infoX = Math.floor((vw - infoW) / 2);
-		const infoY = Math.floor((vh - infoH) / 2);
-
+		// The working panels open by default. Leaving them hidden is what made the desktop
+		// look empty — the user had to assemble a workspace before the app did anything.
 		windowStore.register([
 			{
-				id: 'info',
-				title: 'Welcome',
-				component: InfoWindow,
-				defaultRect: { x: infoX, y: infoY, w: infoW, h: infoH },
+				id: 'balance',
+				title: 'Balance',
+				component: BalanceWindow,
+				defaultRect: ws.balance,
+				visible: true
+			},
+			{
+				id: 'registry',
+				title: 'Registry',
+				component: RegistryWindow,
+				defaultRect: ws.registry,
+				visible: true
+			},
+			{
+				id: 'deposit',
+				title: 'Deposit',
+				component: DepositWindow,
+				defaultRect: ws.deposit,
 				visible: true
 			},
 			{
 				id: 'send',
 				title: 'Send',
 				component: SendWindow,
-				defaultRect: { x: 0, y: 0, w: 380, h: 300 },
-				visible: false
+				defaultRect: ws.send,
+				visible: true
 			},
 			{
-				id: 'deposit',
-				title: 'Deposit',
-				component: DepositWindow,
-				defaultRect: { x: 0, y: 0, w: 380, h: 260 },
-				visible: false
-			},
-			{
-				id: 'balance',
-				title: 'Balance',
-				component: BalanceWindow,
-				defaultRect: { x: 0, y: 0, w: 380, h: 320 },
-				visible: false
-			},
-			{
-				id: 'registry',
-				title: 'Registry',
-				component: RegistryWindow,
-				defaultRect: { x: 0, y: 0, w: 380, h: 280 },
-				visible: false
+				id: 'info',
+				title: 'Welcome',
+				component: InfoWindow,
+				defaultRect: ws.welcome,
+				visible: firstVisit
 			}
 		]);
+
+		if (firstVisit) markWelcomeSeen();
 	});
 </script>
 
