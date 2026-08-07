@@ -126,10 +126,6 @@ function createWindowStore() {
 			update((wins) => {
 				const win = wins.find((w) => w.id === id);
 				if (win) {
-					if (!win.visible) {
-						// Auto-snap to largest open area
-						win.rect = findOpenArea(wins, id, win.minW, win.minH);
-					}
 					win.visible = true;
 					win.zIndex = ++nextZ;
 				}
@@ -137,15 +133,22 @@ function createWindowStore() {
 			});
 		},
 
+		// Taskbar click. A visible window that is behind something comes forward; only one
+		// already in front is hidden. Previously any click on a visible window hid it, and
+		// reopening ran findOpenArea — which, with the other windows gone, sized it to the
+		// whole desktop. That is why every click looked like it maximised.
 		toggleWindow(id: string) {
 			update((wins) => {
 				const win = wins.find((w) => w.id === id);
 				if (!win) return wins;
+
 				if (win.visible) {
-					win.visible = false;
+					const topZ = Math.max(...wins.filter((w) => w.visible).map((w) => w.zIndex));
+					if (win.zIndex < topZ) win.zIndex = ++nextZ;
+					else win.visible = false;
 				} else {
-					// Auto-snap to largest open area
-					win.rect = findOpenArea(wins, id, win.minW, win.minH);
+					// Restore where it was, rather than recomputing a "largest open area"
+					// that grows without bound as other windows are hidden.
 					win.visible = true;
 					win.zIndex = ++nextZ;
 				}
