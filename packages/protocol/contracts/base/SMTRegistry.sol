@@ -36,7 +36,7 @@ abstract contract SMTRegistry {
     // often; a rotated key stops receiving after at most this long.
     uint256 public constant REGISTRY_ROOT_MAX_AGE = 7200;
 
-    bytes32 public smtRoot;
+    bytes32 internal smtRoot;   // read via getRegistryRoot()
     // root => block it became current. 0 means never seen.
     mapping(bytes32 => uint256) public registryRootBlock;
 
@@ -118,7 +118,6 @@ abstract contract SMTRegistry {
         }
     }
 
-    // Alias for getSmtSiblings — returns the current SMT root.
     function getRegistryRoot() external view returns (bytes32) {
         return smtRoot;
     }
