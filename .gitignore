@@ -14,10 +14,13 @@ circuits/out/
 
 # sveltekit
 .svelte-kit/
-build/
+/packages/app/build/
 
-# deployments (per-network config with addresses)
-deployments/
+# Deployment records. NOT ignored wholesale: these are contract addresses on public
+# chains, and `deployments/` unanchored swallowed the entire halias-deployments workspace
+# package — source, package.json and all — which the SDK depends on, so a fresh clone could
+# not even install. Only the file the local node rewrites on every deploy is ignored.
+packages/deployments/networks/localhost.json
 
 # environment
 .env
@@ -33,6 +36,11 @@ deployments/
 *.sym
 *.r1cs
 
+# Anchor anything whose name is plausible as a source directory. An unanchored rule matches
+# at every depth, and this file has twice hidden real source that way — packages/app/src/lib
+# (SvelteKit's own convention) and the halias-deployments package.
+# Before adding a rule here, check `git status --ignored` for what it caught.
+
 # workspace
 packages/*/node_modules/
 
@@ -41,7 +49,6 @@ packages/*/node_modules/
 Thumbs.db
 
 # Build + coverage output
-dist/
 coverage/
 coverage.json
 *.tsbuildinfo

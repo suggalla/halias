@@ -1,0 +1,21 @@
+{
+  "name": "halias-deployments",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./networks/*": "./networks/*",
+    "./networks.json": "./networks.json"
+  },
+  "files": [
+    "dist",
+    "networks"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

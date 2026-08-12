@@ -1,8 +1,11 @@
 {
   "name": "halias",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
+    "build": "npm run build --workspaces --if-present",
     "halias": "node packages/sdk/dist/cli.js"
   }
 }

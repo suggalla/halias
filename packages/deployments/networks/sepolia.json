@@ -1,0 +1,14 @@
+{
+  "deployer": "0xDa5C820D6d7381Ef43209D071fe7fd56AaAD22A6",
+  "factory": "0xAcDeC775a408fe60FfCf66462718ADB7c0F321B5",
+  "updatedAt": "2026-08-07T20:25:13.333Z",
+  "poseidonT3": "0x3333333C0A88F9BE4fd23ed0536F9B6c427e3B93",
+  "poseidonT4": "0x4443338EF595F44e0121df4C21102677B142ECF0",
+  "retired_halias_admin_bricked": "0x5b1d46a9783A2a8E9Ca62346cD4f705eb831BC8D",
+  "retired_pre_slot_registry": "0xbD4a40996126E2C27121a2b8717e02545894F837",
+  "transactVerifier": "0x7f1F8f5A7704300F7db6f3aECa9eD95282113a51",
+  "vanitySalt": "0x80fdfdc599e2d538bf20b7983432f20d432f8efe25976ea86fa316d177beb5e3",
+  "halias": "0xFE73C31DC92E1C07e065A748a8939576Cc6691CF",
+  "deployTxHash": "0xfa942a1f7ad94b02c309bc027a69356068ca263fd0ba8bff8ae2a6aa24782f43",
+  "startBlock": 11440572
+}
