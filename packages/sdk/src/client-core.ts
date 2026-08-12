@@ -108,6 +108,7 @@ export abstract class HaliasCore {
   }
   protected aliasHashByPubkey = new Map<bigint, bigint>(); // spendingPubkey → aliasHash (bigint)
   protected keyActiveFrom = new Map<bigint, number>();     // spendingPubkey → block it became active
+  protected namesByAlias  = new Map<string, string>();     // aliasHash → published plaintext
   protected registryEntries: RegistryEntry[] = [];
   protected myEntries: OwnedEntry[] = [];
   protected allOutputs: Output[] = [];
@@ -196,6 +197,7 @@ export abstract class HaliasCore {
       this.registryEntries = d.registryEntries;
       this.aliasHashByPubkey = d.aliasHashByPubkey;
       this.keyActiveFrom = d.keyActiveFrom;
+      this.namesByAlias = d.namesByAlias;
       this.spentNullifiers = d.spentNullifiers;
       this.lastBlock = d.lastBlock;
       this.myEntries = d.myEntries;
@@ -218,6 +220,7 @@ export abstract class HaliasCore {
       registryEntries: this.registryEntries,
       aliasHashByPubkey: this.aliasHashByPubkey,
       keyActiveFrom: this.keyActiveFrom,
+      namesByAlias: this.namesByAlias,
       spentNullifiers: this.spentNullifiers,
       lastBlock: this.lastBlock,
       myEntries: this.myEntries,
@@ -241,6 +244,7 @@ export abstract class HaliasCore {
     this.registryEntries = [];
     this.aliasHashByPubkey = new Map();
     this.keyActiveFrom = new Map();
+    this.namesByAlias = new Map();
     this.spentNullifiers = new Set();
     this.myEntries = [];
     this.allOutputs = [];
@@ -269,6 +273,7 @@ export abstract class HaliasCore {
       this.config.provider,
       this.config.poolAddress,
       this.config.registryAddress,
+      this.config.domainAddress,
       fromBlock,
       this.config.rpcChunkSize,
       this.config.onProgress,
@@ -279,6 +284,7 @@ export abstract class HaliasCore {
     this.registryEntries = result.registryEntries;
     this.aliasHashByPubkey = result.aliasHashByPubkey;
     this.keyActiveFrom = result.keyActiveFrom;
+    this.namesByAlias = result.namesByAlias;
     this.spentNullifiers = result.spentNullifiers;
     this.allOutputs = result.outputs;
 
@@ -319,6 +325,7 @@ export abstract class HaliasCore {
       registryEntries: this.registryEntries,
       aliasHashByPubkey: this.aliasHashByPubkey,
       keyActiveFrom: this.keyActiveFrom,
+      namesByAlias: this.namesByAlias,
       spentNullifiers: this.spentNullifiers,
       scannedThrough: this.lastBlock,
       newOutputs: [],
