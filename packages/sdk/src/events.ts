@@ -67,6 +67,11 @@ export interface ScanResult {
   outputs: Output[];
   registryEntries: RegistryEntry[];
   aliasHashByPubkey: Map<bigint, bigint>;
+  /// aliasHash → the plaintext registered under it, for those that published one.
+  ///
+  /// One-shot and set at registration, so this never goes stale. An alias registered without
+  /// a name — an invite account, whose aliasHash is random — simply has no entry.
+  namesByAlias: Map<string, string>;
   /// Spending pubkey → the block at which it became an alias's key.
   ///
   /// Not the same as the alias's registration block. A handover installs the new owner's
@@ -96,6 +101,10 @@ export async function scanEvents(
   // separate addresses. Passing one address for both silently yields an empty registry.
   poolAddress: string,
   registryAddress: string,
+  /// Also scanned, for {NamePublished} alone. The plaintext behind an aliasHash exists
+  /// nowhere else: the hash is one-way, and a client that loses local storage cannot
+  /// recover the name it registered without this. It was being published and never read.
+  domainAddress: string,
   fromBlock: number = 0,
   chunkSize: number = DEFAULT_CHUNK_SIZE,
   onProgress?: (pct: number) => void,
@@ -117,6 +126,11 @@ export async function scanEvents(
   // emits AliasReassigned like any other handover.
   const dataUpdTopic   = regIface.getEvent("AliasDataUpdated")!.topicHash;
   const transferTopic  = regIface.getEvent("AliasReassigned")!.topicHash;
+  const nameIface      = new ethers.Interface(["event NamePublished(bytes32 indexed aliasHash, string name)"]);
+  const nameTopic      = nameIface.getEvent("NamePublished")!.topicHash;
+  // Filtered at the node rather than in JS. Without this, adding the domain would drag in
+  // every transfer, offer and commitment it emits only to discard them here.
+  const wanted = [jsTopic, exitTopic, regTopic, dataUpdTopic, transferTopic, nameTopic];
 
   // Used only to size the chunks. It is deliberately NOT the upper bound of the last one:
   // ethers caches getBlockNumber(), so a value read here can already be behind by the time
@@ -147,7 +161,8 @@ export async function scanEvents(
     // The final chunk ends at "latest", resolved by the node, so anything mined since the
     // block number was read is still picked up.
     const chunk = await provider.getLogs({
-      address: [poolAddress, registryAddress],
+      address: [poolAddress, registryAddress, domainAddress],
+      topics: [wanted],
       fromBlock: cur,
       toBlock: isLast ? "latest" : end,
     });
@@ -168,6 +183,7 @@ export async function scanEvents(
   );
   const aliasHashByPubkey = new Map<bigint, bigint>(prior?.aliasHashByPubkey ?? []);
   const keyActiveFrom = new Map<bigint, number>(prior?.keyActiveFrom ?? []);
+  const namesByAlias = new Map<string, string>(prior?.namesByAlias ?? []);
 
   for (const log of allLogs) {
     const topic = log.topics[0];
@@ -236,6 +252,10 @@ export async function scanEvents(
         registryByAlias.set(aliasHash, existing);
       }
 
+    } else if (topic === nameTopic) {
+      const e = nameIface.parseLog({ topics: log.topics as string[], data: log.data })!;
+      namesByAlias.set(e.args[0] as string, e.args[1] as string);
+
     } else if (topic === transferTopic) {
       const e = regIface.parseLog({ topics: log.topics as string[], data: log.data })!;
       const aliasHash = e.args[0] as string;
@@ -291,7 +311,8 @@ export async function scanEvents(
   const registryEntries = [...registryByAlias.values()];
 
   return {
-    poolTrees, outputs, registryEntries, aliasHashByPubkey, keyActiveFrom, spentNullifiers,
+    poolTrees, outputs, registryEntries, aliasHashByPubkey, keyActiveFrom, namesByAlias,
+    spentNullifiers,
     // Never below where this scan began: a lagging provider must not make the resume point
     // travel backwards.
     scannedThrough: Math.max(latestBlock, fromBlock - 1),

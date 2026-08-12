@@ -369,7 +369,11 @@ async function main() {
     if (jsonMode) { outputJson({ aliases: owned }); return; }
     if (owned.length === 0) { process.stdout.write("  No aliases.\n"); return; }
     for (const [i, a] of owned.entries()) {
-      process.stdout.write(`  ${String(i).padEnd(4)}slot ${String(a.slot).padEnd(8)}${a.aliasHash}\n`);
+      // The name first when there is one: it is what the holder recognises, and recovering
+      // it after losing local storage is the whole reason it is published.
+      const label = a.name ?? `${DIM}(unpublished)${RESET}`;
+      process.stdout.write(
+        `  ${String(i).padEnd(4)}${label.padEnd(24)}slot ${String(a.slot).padEnd(8)}${a.aliasHash}\n`);
     }
     return;
   }

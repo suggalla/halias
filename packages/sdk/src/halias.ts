@@ -598,16 +598,31 @@ export class Halias extends HaliasCore {
     });
   }
 
-  async myAliases(): Promise<{ aliasHash: string; slot: number }[]> {
+  /// The plaintext registered under an aliasHash, if one was published.
+  ///
+  /// Recovery, not decoration. aliasHash is a keccak, so a client that loses local storage
+  /// has no way back to the name it registered — and registration is the only moment the
+  /// plaintext can be supplied, since someone who has forgotten it cannot supply it later
+  /// either. Publishing is on by default for exactly that reason; this is the read side,
+  /// which was missing.
+  nameOf(aliasHash: string): string | null {
+    return this.namesByAlias.get(aliasHash) ?? null;
+  }
+
+  async myAliases(): Promise<{ aliasHash: string; slot: number; name: string | null }[]> {
     this.ensureInit();
     await this.ensureSync();
     const me = await this.config.signer.getAddress();
-    const owned: { aliasHash: string; slot: number }[] = [];
+    const owned: { aliasHash: string; slot: number; name: string | null }[] = [];
     for (const e of this.registryEntries) {
       try {
         const owner = await this.domain.ownerOf(BigInt(e.aliasHash)) as string;
         if (owner.toLowerCase() === me.toLowerCase()) {
-          owned.push({ aliasHash: e.aliasHash, slot: e.registrySlot });
+          owned.push({
+            aliasHash: e.aliasHash,
+            slot: e.registrySlot,
+            name: this.namesByAlias.get(e.aliasHash) ?? null,
+          });
         }
       } catch { /* burned or unowned */ }
     }

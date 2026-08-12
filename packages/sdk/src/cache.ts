@@ -13,6 +13,7 @@ export interface CacheData {
   registryEntries: RegistryEntry[];
   aliasHashByPubkey: Map<bigint, bigint>;
   keyActiveFrom: Map<bigint, number>;
+  namesByAlias: Map<string, string>;
   spentNullifiers: Set<bigint>;
   lastBlock: number;
   /// This client's own notes, already decrypted.
@@ -49,6 +50,7 @@ interface SerializedCache {
   }>;
   aliasHashByPubkey: Record<string, string>;
   keyActiveFrom?: Record<string, number>;
+  namesByAlias?: Record<string, string>;
   // Typed rather than Record<string, unknown>: the shapes below are written and read here
   // and nowhere else, so declaring them removes the casts on the way back in.
   myEntries?: Array<{
@@ -103,6 +105,7 @@ export function serializeCache(d: CacheData): string {
       logIndex:        o.logIndex,
       txHash:          o.txHash,
     })),
+    namesByAlias: Object.fromEntries(d.namesByAlias),
     keyActiveFrom: Object.fromEntries(
       [...d.keyActiveFrom.entries()].map(([k, v]) => ["0x" + k.toString(16), v]),
     ),
@@ -142,6 +145,8 @@ export function deserializeCache(raw: string): CacheData {
   const keyActiveFrom = new Map<bigint, number>(
     Object.entries(d.keyActiveFrom ?? {}).map(([k, v]) => [BigInt(k), v]),
   );
+
+  const namesByAlias = new Map<string, string>(Object.entries(d.namesByAlias ?? {}));
 
   const spentNullifiers = new Set<bigint>(d.spentNullifiers.map(BigInt));
 
@@ -183,7 +188,7 @@ export function deserializeCache(raw: string): CacheData {
   }));
 
   return {
-    poolTrees, registryEntries, aliasHashByPubkey, keyActiveFrom, spentNullifiers,
+    poolTrees, registryEntries, aliasHashByPubkey, keyActiveFrom, namesByAlias, spentNullifiers,
     lastBlock: warm ? d.lastBlock : 0,
     myEntries, outputs,
   };
