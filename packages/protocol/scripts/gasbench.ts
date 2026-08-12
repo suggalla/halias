@@ -2,10 +2,31 @@ import { ethers } from "hardhat";
 // Reports gas for the two hot paths so a type/storage change can be judged, not guessed.
 async function main() {
   const [dep] = await ethers.getSigners();
-  const P3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-  const P4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
-  const libs = { PoseidonT3: await P3.getAddress(), PoseidonT4: await P4.getAddress() };
-  const poolLibs = { PoseidonT3: await P3.getAddress() };
+
+  // Which Poseidon the numbers are measured against. Production links the canonical build
+  // (see ensurePoseidon in deploy.ts); our own viaIR build of the same source is both larger
+  // and far slower, so measuring against it overstates every figure here.
+  const canonical = process.env.OWN_POSEIDON !== "1";
+  let t3: string, t4: string;
+  if (canonical) {
+    const { proxy, PoseidonT3, PoseidonT4 } = require("poseidon-solidity");
+    if ((await ethers.provider.getCode(proxy.address)) === "0x") {
+      await (await dep.sendTransaction({ to: proxy.from, value: proxy.gas })).wait();
+      await (await ethers.provider.broadcastTransaction(proxy.tx)).wait();
+    }
+    for (const lib of [PoseidonT3, PoseidonT4]) {
+      if ((await ethers.provider.getCode(lib.address)) === "0x") {
+        await (await dep.sendTransaction({ to: proxy.address, data: lib.data })).wait();
+      }
+    }
+    t3 = PoseidonT3.address; t4 = PoseidonT4.address;
+  } else {
+    t3 = await (await (await ethers.getContractFactory("PoseidonT3")).deploy()).getAddress();
+    t4 = await (await (await ethers.getContractFactory("PoseidonT4")).deploy()).getAddress();
+  }
+  console.log(`poseidon      : ${canonical ? "canonical" : "own viaIR build"}`);
+  const libs = { PoseidonT3: t3, PoseidonT4: t4 };
+  const poolLibs = { PoseidonT3: t3 };
 
   const reg = await (await ethers.getContractFactory("HaliasRegistry", { libraries: libs }))
     .deploy(dep.address);
@@ -32,7 +53,13 @@ async function main() {
   const t = await (await pool.transact(await base(), "0x", "0x", proof, { value: ethers.parseEther("1") })).wait();
   console.log("transact      :", t!.gasUsed.toString());
 
-  const rr = await (await reg.register(rF(), rF(), rF(), rF())).wait();
-  console.log("register (SMT):", rr!.gasUsed.toString());
+  // Registration cost is not one number. Slots are sequential, so consecutive aliases share
+  // every SMT node above the level where their paths diverge — the first write into an empty
+  // subtree is zero -> non-zero (~22.1k), every later one is an overwrite (~5k). Reporting
+  // only the first registration overstates the steady state by more than 3x.
+  for (let i = 1; i <= 10; i++) {
+    const r = await (await reg.register(rF(), rF(), rF(), rF())).wait();
+    if (i <= 3 || i === 10) console.log(`register #${String(i).padEnd(2)}  :`, r!.gasUsed.toString());
+  }
 }
 main().catch(e => { console.error(e); process.exit(1); });
