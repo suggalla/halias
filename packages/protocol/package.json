@@ -11,7 +11,13 @@
     "circuits:setup": "npm run ceremony -- -c transact -p 17 --dev && npm run export-verifier -- -c transact",
     "circuits:build": "npm run circuits:compile && npm run circuits:setup",
     "test:fuzz": "forge test --root ../..",
-    "test:all": "npm run test:hardhat && npm run test:fuzz"
+    "test:all": "npm run test:hardhat && npm run test:fuzz",
+    "analyze": "./scripts/analyze.sh contracts",
+    "analyze:all": "./scripts/analyze.sh all",
+    "analyze:circuit": "./scripts/analyze.sh circuit",
+    "analyze:ecne": "./scripts/analyze.sh ecne",
+    "analyze:slither": "./scripts/analyze.sh slither",
+    "analyze:aderyn": "./scripts/analyze.sh aderyn"
   },
   "keywords": [],
   "author": "",

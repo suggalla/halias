@@ -1,0 +1,8 @@
+Ecne — transact.r1cs — 2026-08-12T16:44:45Z
+
+Solved for 94454 variables out of 94463 total variables
+Solved for 0 target variables out of 0 total target variables
+undetermined signals (expect 9, one 'inv' per IsZero-family component): 9
+
+banner (vacuous — 0 output signals, see docs/static-analysis.md):
+R1CS function transact has sound constraints (No trusted functions needed!)

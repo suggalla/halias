@@ -1,0 +1,52 @@
+circomspect: analyzing template 'NoteCommitment'
+circomspect: analyzing template 'NoteNullifier'
+warning: Using `Bits2Num` to convert arrays to field elements may lead to aliasing issues.
+   ┌─ /mnt/e/Github/halias/packages/protocol/circuits/transact.circom:91:31
+   │
+91 │     component leafIndexBits = Bits2Num(levels);
+   │                               ^^^^^^^^^^^^^^^^ Circomlib template `Bits2Num` instantiated here.
+   │
+   = Consider using `Bits2Num_strict` if the input size may be >= than the prime size.
+   = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#non-strict-binary-conversion.
+
+warning: Using `Num2Bits` to convert field elements to bits may lead to aliasing issues.
+    ┌─ /mnt/e/Github/halias/packages/protocol/circuits/transact.circom:108:26
+    │
+108 │     component treeBits = Num2Bits(32 - levels);
+    │                          ^^^^^^^^^^^^^^^^^^^^^ Circomlib template `Num2Bits` instantiated here.
+    │
+    = Consider using `Num2Bits_strict` if the input size may be >= than the prime size.
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#non-strict-binary-conversion.
+
+circomspect: analyzing template 'Transact'
+warning: Intermediate signals should typically occur in at least two separate constraints.
+    ┌─ /mnt/e/Github/halias/packages/protocol/circuits/transact.circom:531:5
+    │
+531 │     signal paramsHashSquare <== paramsHash * paramsHash;
+    │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    │     │
+    │     The intermediate signal `paramsHashSquare` is declared here.
+    │     The intermediate signal `paramsHashSquare` is constrained here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#under-constrained-signal.
+
+warning: Using `Num2Bits` to convert field elements to bits may lead to aliasing issues.
+    ┌─ /mnt/e/Github/halias/packages/protocol/circuits/transact.circom:322:29
+    │
+322 │     component pendingBits = Num2Bits(registryLevels);
+    │                             ^^^^^^^^^^^^^^^^^^^^^^^^ Circomlib template `Num2Bits` instantiated here.
+    │
+    = Consider using `Num2Bits_strict` if the input size may be >= than the prime size.
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#non-strict-binary-conversion.
+
+warning: Using `Num2Bits` to convert field elements to bits may lead to aliasing issues.
+    ┌─ /mnt/e/Github/halias/packages/protocol/circuits/transact.circom:411:27
+    │
+411 │         outIndexBits[i] = Num2Bits(registryLevels);
+    │                           ^^^^^^^^^^^^^^^^^^^^^^^^ Circomlib template `Num2Bits` instantiated here.
+    │
+    = Consider using `Num2Bits_strict` if the input size may be >= than the prime size.
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#non-strict-binary-conversion.
+
+circomspect: analyzing template 'RegistryLeaf'
+circomspect: 5 issues found.
