@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import "poseidon-solidity/PoseidonT3.sol";
+import "./base/TreeZeros.sol";
 
 error TreeSpaceExhausted();
 error ZeroCommitment();
@@ -52,11 +53,11 @@ contract MerkleTreeWithHistory {
     // resumable tree, an out-of-order insert, a tree starting part-full — silently reads the
     // preceding tree's values and produces a root nobody can prove against.
     //
-    // Fixed arrays rather than mappings: both are dense, indexed only by level, and LEVELS is
+    // A fixed array rather than a mapping: it is dense, indexed only by level, and LEVELS is
     // a compile-time constant, so the index space IS the array and no keccak is needed to
-    // reach a slot the compiler can compute directly.
+    // reach a slot the compiler can compute directly. The empty-subtree hashes it used to sit
+    // beside are constants now — see {TreeZeros}.
     bytes32[LEVELS] private filledSubtrees;
-    bytes32[LEVELS] private poolZeros;
 
     // root => treeNumber + 1. Zero means unknown, which is why it is offset.
     //
@@ -73,16 +74,15 @@ contract MerkleTreeWithHistory {
     uint32 public leafIndex;
 
     constructor() {
-        bytes32 currentZero = bytes32(0);
-        for (uint32 i = 0; i < LEVELS; i++) {
-            poolZeros[i] = currentZero;
-            filledSubtrees[i] = currentZero;
-            currentZero = _hashLeftRight(currentZero, currentZero);
-        }
-        lastRoot = currentZero;
+        // filledSubtrees is deliberately left unset. Its initial value is unobservable: the
+        // invariant above is that no level is read before it is written, and a tree starting
+        // at index 0 takes the even branch at every level on its first insert. That was true
+        // when the array was seeded with the empty-subtree hashes and it is true now, so the
+        // 16 SSTOREs that seeded it bought nothing.
+        lastRoot = TreeZeros.zeros(LEVELS);
         // Tree 0's empty root. Every tree's empty root is this same value, which is why
         // roots are only published after an insert — see _commitPoolRoot.
-        knownPoolRootTree[currentZero] = 1;
+        knownPoolRootTree[lastRoot] = 1;
     }
 
     // Inserts both of a transact's outputs in one walk up the current tree.
@@ -109,7 +109,7 @@ contract MerkleTreeWithHistory {
         for (uint32 i = 1; i < LEVELS; i++) {
             if (currentIndex % 2 == 0) {
                 filledSubtrees[i] = currentHash;
-                currentHash = _hashLeftRight(currentHash, poolZeros[i]);
+                currentHash = _hashLeftRight(currentHash, TreeZeros.zeros(i));
             } else {
                 currentHash = _hashLeftRight(filledSubtrees[i], currentHash);
             }

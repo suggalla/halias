@@ -28,11 +28,13 @@ async function main() {
   const libs = { PoseidonT3: t3, PoseidonT4: t4 };
   const poolLibs = { PoseidonT3: t3 };
 
-  const reg = await (await ethers.getContractFactory("HaliasRegistry", { libraries: libs }))
-    .deploy(dep.address);
+  const regF = await ethers.getContractFactory("HaliasRegistry", { libraries: libs });
+  const reg = await regF.deploy(dep.address);
+  console.log("deploy registry:", (await reg.deploymentTransaction()!.wait())!.gasUsed.toString());
   const ver = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
   const pool = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs }))
     .deploy(await ver.getAddress(), await reg.getAddress());
+  console.log("deploy pool    :", (await pool.deploymentTransaction()!.wait())!.gasUsed.toString());
 
   const r32 = () => ethers.hexlify(ethers.randomBytes(32));
   // 31 bytes: a full 32 exceeds FIELD_PRIME ~81% of the time and the registry rejects it.

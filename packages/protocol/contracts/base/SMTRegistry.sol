@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import "poseidon-solidity/PoseidonT3.sol";
 import "poseidon-solidity/PoseidonT4.sol";
 import "./Constants.sol";
+import "./TreeZeros.sol";
 
 error RegistryFull();
 
@@ -68,16 +69,13 @@ abstract contract SMTRegistry {
     // would keccak twice per access. This tree is walked REGISTRY_LEVELS deep with two node
     // reads per level, so the difference is paid on every registration.
     mapping(uint256 => bytes32)[REGISTRY_LEVELS] private _smtNodes;
-    bytes32[REGISTRY_LEVELS + 1] private _smtZeros;
 
     function _initSMT() internal {
-        bytes32 z = bytes32(0);
-        for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
-            _smtZeros[i] = z;
-            z = bytes32(PoseidonT3.hash([uint256(z), uint256(z)]));
-        }
-        _smtZeros[REGISTRY_LEVELS] = z;
-        smtRoot = z;
+        // The empty-subtree hashes are constants — see {TreeZeros}. They were a storage array
+        // seeded here, which cost 33 SSTOREs once and a cold SLOAD at nearly every level of
+        // every update afterwards: in a sparse tree most siblings are empty, so the fallback
+        // below is the common path rather than the rare one.
+        smtRoot = TreeZeros.zeros(REGISTRY_LEVELS);
         // Not stamped: the genesis root is accepted as the current root, and is stamped
         // like any other when something supersedes it.
     }
@@ -112,7 +110,7 @@ abstract contract SMTRegistry {
             uint256 siblingPath = nodePath ^ 1;
             bool    isRight     = (nodePath & 1) == 1;
             bytes32 sibling     = _smtNodes[i][siblingPath];
-            if (sibling == bytes32(0)) sibling = _smtZeros[i];
+            if (sibling == bytes32(0)) sibling = TreeZeros.zeros(i);
             _smtNodes[i][nodePath] = current;
             if (isRight) {
                 current = bytes32(PoseidonT3.hash([uint256(sibling), uint256(current)]));
@@ -150,7 +148,7 @@ abstract contract SMTRegistry {
         for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
             uint256 siblingPath = (uint256(pathKey) >> i) ^ 1;
             bytes32 s = _smtNodes[i][siblingPath];
-            siblings[i] = s == bytes32(0) ? _smtZeros[i] : s;
+            siblings[i] = s == bytes32(0) ? TreeZeros.zeros(i) : s;
         }
     }
 
