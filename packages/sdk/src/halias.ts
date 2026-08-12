@@ -1158,14 +1158,29 @@ export class Halias extends HaliasCore {
     this.ensureInit();
     await this.ensureSync();
 
-    const anonymitySet = Number(await this.pool.nextIndex());
+    // Counted from the scan rather than read from the pool. There is no single on-chain
+    // counter to read: the pool is a sequence of trees, and its `leafIndex` is the position
+    // within the tree currently filling, not a total. Every commitment ever inserted is an
+    // output this scan has already seen.
+    const anonymitySet = this.allOutputs.length;
     const mine = this.myEntries.filter((e) => e.tokenAddress === tokenAddress).length;
 
     // Blocks since our newest note landed. A withdrawal in the same block as its deposit
     // correlates the two by timing alone, whatever the proof hides.
-    const newest = this.myEntries.reduce((m, e) => Math.max(m, e.leafIndex), -1);
+    //
+    // Ordered by global position, not by leafIndex. Across trees a leaf index says nothing
+    // about age — leaf 5 of tree 1 is newer than leaf 100 of tree 0 — so comparing indices
+    // alone picks the wrong note as newest, and then matches it against whichever output
+    // happens to share that index in some other tree.
+    const globalIndex = (o: { treeNumber: number; leafIndex: number }) =>
+      (BigInt(o.treeNumber) << BigInt(POOL_LEVELS)) + BigInt(o.leafIndex);
+    const newest = this.myEntries.reduce<bigint>((m, e) => {
+      const g = globalIndex(e);
+      return g > m ? g : m;
+    }, -1n);
     const latest = await this.config.provider.getBlockNumber();
-    const newestBlock = this.allOutputs.find((o) => o.leafIndex === newest)?.blockNumber ?? latest;
+    const newestBlock =
+      this.allOutputs.find((o) => globalIndex(o) === newest)?.blockNumber ?? latest;
 
     return {
       anonymitySet,

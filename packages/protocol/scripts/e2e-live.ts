@@ -582,6 +582,32 @@ async function main() {
   // Classification had never been asserted, and it was wrong in the UI: "relayed" was read
   // off nothing but a fee payer who was not you — which is also true of a stranger funding
   // your alias, and of the sender of any transfer you receive.
+  // ── privacy context ───────────────────────────────────────────────────────
+  // Not a score, so nothing here asserts a threshold. What is asserted is that the numbers
+  // are real: this method read a `nextIndex` counter the pool has not had since it became a
+  // sequence of trees, so every call threw, and nothing noticed because nothing called it.
+  console.log(`\nprivacy context`);
+  {
+    const pc = await alice.privacyContext();
+    check("anonymitySet counts every commitment in the pool",
+          pc.anonymitySet > 0, `${pc.anonymitySet} notes`);
+    check("myNotes is a subset of it",
+          pc.myNotes > 0 && pc.myNotes <= pc.anonymitySet, `${pc.myNotes} of ${pc.anonymitySet}`);
+    check("blocksSinceLastNote is a real block distance",
+          Number.isFinite(pc.blocksSinceLastNote) && pc.blocksSinceLastNote >= 0,
+          `${pc.blocksSinceLastNote} blocks`);
+    check("othersSinceLastNote is non-negative",
+          pc.othersSinceLastNote >= 0, `${pc.othersSinceLastNote}`);
+
+    // The ordering fix: notes are ranked by global position, not leafIndex. With a single
+    // tree the two agree, so this only bites after a rollover — where a low leafIndex in a
+    // newer tree would otherwise be read as the oldest note and date the whole answer wrong.
+    const after = await alice.deposit("0.05");
+    check("a fresh deposit resets the distance to the newest note",
+          (await alice.privacyContext()).blocksSinceLastNote <= pc.blocksSinceLastNote + 1,
+          after.txHash.slice(0, 10));
+  }
+
   console.log(`\nhistory classification`);
   const bobHist = await bob.history();
   const aliceHist = await alice.history();
@@ -728,6 +754,35 @@ async function main() {
   await alice.offerAlias(aliceName, heirWallet.address);
   eq("an offer moves nothing on its own",
      await domainContract.ownerOf(BigInt(aliceAliasHash)), aliceWallet.address);
+
+  // Withdrawing an offer, before covering the path where it is taken up. An offer that
+  // cannot be revoked is a standing option written against the owner.
+  await alice.cancelOffer(aliceName);
+  eq("a cancelled offer leaves no pending owner",
+     await domainContract.pendingAliasOwner(aliceAliasHash), ethers.ZeroAddress);
+  // Prepared, then submitted — because `prepare` only signs an EIP-712 message off chain and
+  // succeeds whether or not an offer exists. The cancellation has to be enforced where the
+  // signature is redeemed, which is the only place that can see there is nothing to accept.
+  const staleAccept = await heirClient.acceptAlias(aliceName, { prepare: true });
+  check("a signature can still be produced for a cancelled offer", !!staleAccept.signature);
+  const domainForStale = new ethers.Contract(cfg.domain, [
+    "function acceptAlias(bytes32,bytes32,bytes32,bytes32,uint256,bytes) external",
+  ], relayWallet);
+  const heirKeysEarly = (heirClient as any).keys;
+  let staleRejected = false;
+  try {
+    await (await domainForStale.acceptAlias(
+      aliceAliasHash,
+      ethers.toBeHex(heirKeysEarly.spendingPubkey, 32),
+      ethers.toBeHex((heirClient as any).myNullifierKeyHash(), 32),
+      ethers.hexlify(heirKeysEarly.encryption.publicKey),
+      staleAccept.deadline, staleAccept.signature,
+    )).wait();
+  } catch { staleRejected = true; }
+  check("but redeeming it after the cancel is rejected", staleRejected);
+
+  // Re-offer, so the rest of this section runs against a live offer.
+  await alice.offerAlias(aliceName, heirWallet.address);
 
   // The heir has no ETH. They sign; the relayer pays — the whole reason authority is a
   // signature rather than msg.sender.

@@ -5,6 +5,7 @@ import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { aliasHashToKey } from "./helpers/smt";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { anchorOf } from "./helpers/anchor";
 
 // The SMT leaf a registration inserts: Poseidon(aliasKey, Poseidon(pk, nkh, dataHash), 1).
 // A claim's proof performs this insertion itself, and the pool requires the public signal to
@@ -71,7 +72,7 @@ describe("HaliasDomain", function () {
     return {
       pendingLeaf:       pendingLeafFor(r),
       outputsEmpty:      false,
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      withdrawOf(FEE + relayerFee.amount),
       tokenAddress:      ethers.ZeroAddress,
@@ -86,7 +87,7 @@ describe("HaliasDomain", function () {
   // Puts ETH in the pool so a claim has something to withdraw against.
   async function fundPool(amount: bigint) {
     await (await pool.transact({
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot: await registry.getRegistryRoot(),
       publicAmount: amount, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand32(), rand32()],
@@ -317,7 +318,7 @@ describe("HaliasDomain", function () {
       // could choose it would insert their own unregistered keys into a tree of their
       // choosing and pay themselves — which is precisely what the registry proof prevents.
       await expect(pool.connect(user).transact({
-        poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
+        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
         registryRoot: await registry.getRegistryRoot(),
         publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [rand32(), rand32()],
@@ -348,7 +349,7 @@ describe("HaliasDomain", function () {
 
       expect(await registry.pendingLeaf()).to.equal(ethers.ZeroHash);
       await expect(pool.connect(user).transact({
-        poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
+        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
         registryRoot: await registry.getRegistryRoot(),
         publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [rand32(), rand32()],

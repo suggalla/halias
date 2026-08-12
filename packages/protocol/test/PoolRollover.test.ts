@@ -89,8 +89,8 @@ describe("pool tree rollover", function () {
     const b = await insertPair();
     expect([b.tree, b.idx0, b.idx1]).to.deep.equal([0, 2, 3]);
     // Filling the tree exactly is what makes a pair unable to straddle a boundary.
-    expect(await pool.treeNumber()).to.equal(1n);
-    expect(await pool.leafIndex()).to.equal(0n);
+    expect((await pool.position()).tree).to.equal(1n);
+    expect((await pool.position()).leaf).to.equal(0n);
 
     const c = await insertPair();
     expect([c.tree, c.idx0, c.idx1]).to.deep.equal([1, 0, 1]);
@@ -114,7 +114,7 @@ describe("pool tree rollover", function () {
     const c0 = rand32(), c1 = rand32();
     const first = await insertPair({ outputCommitments: [c0, c1] });
     await insertPair();                                     // fills tree 0, rolls over
-    expect(await pool.treeNumber()).to.equal(1n);
+    expect((await pool.position()).tree).to.equal(1n);
     const second = await insertPair({ outputCommitments: [c0, c1] });
 
     expect(second.tree).to.equal(1);
@@ -155,7 +155,7 @@ describe("pool tree rollover", function () {
     const a = await insertPair();
     await insertPair();
     await insertPair();
-    expect(await pool.treeNumber()).to.equal(1n);
+    expect((await pool.position()).tree).to.equal(1n);
     await expect(pool.transact(
       await params({ poolRoot: [a.root, a.root], treeNumber: [a.tree, a.tree] }),
       "0x", "0x", ZERO_PROOF,

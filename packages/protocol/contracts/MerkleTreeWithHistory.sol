@@ -65,13 +65,15 @@ contract MerkleTreeWithHistory {
     // so the tree number is a public signal, and without checking it against the tree the
     // root actually belongs to a holder could re-spend one note under a different tree number
     // and mint a fresh nullifier each time. See HaliasPool.transact.
-    mapping(bytes32 => uint32) public knownPoolRootTree;
+    mapping(bytes32 => uint32) private knownPoolRootTree;
 
     bytes32 internal lastRoot;
-    /// @notice Which tree is currently filling.
-    uint32 public treeNumber;
-    /// @notice Next free position within that tree.
-    uint32 public leafIndex;
+    /// @dev Which tree is filling, and the next free position within it. Internal, and read
+    ///      from outside only through {position} — together. A leaf index means nothing
+    ///      without its tree, and a tree number means nothing without a root, so neither is
+    ///      exposed alone. See {currentAnchor}.
+    uint32 internal treeNumber;
+    uint32 internal leafIndex;
 
     constructor() {
         // filledSubtrees is deliberately left unset. Its initial value is unobservable: the
@@ -167,29 +169,31 @@ contract MerkleTreeWithHistory {
         return bytes32(result);
     }
 
-    function isKnownPoolRoot(bytes32 root) public view returns (bool) {
-        if (root == bytes32(0)) return false;
-        return knownPoolRootTree[root] != 0;
-    }
-
-    /// @notice The tree a published root belongs to. Reverts nothing; returns false if unknown.
+    /// @notice Whether a root was ever published, and which tree it belongs to.
+    /// @dev    Both halves in one answer. A caller checking only membership would still have
+    ///         to name a tree when it proves, and naming the wrong one is rejected with
+    ///         `PoolRootWrongTree` — so the tree comes back whether or not it was asked for.
     function poolRootTree(bytes32 root) public view returns (bool known, uint32 tree) {
         uint32 v = knownPoolRootTree[root];
         return v == 0 ? (false, 0) : (true, v - 1);
     }
 
-    function getLastRoot() public view returns (bytes32) {
-        return lastRoot;
-    }
-
-    /// @notice The most recent published root together with the tree it belongs to.
-    /// @dev    Use this rather than pairing {getLastRoot} with {treeNumber}, which is a trap:
-    ///         after a rollover the former is the tree that just filled while the latter is
-    ///         the new empty one, and {HaliasPool-transact} rejects that combination with
-    ///         `PoolRootWrongTree`. Nothing can be proven against an empty tree anyway, so the
-    ///         pair a caller actually wants is always the last one that received leaves.
+    /// @notice The root to prove against, together with the tree it belongs to.
+    /// @dev    The only way to read the current root, deliberately. Pairing a bare
+    ///         `getLastRoot()` with a bare `treeNumber()` is a trap: after a rollover the
+    ///         first is the tree that just filled and the second is the new empty one, and
+    ///         {HaliasPool-transact} rejects that combination. Nothing can be proven against
+    ///         an empty tree, so the pair a caller wants is always the last one that received
+    ///         leaves — which is what this returns, as one value.
     function currentAnchor() external view returns (bytes32 root, uint32 tree) {
         root = lastRoot;
         tree = knownPoolRootTree[lastRoot] - 1;
+    }
+
+    /// @notice How full the pool is: the tree currently filling and the next free leaf in it.
+    /// @dev    Not an anchor — `leafIndex` names a position no proof refers to. For proving,
+    ///         use {currentAnchor}.
+    function position() external view returns (uint32 tree, uint32 leaf) {
+        return (treeNumber, leafIndex);
     }
 }

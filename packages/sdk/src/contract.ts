@@ -27,14 +27,19 @@ export const POOL_ABI = [
   // Deposit (publicAmount > 0), transfer (= 0), withdraw (field-negative).
   `function transact(${TRANSACT_PARAMS} p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof) external payable`,
   `function computeParamsHash(${TRANSACT_PARAMS} p, bytes encryptedOutput0, bytes encryptedOutput1) external view returns (uint256)`,
-  "function isKnownPoolRoot(bytes32) external view returns (bool)",
-  "function getLastRoot() external view returns (bytes32)",
   "function spentNullifiers(bytes32) external view returns (bool)",
   "function poolTokenBalance(address) external view returns (uint256)",
   "function registry() external view returns (address)",
-  // The pool is a sequence of trees, so position is a pair.
-  "function treeNumber() external view returns (uint32)",
-  "function leafIndex() external view returns (uint32)",
+  // The pool is a sequence of trees, so an anchor is a (root, tree) pair and must be read as
+  // one. `getLastRoot()` beside `treeNumber()` is the trap the pool documents: after a
+  // rollover the first is the tree that just filled and the second is the new empty one, and
+  // pairing them is rejected with PoolRootWrongTree. Neither is exposed here for that reason.
+  //
+  // Nothing in this SDK calls even this one — the Transact event carries outputTreeNumber
+  // beside both leaf indices, so scanning reconstructs position without asking the chain. It
+  // is exposed for consumers that want a cross-check against their own scan.
+  "function currentAnchor() external view returns (bytes32 root, uint32 tree)",
+  "function position() external view returns (uint32 tree, uint32 leaf)",
   "function poolRootTree(bytes32) external view returns (bool known, uint32 tree)",
   // tokenAddress is indexed — omitting that shifts every later argument during decoding.
   "event Transact(uint256 publicAmount, address indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
@@ -70,6 +75,8 @@ export const DOMAIN_ABI = [
   "function pendingAliasOwner(bytes32) external view returns (address)",
   "function aliasNonce(bytes32) external view returns (uint256)",
   "event AliasOffered(bytes32 indexed aliasHash, address indexed from, address indexed to)",
+  // Both halves, so a client tracking pending offers can see one withdrawn as well as made.
+  "event AliasOfferCancelled(bytes32 indexed aliasHash)",
   "function registrationFee() external view returns (uint256)",
   "function ownerOf(uint256 tokenId) external view returns (address)",
   "function balanceOf(address owner) external view returns (uint256)",

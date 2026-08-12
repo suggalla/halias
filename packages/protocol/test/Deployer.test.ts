@@ -4,6 +4,7 @@ import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { aliasHashToKey } from "./helpers/smt";
 import { registerAlias } from "./helpers/register";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { anchorOf } from "./helpers/anchor";
 
 // HaliasDeployer — the three contracts brought up wired, in one transaction.
 //
@@ -104,7 +105,7 @@ describe("HaliasDeployer", function () {
 
     const deposit = ethers.parseEther("1");
     await (await pool.connect(user).transact({
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      deposit,
       tokenAddress:      ethers.ZeroAddress,
@@ -130,7 +131,7 @@ describe("HaliasDeployer", function () {
 
     const deposit = fee * 4n;
     await (await pool.connect(user).transact({
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: deposit, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand32(), rand32()], outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER, externalData: ethers.ZeroHash,
@@ -150,7 +151,7 @@ describe("HaliasDeployer", function () {
     ));
 
     await (await domain.connect(admin).claim(r, {
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: FIELD_PRIME - fee, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand32(), rand32()], outputCommitments: [rand32(), rand32()],
       recipient: await domain.getAddress(), relayerFee: NO_RELAYER, externalData,
