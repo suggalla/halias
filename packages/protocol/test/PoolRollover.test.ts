@@ -40,7 +40,7 @@ describe("pool tree rollover", function () {
     return {
       poolRoot: [root, root], treeNumber: [Number(tree), Number(tree)],
       registryRoot: await registry.getRegistryRoot(),
-      publicAmount: 0n, tokenAddress: 0n,
+      publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER,

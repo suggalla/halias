@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 import "./HaliasRegistry.sol";
 import "./interfaces/IHaliasPool.sol";
@@ -337,7 +337,7 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
         // The prover authorised exactly this registration. A submitter can decline to
         // submit; it cannot substitute itself for `r.owner` or alter a single key.
         if (keccak256(abi.encode(r)) != p.externalData) revert ClaimNotAuthorised();
-        if (p.tokenAddress != 0) revert ClaimMustBeETH();
+        if (p.tokenAddress != address(0)) revert ClaimMustBeETH();
 
         _record(r, name);
         registry.armPendingLeaf(r.aliasHash);

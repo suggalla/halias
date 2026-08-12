@@ -59,7 +59,7 @@ describe("E2E against the real verifier", function () {
 
   const params = (over: any = {}) => ({
     poolRoot: [ethers.ZeroHash, ethers.ZeroHash], treeNumber: [0, 0], registryRoot: ethers.ZeroHash,
-    publicAmount: 0n, tokenAddress: 0n,
+    publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
     inputNullifiers: [ethers.ZeroHash, ethers.ZeroHash],
     outputCommitments: [ethers.ZeroHash, ethers.ZeroHash],
     recipient: ethers.ZeroAddress,

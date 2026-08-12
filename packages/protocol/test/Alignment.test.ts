@@ -168,7 +168,7 @@ describe("Circuit/contract alignment", function () {
       const [, recip] = await ethers.getSigners();
       const params = {
         poolRoot: [ethers.ZeroHash, ethers.ZeroHash], treeNumber: [0, 0], registryRoot: ethers.ZeroHash,
-        publicAmount: 0n, tokenAddress: 0n,
+        publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [ethers.ZeroHash, ethers.ZeroHash],
         outputCommitments: [ethers.ZeroHash, ethers.ZeroHash],
         relayerFee: { relayer: ethers.ZeroAddress, amount: 0n },
@@ -190,7 +190,7 @@ describe("Circuit/contract alignment", function () {
     it("paramsHash changes with externalData, binding the relayer fee into the proof", async function () {
       const base = {
         poolRoot: [ethers.ZeroHash, ethers.ZeroHash], treeNumber: [0, 0], registryRoot: ethers.ZeroHash,
-        publicAmount: 0n, tokenAddress: 0n,
+        publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [ethers.ZeroHash, ethers.ZeroHash],
         outputCommitments: [ethers.ZeroHash, ethers.ZeroHash],
         relayerFee: { relayer: ethers.ZeroAddress, amount: 0n },
@@ -221,7 +221,7 @@ describe("Circuit/contract alignment", function () {
       // demands msg.value — proving the split sits exactly where the circuit puts it.
       await expect(pool.transact({
         poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
-        publicAmount: atBoundary - 1n, tokenAddress: 0n,
+        publicAmount: atBoundary - 1n, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [ethers.keccak256("0x01"), ethers.keccak256("0x02")],
         outputCommitments: [ethers.keccak256("0x03"), ethers.keccak256("0x04")],
         relayerFee: { relayer: ethers.ZeroAddress, amount: 0n },
@@ -255,8 +255,12 @@ describe("Circuit/contract alignment", function () {
   // ── tokenAddress 160-bit bound ────────────────────────────────────
 
   it("circuit rejects a tokenAddress of 2^160, keeping a token's namespace canonical", async function () {
-    // Without this bound, tokenAddress and tokenAddress + 2^160 would be distinct note
-    // namespaces that the contract's uint160 cast collapses onto the same ERC-20.
+    // The contract no longer truncates — `TransactParams.tokenAddress` is an `address`, so
+    // the ABI decoder rejects anything wider before the pool runs. The circuit keeps its own
+    // bound anyway, and this pins it: a proof is the only other way a note could be minted
+    // under a token identifier the contract can never name, and such a note would be
+    // unspendable rather than dangerous. Cheap, and it stops the two layers disagreeing about
+    // what a token *is*.
     const kp = generateKeypair();
     const { key } = await registerLocal(kp.pubkey, kp.nullifierKey);
     const token = 1n << 160n;

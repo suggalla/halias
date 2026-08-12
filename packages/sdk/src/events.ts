@@ -5,12 +5,12 @@ import { buildEntry, computeNullifier, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVEL
 import { decodeOutputBlob, tryDecryptOutput, poseidonHash } from "./crypto";
 
 export const TRANSACT_ABI = [
-  "event Transact(uint256 publicAmount, uint256 indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
+  "event Transact(uint256 publicAmount, address indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
   // An exit spent its inputs and created nothing, so it moves the nullifier set but not the
   // tree. Its own event rather than a flag on Transact: a scanner that inserted for one of
   // these would build a tree that silently disagrees with the contract's, and the only
   // symptom is every proof afterwards being rejected.
-  "event PoolExit(uint256 publicAmount, uint256 indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1)",
+  "event PoolExit(uint256 publicAmount, address indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1)",
 ];
 export const REGISTRY_ABI = [
   "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 leaf, bytes32 encryptionPubkey, uint32 slot)",

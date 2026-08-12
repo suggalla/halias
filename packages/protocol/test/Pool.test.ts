@@ -32,7 +32,7 @@ describe("HaliasPool", function () {
       poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      0n,
-      tokenAddress:      0n,
+      tokenAddress:      ethers.ZeroAddress,
       inputNullifiers:   [rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient:         ethers.ZeroAddress,
@@ -55,7 +55,7 @@ describe("HaliasPool", function () {
     await (await t.mint(user.address, amount)).wait();
     await (await t.connect(user).approve(poolAddr, amount)).wait();
     await (await pool.connect(user).transact(
-      await baseParams({ publicAmount: amount, tokenAddress: BigInt(await t.getAddress()) }),
+      await baseParams({ publicAmount: amount, tokenAddress: await t.getAddress() }),
       "0x", "0x", ZERO_PROOF,
     )).wait();
   }
@@ -254,7 +254,7 @@ describe("HaliasPool", function () {
 
     it("refuses ETH alongside a token deposit", async function () {
       await expect(send(
-        await baseParams({ publicAmount: 1000n, tokenAddress: BigInt(await token.getAddress()) }),
+        await baseParams({ publicAmount: 1000n, tokenAddress: await token.getAddress() }),
         { value: 1n },
       )).to.be.revertedWithCustomError(pool, "WrongMsgValue").withArgs(0n, 1n);
     });
@@ -263,7 +263,7 @@ describe("HaliasPool", function () {
   // ── Token sanity ────────────────────────────────────────────────────────────
 
   it("rejects a token address with no code", async function () {
-    await expect(send(await baseParams({ publicAmount: 1000n, tokenAddress: BigInt(user.address) })))
+    await expect(send(await baseParams({ publicAmount: 1000n, tokenAddress: user.address })))
       .to.be.revertedWithCustomError(pool, "InvalidTokenAddress");
   });
 
@@ -274,7 +274,7 @@ describe("HaliasPool", function () {
     await (await feeToken.mint(user.address, amount)).wait();
     await (await feeToken.connect(user).approve(poolAddr, amount)).wait();
     await expect(pool.connect(user).transact(
-      await baseParams({ publicAmount: amount, tokenAddress: BigInt(await feeToken.getAddress()) }),
+      await baseParams({ publicAmount: amount, tokenAddress: await feeToken.getAddress() }),
       "0x", "0x", ZERO_PROOF,
     )).to.be.revertedWithCustomError(pool, "FeeOnTransferToken");
   });
@@ -391,7 +391,7 @@ describe("HaliasPool", function () {
 
       await expect(pool.connect(user).transact(await baseParams({
         publicAmount: withdrawOf(total),
-        tokenAddress: BigInt(tokenAddr),
+        tokenAddress: tokenAddr,
         recipient:    recipient.address,
         relayerFee:   { relayer: relayer.address, amount: fee },
       }), "0x", "0x", ZERO_PROOF))
@@ -414,7 +414,7 @@ describe("HaliasPool", function () {
 
       await (await pool.connect(user).transact(await baseParams({
         publicAmount: withdrawOf(total),
-        tokenAddress: BigInt(tokenAddr),
+        tokenAddress: tokenAddr,
         recipient:    recipient.address,
         relayerFee:   { relayer: relayer.address, amount: fee },
       }), "0x", "0x", ZERO_PROOF)).wait();
@@ -434,7 +434,7 @@ describe("HaliasPool", function () {
 
       await (await pool.connect(user).transact(await baseParams({
         publicAmount: withdrawOf(400n),
-        tokenAddress: BigInt(tokenAddr),
+        tokenAddress: tokenAddr,
         recipient:    recipient.address,
       }), "0x", "0x", ZERO_PROOF)).wait();
 
@@ -451,7 +451,7 @@ describe("HaliasPool", function () {
 
       await expect(pool.connect(user).transact(await baseParams({
         publicAmount: withdrawOf(1001n),
-        tokenAddress: BigInt(tokenAddr),
+        tokenAddress: tokenAddr,
         recipient:    recipient.address,
       }), "0x", "0x", ZERO_PROOF)).to.be.revertedWithCustomError(pool, "PoolBalanceExceeded");
     });

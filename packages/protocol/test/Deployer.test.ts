@@ -107,7 +107,7 @@ describe("HaliasDeployer", function () {
       poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      deposit,
-      tokenAddress:      0n,
+      tokenAddress:      ethers.ZeroAddress,
       inputNullifiers:   [rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient:         ethers.ZeroAddress,
@@ -131,7 +131,7 @@ describe("HaliasDeployer", function () {
     const deposit = fee * 4n;
     await (await pool.connect(user).transact({
       poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
-      publicAmount: deposit, tokenAddress: 0n,
+      publicAmount: deposit, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand32(), rand32()], outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER, externalData: ethers.ZeroHash,
       pendingLeaf:       ethers.ZeroHash,
@@ -151,7 +151,7 @@ describe("HaliasDeployer", function () {
 
     await (await domain.connect(admin).claim(r, {
       poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
-      publicAmount: FIELD_PRIME - fee, tokenAddress: 0n,
+      publicAmount: FIELD_PRIME - fee, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand32(), rand32()], outputCommitments: [rand32(), rand32()],
       recipient: await domain.getAddress(), relayerFee: NO_RELAYER, externalData,
       // The insertion the claim's proof performs. The registry arms it from its own state

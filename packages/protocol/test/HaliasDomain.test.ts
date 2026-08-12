@@ -73,7 +73,7 @@ describe("HaliasDomain", function () {
       poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      withdrawOf(FEE + relayerFee.amount),
-      tokenAddress:      0n,
+      tokenAddress:      ethers.ZeroAddress,
       inputNullifiers:   [rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient:         domainAddr,
@@ -87,7 +87,7 @@ describe("HaliasDomain", function () {
     await (await pool.transact({
       poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
       registryRoot: await registry.getRegistryRoot(),
-      publicAmount: amount, tokenAddress: 0n,
+      publicAmount: amount, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER, externalData: ethers.ZeroHash,
@@ -263,7 +263,7 @@ describe("HaliasDomain", function () {
 
     it("rejects a token-denominated claim", async function () {
       const r = registration();
-      const p = { ...await claimParams(r), tokenAddress: BigInt(await token.getAddress()) };
+      const p = { ...await claimParams(r), tokenAddress: await token.getAddress() };
       p.externalData = ethers.keccak256(encodeRegistration(r));
 
       await expect(domain.connect(relayer).claim(r, p, "0x", "0x", ZERO_PROOF, ""))
@@ -319,7 +319,7 @@ describe("HaliasDomain", function () {
       await expect(pool.connect(user).transact({
         poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
         registryRoot: await registry.getRegistryRoot(),
-        publicAmount: 0n, tokenAddress: 0n,
+        publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [rand32(), rand32()],
         outputCommitments: [rand32(), rand32()],
         recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER,
@@ -350,7 +350,7 @@ describe("HaliasDomain", function () {
       await expect(pool.connect(user).transact({
         poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
         registryRoot: await registry.getRegistryRoot(),
-        publicAmount: 0n, tokenAddress: 0n,
+        publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [rand32(), rand32()],
         outputCommitments: [rand32(), rand32()],
         recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER,
