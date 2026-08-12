@@ -2,6 +2,7 @@
 
 import path from "path";
 import * as dotenv from "dotenv";
+import { normalizeAlias } from "./alias";
 
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 dotenv.config();
@@ -116,7 +117,8 @@ async function bootstrap() {
   const { ethers } = await import("ethers");
   const { Halias }  = await import("./halias");
   const { FileCache } = await import("./cache");
-  const { getNetwork, getContractAddress, getStartBlock } = await import("halias-deployments");
+  const { getNetwork, getPoolAddress, getRegistryAddress, getDomainAddress, getStartBlock } =
+    await import("halias-deployments");
 
   const PRIVATE_KEY = process.env.PRIVATE_KEY;
   if (!PRIVATE_KEY) {
@@ -140,7 +142,9 @@ async function bootstrap() {
     provider,
     signer,
     chainId: CHAIN_ID,
-    contractAddress: getContractAddress(CHAIN_ID),
+    poolAddress:     getPoolAddress(CHAIN_ID),
+    registryAddress: getRegistryAddress(CHAIN_ID),
+    domainAddress:   getDomainAddress(CHAIN_ID),
     startBlock: getStartBlock(CHAIN_ID),
     artifacts: {
       transactWasm: path.join(out, "transact_js", "transact.wasm"),
@@ -190,7 +194,7 @@ async function main() {
   if (command === "register") {
     const alias = args[1];
     if (!alias) { process.stderr.write("Usage: halias register <alias.hls>\n"); process.exit(1); }
-    const clean = alias.replace(/\.hls$/, "").toLowerCase();
+    const clean = normalizeAlias(alias);
     if (!/^[a-z0-9]+$/.test(clean)) { process.stderr.write("Error: alias must be lowercase alphanumeric\n"); process.exit(1); }
 
     dim("Registering...");
@@ -308,7 +312,7 @@ async function main() {
     if (!alias) { process.stderr.write("Usage: halias lookup <alias.hls>\n"); process.exit(1); }
 
     const result = await halias.lookup(alias);
-    const clean  = alias.replace(/\.hls$/, "").toLowerCase();
+    const clean  = normalizeAlias(alias);
 
     if (jsonMode) {
       outputJson({

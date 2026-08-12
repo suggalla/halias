@@ -11,14 +11,17 @@ import {
   decodeOutputBlob,
 } from "../src/crypto";
 import { MerkleTree } from "../src/merkle";
-import { buildEntry, computeNullifier, NULLIFIER_DOMAIN, ETH_TOKEN_ADDRESS } from "../src/entry";
+import { buildEntry, computeNullifier, NULLIFIER_DOMAIN, POOL_LEVELS, ETH_TOKEN_ADDRESS } from "../src/entry";
 import { findMyOutputs, Output } from "../src/events";
 import { Halias } from "../src/halias";
 import { SMT } from "../src/smt";
 import {
-  deriveInviteKeys, packRelayerFee, unpackRelayerFee,
+  deriveInviteKeys,
   encodeInviteCode, decodeInviteCode,
 } from "../src/invite";
+import { computeParamsHash, encodeRegistration, type TransactParams } from "../src/contract";
+
+const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 before(async () => {
   await init();
@@ -74,31 +77,29 @@ describe("NaCl box encryption", () => {
     const blinding = 123456789n;
     const amount   = ethers.parseEther("1");
 
-    const { encrypted, viewTag } = encryptOutput(blinding, amount, recipient.publicKey);
+    const encrypted = encryptOutput(blinding, amount, recipient.publicKey);
     const decrypted = decryptOutput(encrypted, recipient.secretKey);
 
     expect(decrypted).to.not.be.null;
     expect(decrypted!.blinding).to.equal(blinding);
     expect(decrypted!.amount).to.equal(amount);
-    expect(decrypted!.viewTag).to.equal(viewTag);
   });
 
   it("wrong key fails MAC and returns null", () => {
     const recipient = nacl.box.keyPair();
     const eve       = nacl.box.keyPair();
-    const { encrypted } = encryptOutput(111n, 222n, recipient.publicKey);
+    const encrypted = encryptOutput(111n, 222n, recipient.publicKey);
     const decrypted = decryptOutput(encrypted, eve.secretKey);
     expect(decrypted).to.be.null;
   });
 
   it("encode/decode blob roundtrips", () => {
     const recipient = nacl.box.keyPair();
-    const { encrypted, viewTag } = encryptOutput(42n, 99n, recipient.publicKey);
-    const blob    = encodeOutputBlob(encrypted, viewTag);
+    const encrypted = encryptOutput(42n, 99n, recipient.publicKey);
+    const blob    = encodeOutputBlob(encrypted);
     const decoded = decodeOutputBlob(blob);
     expect(decoded).to.not.be.null;
-    expect(decoded!.viewTag).to.equal(viewTag);
-    expect(Buffer.from(decoded!.encrypted.ephemeralPub).toString("hex"))
+    expect(Buffer.from(decoded!.ephemeralPub).toString("hex"))
       .to.equal(Buffer.from(encrypted.ephemeralPub).toString("hex"));
   });
 
@@ -106,11 +107,11 @@ describe("NaCl box encryption", () => {
     expect(decodeOutputBlob("0x")).to.be.null;
   });
 
-  it("blob is 138 bytes with version prefix", () => {
-    const { encrypted, viewTag } = encryptOutput(1n, 2n, nacl.box.keyPair().publicKey);
-    const blob = encodeOutputBlob(encrypted, viewTag);
+  it("blob is 137 bytes with version prefix", () => {
+    const encrypted = encryptOutput(1n, 2n, nacl.box.keyPair().publicKey);
+    const blob = encodeOutputBlob(encrypted);
     const buf = ethers.getBytes(blob);
-    expect(buf).to.have.lengthOf(138);
+    expect(buf).to.have.lengthOf(137);
     expect(buf[0]).to.equal(0x01);
   });
 });
@@ -127,12 +128,12 @@ describe("MerkleTree", () => {
     expect(tree.getRoot()).to.not.equal(empty);
   });
 
-  it("proof has 32 elements (LEVELS=32 matches circuit)", () => {
+  it("proof has POOL_LEVELS elements, matching the circuit", () => {
     const tree = new MerkleTree();
     tree.insert(100n);
     const proof = tree.getProof(0);
-    expect(proof.pathElements).to.have.lengthOf(32);
-    expect(proof.pathIndices).to.have.lengthOf(32);
+    expect(proof.pathElements).to.have.lengthOf(POOL_LEVELS);
+    expect(proof.pathIndices).to.have.lengthOf(POOL_LEVELS);
   });
 
   it("proof hashes back to root", () => {
@@ -143,7 +144,7 @@ describe("MerkleTree", () => {
     const root = tree.getRoot();
     const { pathElements, pathIndices } = tree.getProof(1);
     let cur = 22n;
-    for (let i = 0; i < 32; i++) {
+    for (let i = 0; i < POOL_LEVELS; i++) {
       const [l, r] = pathIndices[i] === 0 ? [cur, pathElements[i]] : [pathElements[i], cur];
       cur = poseidonHash([l, r]);
     }
@@ -163,10 +164,39 @@ describe("entry", () => {
 
   it("computeNullifier depends on leafIndex", () => {
     const nullifierKey = poseidonHash([42n]);
-    const n0 = computeNullifier(nullifierKey, 0);
-    const n1 = computeNullifier(nullifierKey, 1);
+    const n0 = computeNullifier(nullifierKey, 0, 0);
+    const n1 = computeNullifier(nullifierKey, 0, 1);
     expect(n0).to.not.equal(n1);
     expect(n0).to.equal(poseidonHash([nullifierKey, 0n, NULLIFIER_DOMAIN]));
+  });
+
+  it("computeNullifier depends on the tree, not just the leaf", () => {
+    // The bug this exists to prevent: the pool is a sequence of trees, so a leaf index alone
+    // does not identify a note. If the tree were left out, leaf 5 of tree 0 and leaf 5 of
+    // tree 3 would nullify identically and whichever was spent second would be permanently
+    // unspendable — silent, irreversible, and invisible to any single-tree test.
+    const nullifierKey = poseidonHash([42n]);
+    expect(computeNullifier(nullifierKey, 0, 5)).to.not.equal(computeNullifier(nullifierKey, 3, 5));
+  });
+
+  it("computeNullifier keys on the global position", () => {
+    // Must match NoteNullifier in transact.circom exactly: tree * 2^POOL_LEVELS + leaf.
+    const nullifierKey = poseidonHash([42n]);
+    const global = (BigInt(3) << BigInt(POOL_LEVELS)) + 5n;
+    expect(computeNullifier(nullifierKey, 3, 5))
+      .to.equal(poseidonHash([nullifierKey, global, NULLIFIER_DOMAIN]));
+  });
+
+  it("no two (tree, leaf) pairs share a global position", () => {
+    const nullifierKey = poseidonHash([7n]);
+    const seen = new Set<bigint>();
+    for (let t = 0; t < 4; t++) {
+      for (let l = 0; l < 4; l++) {
+        const n = computeNullifier(nullifierKey, t, l);
+        expect(seen.has(n), `collision at tree ${t} leaf ${l}`).to.equal(false);
+        seen.add(n);
+      }
+    }
   });
 
   it("different pubkey gives different commitment", () => {
@@ -187,16 +217,16 @@ describe("findMyOutputs", () => {
     const blinding = 777n;
 
     const myEntry = buildEntry(myPubkey, myNKHash, blinding, amount, ETH_TOKEN_ADDRESS);
-    const { encrypted, viewTag } = encryptOutput(blinding, amount, myKey.publicKey);
-    const blob = encodeOutputBlob(encrypted, viewTag);
+    const encrypted = encryptOutput(blinding, amount, myKey.publicKey);
+    const blob = encodeOutputBlob(encrypted);
 
     const otherKey  = nacl.box.keyPair();
-    const { encrypted: oe, viewTag: ot } = encryptOutput(1n, 2n, otherKey.publicKey);
-    const otherBlob = encodeOutputBlob(oe, ot);
+    const oe = encryptOutput(1n, 2n, otherKey.publicKey);
+    const otherBlob = encodeOutputBlob(oe);
 
     const outputs: Output[] = [
-      { commitment: myEntry.commitment, leafIndex: 0, encryptedBlob: blob, spentNullifiers: [0n, 0n], blockNumber: 1, transactionIndex: 0, logIndex: 0, tokenAddress: 0n },
-      { commitment: 12345n, leafIndex: 1, encryptedBlob: otherBlob, spentNullifiers: [0n, 0n], blockNumber: 1, transactionIndex: 0, logIndex: 1, tokenAddress: 0n },
+      { commitment: myEntry.commitment, treeNumber: 0, leafIndex: 0, encryptedBlob: blob, spentNullifiers: [0n, 0n], blockNumber: 1, transactionIndex: 0, logIndex: 0, publicAmount: 0n, txHash: "0x" + "00".repeat(32), tokenAddress: 0n },
+      { commitment: 12345n, treeNumber: 0, leafIndex: 1, encryptedBlob: otherBlob, spentNullifiers: [0n, 0n], blockNumber: 1, transactionIndex: 0, logIndex: 1, publicAmount: 0n, txHash: "0x" + "00".repeat(32), tokenAddress: 0n },
     ];
 
     const found = findMyOutputs(outputs, myPubkey, myNullifierKey, myKey.secretKey);
@@ -210,10 +240,10 @@ describe("findMyOutputs", () => {
     const myPubkey = poseidonHash([55555n]);
     const myVK     = poseidonHash([66666n]);  // nullifierKey
     const otherKey = nacl.box.keyPair();
-    const { encrypted, viewTag } = encryptOutput(1n, 2n, otherKey.publicKey);
+    const encrypted = encryptOutput(1n, 2n, otherKey.publicKey);
 
     const outputs: Output[] = [
-      { commitment: 99999n, leafIndex: 0, encryptedBlob: encodeOutputBlob(encrypted, viewTag), spentNullifiers: [0n, 0n], blockNumber: 1, transactionIndex: 0, logIndex: 0, tokenAddress: 0n },
+      { commitment: 99999n, treeNumber: 0, leafIndex: 0, encryptedBlob: encodeOutputBlob(encrypted), spentNullifiers: [0n, 0n], blockNumber: 1, transactionIndex: 0, logIndex: 0, publicAmount: 0n, txHash: "0x" + "00".repeat(32), tokenAddress: 0n },
     ];
 
     expect(findMyOutputs(outputs, myPubkey, myVK, myKey.secretKey)).to.have.lengthOf(0);
@@ -227,7 +257,10 @@ describe("Halias construction", () => {
     provider: new ethers.JsonRpcProvider("http://127.0.0.1:8545"),
     signer: ethers.Wallet.createRandom(),
     chainId: 31337,
-    contractAddress: "0x" + "11".repeat(20),
+    // Three addresses since the split. poolAddress is the one paramsHash commits to.
+    poolAddress:     "0x" + "11".repeat(20),
+    registryAddress: "0x" + "22".repeat(20),
+    domainAddress:   "0x" + "33".repeat(20),
     artifacts: { transactWasm: "/dev/null", transactZkey: "/dev/null" },
   });
 
@@ -278,9 +311,8 @@ describe("SMT lazy root", () => {
   });
 });
 
-// invite.ts is the newest code in the package and had no tests at all. Its byte layout is
-// a cross-package contract: packRelayerFee must produce exactly what Halias._decodeRelayerFee
-// reads back, or a claimer silently pays the wrong relayer — or nobody.
+// invite.ts is the newest code in the package and had no tests at all. The keys it derives
+// are the whole security of an invite: anyone who can reproduce them can spend the note.
 describe("invite keys", () => {
   it("derives deterministically from the secret", () => {
     const s = 0xdeadbeefn;
@@ -317,39 +349,87 @@ describe("invite keys", () => {
   });
 });
 
-describe("relayer fee packing", () => {
-  const addr = "0x1234567890AbcdEF1234567890aBcdef12345678";
+// The relayer fee used to be address(20) || uint96(12) packed into one word, mirrored
+// bit-for-bit in the SDK. It is a struct now and the pool settles it directly, so the
+// packing helpers are gone — deleting a whole class of encoding bug along with them.
+//
+// What replaced them is a hash the SDK and the contract must agree on. That agreement is
+// asserted against a live contract in the protocol package (SdkPreimage.test.ts); what is
+// checkable here without a chain is that the encoding is stable and actually sensitive to
+// every field.
+describe("paramsHash preimage", () => {
+  const POOL = "0x" + "11".repeat(20);
+  const params = (over: Partial<TransactParams> = {}): TransactParams => ({
+    recipient: "0x" + "22".repeat(20),
+    relayerFee: { relayer: "0x" + "33".repeat(20), amount: 7n },
+    externalData: ethers.ZeroHash,
+    ...over,
+  });
+  const hash = (p: TransactParams, e0 = "0x", e1 = "0x") =>
+    computeParamsHash(p, e0, e1, 1n, POOL);
 
-  it("round-trips through pack/unpack", () => {
-    const packed = packRelayerFee(addr, 12345n);
-    const { relayer, fee } = unpackRelayerFee(packed);
-    expect(relayer).to.equal(ethers.getAddress(addr));
-    expect(fee).to.equal(12345n);
+  it("is deterministic", () => {
+    expect(hash(params())).to.equal(hash(params()));
   });
 
-  it("packs the address into the high 160 bits and the fee into the low 96", () => {
-    // The layout Halias._decodeRelayerFee assumes: address << 96 | fee.
-    const packed = packRelayerFee(addr, 1n);
-    expect(BigInt(packed) >> 96n).to.equal(BigInt(addr));
-    expect(BigInt(packed) & ((1n << 96n) - 1n)).to.equal(1n);
-    expect(packed.length).to.equal(66); // 0x + 32 bytes
+  it("stays inside the field", () => {
+    expect(hash(params()) < FIELD_PRIME).to.equal(true);
   });
 
-  it("is zero for a zero relayer and zero fee, which means no relayer", () => {
-    expect(packRelayerFee(ethers.ZeroAddress, 0n)).to.equal(ethers.ZeroHash);
+  it("depends on both members of the relayer fee", () => {
+    // A struct encodes as two independent words. If either fell out of the preimage a
+    // submitter could rewrite it and keep the proof valid.
+    const base = hash(params());
+    expect(hash(params({ relayerFee: { relayer: "0x" + "44".repeat(20), amount: 7n } }))).to.not.equal(base);
+    expect(hash(params({ relayerFee: { relayer: "0x" + "33".repeat(20), amount: 8n } }))).to.not.equal(base);
   });
 
-  it("accepts the largest fee that fits", () => {
-    const max = (1n << 96n) - 1n;
-    expect(unpackRelayerFee(packRelayerFee(addr, max)).fee).to.equal(max);
+  it("accepts a fee above the old uint96 ceiling", () => {
+    // The 96-bit cap was an artefact of the packing, not a real bound. Nothing should
+    // reject or truncate a larger figure now.
+    const big = (1n << 100n) + 1n;
+    expect(() => hash(params({ relayerFee: { relayer: "0x" + "33".repeat(20), amount: big } }))).to.not.throw();
+    expect(hash(params({ relayerFee: { relayer: "0x" + "33".repeat(20), amount: big } })))
+      .to.not.equal(hash(params()));
   });
 
-  it("rejects a fee that would overflow into the address", () => {
-    expect(() => packRelayerFee(addr, 1n << 96n)).to.throw(/uint96/);
+  it("depends on the recipient, externalData and both ciphertexts", () => {
+    const base = hash(params());
+    expect(hash(params({ recipient: "0x" + "55".repeat(20) }))).to.not.equal(base);
+    expect(hash(params({ externalData: "0x" + "ab".repeat(32) }))).to.not.equal(base);
+    expect(hash(params(), "0xdead")).to.not.equal(base);
+    expect(hash(params(), "0x", "0xbeef")).to.not.equal(base);
   });
 
-  it("rejects a non-zero fee with no relayer to pay", () => {
-    expect(() => packRelayerFee(ethers.ZeroAddress, 1n)).to.throw(/relayer/i);
+  it("depends on the pool address and the chain id", () => {
+    // Both are replay boundaries: the same proof must not be reusable on another chain
+    // or against a different pool.
+    const base = hash(params());
+    expect(computeParamsHash(params(), "0x", "0x", 1n, "0x" + "99".repeat(20))).to.not.equal(base);
+    expect(computeParamsHash(params(), "0x", "0x", 2n, POOL)).to.not.equal(base);
+  });
+});
+
+describe("claim authorisation", () => {
+  it("binds every field of the registration", () => {
+    // The domain recomputes this hash and refuses a mismatch, which is what stops a
+    // relayer minting the alias to itself. A field left out of the encoding would let the
+    // submitter vary it freely.
+    const base = {
+      owner: "0x" + "11".repeat(20),
+      aliasHash: 1n, spendingPubkey: 2n, nullifierKeyHash: 3n, encryptionPubkey: 4n,
+    };
+    const h = encodeRegistration(base);
+    for (const v of [
+      { ...base, owner: "0x" + "22".repeat(20) },
+      { ...base, aliasHash: 9n },
+      { ...base, spendingPubkey: 9n },
+      { ...base, nullifierKeyHash: 9n },
+      { ...base, encryptionPubkey: 9n },
+    ]) {
+      expect(encodeRegistration(v)).to.not.equal(h);
+    }
+    expect(encodeRegistration(base)).to.equal(h);
   });
 });
 

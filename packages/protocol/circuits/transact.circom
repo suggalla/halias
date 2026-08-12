@@ -72,21 +72,49 @@ template NoteCommitment() {
 // ---------------------------------------------------------------------------
 template NoteNullifier(levels) {
     signal input nullifierKey;
+    signal input treeNumber;
     signal input pathIndices[levels];
     signal output out;
 
-    // Pack pathIndices bits into leafIndex signal
+    // Pack pathIndices bits into leafIndex signal.
+    //
+    // The binary constraint is here rather than borrowed from elsewhere. Bits2Num does not
+    // bound its own inputs, so if pathIndices were free field elements a prover could repack
+    // one note's path into a different leafIndex, derive a second nullifier for it, and
+    // spend it twice. Today MerkleProof happens to constrain these same signals — but that
+    // is a different template, and this one is only sound for as long as MerkleProof stays
+    // instantiated unconditionally beside it. Constraining locally costs `levels` constraints
+    // per input and makes the nullifier sound on its own terms.
+    //
+    // Flagged by circomspect (Trail of Bits) as a non-strict binary conversion; the aliasing
+    // it warns about cannot occur at levels=32, but the missing input bound was real.
     component leafIndexBits = Bits2Num(levels);
     for (var i = 0; i < levels; i++) {
+        pathIndices[i] * (1 - pathIndices[i]) === 0;
         leafIndexBits.in[i] <== pathIndices[i];
     }
+
+    // The nullifier must key on the note's GLOBAL position, not its position within its
+    // tree. Pool commitments live in a sequence of trees and `pathIndices` addresses only
+    // within one, so leaf 5 of tree 0 and leaf 5 of tree 3 would otherwise hash to the same
+    // nullifier — and whichever note was spent second would read as already spent and become
+    // permanently unspendable by anyone. Silent, irreversible, and invisible to any test that
+    // uses a single tree.
+    //
+    // `treeNumber` is bounded so globalIndex stays under 2^32 and its decomposition is
+    // unique. It is also a PUBLIC signal of the main component, checked on chain against the
+    // tree the proof's root belongs to — without that binding a prover could re-spend one
+    // note under a different tree number and mint a fresh nullifier every time.
+    component treeBits = Num2Bits(32 - levels);
+    treeBits.in <== treeNumber;
+    signal globalIndex <== treeNumber * (1 << levels) + leafIndexBits.out;
 
     // 3-input hash so the nullifier sits in a different Poseidon domain than
     // nullifierKeyHash = Poseidon(nullifierKey, 1) — they can never collide,
     // so a spend never reveals a value linkable to the public registry key-hash.
     component hasher = Poseidon(3);
     hasher.inputs[0] <== nullifierKey;
-    hasher.inputs[1] <== leafIndexBits.out;
+    hasher.inputs[1] <== globalIndex;
     hasher.inputs[2] <== 1314148940; // NULLIFIER_DOMAIN ("NULL" ascii)
     out <== hasher.out;
 }
@@ -123,11 +151,18 @@ template RegistryLeaf() {
 template Transact(poolLevels, registryLevels, nIns, nOuts) {
 
     // === Public inputs ===
-    signal input poolRoot;
+    // Per input, because two notes may legitimately live in different trees and forcing them
+    // to share one would mean a holder could not spend a note from tree 3 alongside one from
+    // tree 5. A dummy (zero-amount) input skips the Merkle check, so its pair is unconstrained
+    // here — but the pool still checks the root it names, so it must name a real one.
+    signal input poolRoot[nIns];
+    signal input treeNumber[nIns];
     signal input registryRoot;
     signal input publicAmount;           // positive = deposit, negative = withdraw, 0 = transfer
     signal input tokenAddress;           // which token (0 for ETH)
     signal input paramsHash;             // hash of transaction params (TransactParams)
+    signal input pendingLeaf;            // registry insertion this transaction performs; 0 for ordinary
+    signal input outputsEmpty;           // 1 iff both outputs are zero-amount — the exit path
     signal input inputNullifier[nIns];
     signal input outputCommitment[nOuts];
 
@@ -159,6 +194,10 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     // block a name permanently. Assigned slots cannot collide at all, so the tree can be
     // half as deep. It also removes the need for Num2Bits_strict: an index below
     // 2^registryLevels has only one decomposition, whereas a full field element has two.
+
+    // === Private inputs — the pending registration (claim path only) ===
+    signal input pendingSlot;                            // slot the insertion occupies
+    signal input pendingSiblings[registryLevels];        // its siblings in the tree at registryRoot
 
     // -----------------------------------------------------------------------
     // INPUT VERIFICATION
@@ -206,6 +245,7 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
         // 4. Compute nullifier = Poseidon(nullifierKey, leafIndex)
         inNullifier[i] = NoteNullifier(poolLevels);
         inNullifier[i].nullifierKey <== inNullifierKey[i].out;
+        inNullifier[i].treeNumber   <== treeNumber[i];
         for (var j = 0; j < poolLevels; j++) {
             inNullifier[i].pathIndices[j] <== inPathIndices[i][j];
         }
@@ -221,7 +261,7 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
 
         // Skip Merkle check for zero-amount (dummy) inputs
         inCheckRoot[i] = ForceEqualIfEnabled();
-        inCheckRoot[i].in[0] <== poolRoot;
+        inCheckRoot[i].in[0] <== poolRoot[i];
         inCheckRoot[i].in[1] <== inPoolProof[i].root;
         inCheckRoot[i].enabled <== inAmount[i];
 
@@ -240,6 +280,74 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
             idx++;
         }
     }
+
+    // -----------------------------------------------------------------------
+    // PENDING REGISTRATION — the root outputs are actually checked against
+    // -----------------------------------------------------------------------
+    //
+    // A claim is the one operation whose outputs must prove membership in a tree that does
+    // not exist yet: the claimer's own alias has to be registered before their change note
+    // can prove against it, so the client used to *predict* the post-registration root. Any
+    // other registry write landing in between changed the tree, the prediction was wrong,
+    // and the claim reverted — which made blocking someone's onboarding cheap and repeatable.
+    //
+    // Instead the proof does the insertion itself. `registryRoot` is the root *before* the
+    // registration — a root that already exists on chain and is inside the freshness window —
+    // and the circuit derives the tree that results from adding `pendingLeaf` at
+    // `pendingSlot`. Nothing is predicted, so nothing another party does can invalidate it.
+    //
+    // Two properties make this safe, and both are load-bearing:
+    //
+    //   1. `pendingLeaf` is PUBLIC and set by the contract, never by the prover. A prover who
+    //      could set it would insert their own unregistered keys into a tree of their
+    //      choosing and pay themselves, destroying "you can only send to a registered alias"
+    //      — the entire reason the registry proof exists. `HaliasPool` requires it to equal
+    //      the value the registry armed, which is zero on every path except a claim.
+    //
+    //   2. `pendingSiblings` is proved against `registryRoot` before being reused. Deriving
+    //      the post-root from unconstrained siblings would let a prover fabricate ANY tree
+    //      whenever `pendingLeaf` is non-zero, which makes membership vacuous on exactly the
+    //      path that mints new aliases. Proving the slot currently holds the empty leaf ties
+    //      those siblings to the real tree, and has a second effect worth having: the
+    //      insertion can only land on a free slot, so it can never overwrite someone else's.
+    //
+    // The slot needing to match the one the registry actually assigned is NOT required. A
+    // registry proof establishes "these keys belong to a registered alias"; the slot appears
+    // nowhere in a note commitment, so the change note stays spendable later against the real
+    // tree at its real position. Only the root value is load-bearing.
+    component pendingIsZero = IsZero();
+    pendingIsZero.in <== pendingLeaf;
+    signal isOrdinary <== pendingIsZero.out;
+
+    component pendingBits = Num2Bits(registryLevels);
+    pendingBits.in <== pendingSlot;
+
+    // The slot is empty in the tree at registryRoot. Empty subtrees are built from
+    // zeros[0] = 0 (see SMTRegistry._initSMT), so an unoccupied leaf hashes as 0.
+    component pendingEmpty = MerkleProof(registryLevels);
+    pendingEmpty.leaf <== 0;
+    for (var j = 0; j < registryLevels; j++) {
+        pendingEmpty.pathElements[j] <== pendingSiblings[j];
+        pendingEmpty.pathIndices[j]  <== pendingBits.out[j];
+    }
+    component pendingEmptyCheck = ForceEqualIfEnabled();
+    pendingEmptyCheck.in[0] <== registryRoot;
+    pendingEmptyCheck.in[1] <== pendingEmpty.root;
+    pendingEmptyCheck.enabled <== 1 - isOrdinary;
+
+    // The same slot and siblings, now holding the pending leaf: the post-insertion root.
+    component pendingInsert = MerkleProof(registryLevels);
+    pendingInsert.leaf <== pendingLeaf;
+    for (var j = 0; j < registryLevels; j++) {
+        pendingInsert.pathElements[j] <== pendingSiblings[j];
+        pendingInsert.pathIndices[j]  <== pendingBits.out[j];
+    }
+
+    // effectiveRoot = isOrdinary ? registryRoot : pendingInsert.root.
+    // Written as an offset from registryRoot so it stays one multiplication: R1CS allows a
+    // single product per constraint, and the direct form has two.
+    signal pendingDelta <== pendingInsert.root - registryRoot;
+    signal effectiveRoot <== registryRoot + (1 - isOrdinary) * pendingDelta;
 
     // -----------------------------------------------------------------------
     // OUTPUT VERIFICATION
@@ -311,14 +419,55 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
             outRegistryProof[i].pathIndices[j]  <== outIndexBits[i].out[j];
         }
 
-        // Only enforce root equality for non-dummy (non-zero-amount) outputs
+        // Only enforce root equality for non-dummy (non-zero-amount) outputs.
+        // Against effectiveRoot, not registryRoot: on a claim that is the tree including the
+        // claimer's own brand-new registration, which is what lets their change note prove
+        // membership without anyone having to predict a root.
         outRegistryCheckRoot[i] = ForceEqualIfEnabled();
-        outRegistryCheckRoot[i].in[0] <== registryRoot;
+        outRegistryCheckRoot[i].in[0] <== effectiveRoot;
         outRegistryCheckRoot[i].in[1] <== outRegistryProof[i].root;
         outRegistryCheckRoot[i].enabled <== outRegistryEnabled[i];
 
         sumOuts += outAmount[i];
     }
+
+    // -----------------------------------------------------------------------
+    // EXIT PATH
+    // -----------------------------------------------------------------------
+    // Public, so the pool can skip inserting anything when this is set.
+    //
+    // A full pool does not degrade — every transact inserts two output commitments, so once
+    // the tree cannot accept them, deposits, transfers AND withdrawals all revert and every
+    // note in the pool becomes permanently unspendable, with no admin to rescue it. This is
+    // the valve: a transaction that spends its inputs and creates nothing. Conservation then
+    // forces `publicAmount = -sumIns`, which is exactly a total withdrawal.
+    //
+    // It has to be proven rather than asserted by the caller. If the pool simply skipped
+    // insertion on request, a client could ask for it while holding non-zero outputs and
+    // destroy its own change — the value would stay in the pool with no note able to claim
+    // it. Deriving the flag from the amounts makes that unrepresentable.
+    //
+    // The implication is deliberately ONE-WAY: setting the flag requires empty outputs, but
+    // empty outputs do not require the flag.
+    //
+    // Equality would make the exit path mandatory rather than optional, because a full
+    // withdrawal already has both outputs at zero — so every "take everything out" would
+    // become publicly distinguishable, which is a privacy regression, not a feature. Leaving
+    // it one-way means a caller with nothing to keep can still take the ordinary path and
+    // insert two dummy commitments, exactly as before, and pay for the uniformity. The cheap
+    // path is then a choice with a stated cost rather than something the amounts force.
+    //
+    // Nearly free: outAmountNz[i] is already computed above for the registry enable flag,
+    // so this is one multiplication per output plus two constraints here.
+    signal emptyAcc[nOuts + 1];
+    emptyAcc[0] <== 1;
+    for (var i = 0; i < nOuts; i++) {
+        emptyAcc[i + 1] <== emptyAcc[i] * outAmountNz[i].out;
+    }
+    // Binary, because it is a public input the prover supplies rather than a derived signal.
+    outputsEmpty * (1 - outputsEmpty) === 0;
+    // Set ⇒ empty. Unset ⇒ unconstrained, which is the ordinary path.
+    outputsEmpty * (1 - emptyAcc[nOuts]) === 0;
 
     // -----------------------------------------------------------------------
     // PUBLIC AMOUNT RANGE CHECK
@@ -361,8 +510,16 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     //       params.recipient,
     //       params.encryptedOutput0,
     //       params.encryptedOutput1,
-    //       params.externalData
+    //       params.relayerFee,         // struct: (address relayer, uint256 amount)
+    //       params.externalData        // opaque application data, uninterpreted
     //   )) % FIELD_PRIME
+    //
+    // This preimage is opaque to the circuit — paramsHash arrives as a single field
+    // element and is never decomposed here, which is why the contract can change what it
+    // commits to without a new ceremony. Nothing in the circuit can detect a mismatch, so
+    // the only thing keeping prover and verifier in agreement is that both derive it from
+    // HaliasPool.computeParamsHash(). Clients must call it rather than reimplement it,
+    // and the SDK parity test is what enforces that.
     //
     // Changing any field changes paramsHash and invalidates the proof, preventing a
     // front-runner from redirecting funds to a different recipient.
@@ -378,10 +535,13 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
 // possibility of collision — the depth is a capacity bound, not a birthday bound.
 component main {public [
     poolRoot,
+    treeNumber,
     registryRoot,
     publicAmount,
     tokenAddress,
     paramsHash,
+    pendingLeaf,
+    outputsEmpty,
     inputNullifier,
     outputCommitment
-]} = Transact(32, 32, 2, 2);
+]} = Transact(16, 32, 2, 2);

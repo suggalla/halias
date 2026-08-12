@@ -25,6 +25,11 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       allowUnlimitedContractSize: true,
+      // Must match the compiler's evmVersion above. The registry arms a claim's pending
+      // insertion in transient storage, and TLOAD/TSTORE are invalid opcodes before Cancun —
+      // which reverts with no reason string and looks like a contract bug rather than a
+      // network setting.
+      hardfork: "cancun",
     },
     sepolia: {
       url: process.env.RPC_URL || "",

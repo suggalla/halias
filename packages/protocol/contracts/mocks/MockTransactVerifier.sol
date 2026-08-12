@@ -8,7 +8,7 @@ contract MockTransactVerifier {
         uint[2] calldata,
         uint[2][2] calldata,
         uint[2] calldata,
-        uint[9] calldata
+        uint[14] calldata
     ) external pure returns (bool) {
         return true;
     }

@@ -4,22 +4,51 @@ Halias is a privacy-preserving identity and asset protocol on Ethereum. It combi
 
 ## Architecture
 
-- **Halias.sol**: The core contract managing alias registration (ERC-721) and the shielded pool.
-- **Registry**: A **Sparse Merkle Tree (SMT)** that tracks authorized spending keys and identity attestations, indexed by `aliasHash`.
-- **Shielded Pool**: An append-only Merkle tree (UTXO model) for note commitments, ensuring maximum privacy for transfers.
-- **Invite Claims**: `registerWithPoolNote` registers an alias and pays the registration fee straight out of a funded pool note, so a new user needs no ETH of their own to get a name.
-- **Relayer Fee**: An optional fee bound inside the proof (`externalData`) that reimburses whoever broadcasts a transaction, letting a user with no ETH pay for inclusion out of their own shielded funds. No paymaster, sponsor or deposit is involved, and the contract depends on no account-abstraction standard.
+Three contracts, deployed wired together in one transaction by `HaliasDeployer`. The split
+exists so the contract holding every user's funds has no admin key anywhere near it.
+
+```
+HaliasDomain ──writes──> HaliasRegistry <──reads── HaliasPool
+     │                                                  ▲
+     └───────────────── calls transact ─────────────────┘
+```
+
+- **HaliasPool**: custody, note commitments, nullifiers, and `transact`. **One mutating
+  function, no admin, no owner, no upgrade path** — once deployed there is no key that can
+  pause, drain, redirect or rescue, including for the deployer.
+- **HaliasRegistry**: a **Sparse Merkle Tree** of alias keys and the roots the pool proves
+  against. Supports in-place key rotation, so a sender holding a proof against an alias's
+  position stays valid across rotations. One immutable writer, no admin.
+- **HaliasDomain**: names, ERC-721 ownership, the registration fee, and the admin key. Holds
+  no user funds — its entire balance is registration revenue.
+- **Invite Claims**: `HaliasDomain.claim` registers an alias and pays the fee straight out of
+  a funded pool note, so a new user needs no ETH of their own. The registration is bound into
+  the proof, so a relayer that submits a claim cannot mint the alias to itself.
+- **Relayer Fee**: a first-class field bound inside the proof, reimbursing whoever broadcasts
+  a transaction and letting a user with no ETH pay for inclusion out of their own shielded
+  funds. No paymaster, sponsor or deposit, and no dependency on any account-abstraction
+  standard.
 - **Local-First Web App**: A stateless PWA that derives keys and generates ZK proofs entirely in the browser, so no sensitive data reaches a server.
 
 ## Status
 
-Implemented: the SMT registry with in-place key rotation, ETH and ERC-20 shielded
-transfers, invite claims, and the relayer fee. The `transact` circuit is frozen.
+Implemented: the three-contract split with atomic deployment, the SMT registry with in-place
+key rotation, ETH and ERC-20 shielded transfers, invite claims, and the relayer fee. The
+`transact` circuit is frozen — none of the split touched it, so no new ceremony is required.
 
-Not yet done, and both gate mainnet: the trusted setup is currently a single
-self-generated ceremony with a `--dev` phase 2, which must be replaced by a
-multi-party ceremony over a public Powers of Tau file; and the contracts have not
-been audited.
+143 protocol tests and 44 SDK tests, including real Groth16 proofs end to end against the
+split. Reviewed internally and against audited comparable systems: four findings, all fixed.
+See [contract-split.md](docs/contract-split.md),
+[security-audit.md](docs/security-audit.md) and
+[prior-art-review.md](docs/prior-art-review.md).
+
+`Halias.sol`, the pre-split monolith, is still present and is what the current Sepolia
+deployment runs. `scripts/deploy.ts` still targets it and is the last thing blocking its
+removal.
+
+Not yet done, and both gate mainnet: the trusted setup is currently a single self-generated
+ceremony with a `--dev` phase 2, which must be replaced by a multi-party ceremony over a
+public Powers of Tau file; and the contracts have not had an external audit.
 
 ## Roadmap
 
@@ -47,6 +76,20 @@ Halias is committed to being a transparent, community-driven public good.
 - **Reproducible Builds**: All ZK artifacts (WASM/ZKEY) are deterministically generated from the source code.
 - **Public Ceremony**: The production proving key will come from a multi-party ceremony with published transcripts, so no single party can forge proofs.
 - **Modular Contribution**: The Halias Attestation Toolkit (HAT) is open for community-designed schemas and verifiers.
+
+### Documents
+
+- [docs/contract-split.md](docs/contract-split.md) — the three-contract design, the
+  deployment dependency cycle and how it is broken, phasing, and next steps.
+- [docs/security-audit.md](docs/security-audit.md) — standalone and differential review
+  against the monolith. Four findings, all fixed.
+- [docs/prior-art-review.md](docs/prior-art-review.md) — checked against Semaphore and
+  World ID. Both real bugs in the latest review came from there, not from re-reading our
+  own contracts.
+- [docs/test-plan.md](docs/test-plan.md) — coverage by layer, the one gap that matters
+  (SDK ↔ contracts), and the conventions the suites follow.
+- [docs/legal-considerations.md](docs/legal-considerations.md) — Tornado Cash and Railgun
+  precedent, where Halias differs, and questions for counsel.
 
 ### Build
 ```bash

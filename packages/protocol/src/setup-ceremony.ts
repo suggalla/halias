@@ -120,6 +120,23 @@ async function main() {
   console.log(`\n=== Groth16 Setup for '${opts.circuit}' ===\n`);
 
   console.log("[4/5] Generating proving key (.zkey)...");
+  // Phase 2 is circuit-specific, so a checkpoint here is only valid while the circuit is
+  // unchanged. Reusing a zkey built for a different r1cs produces a verifier that compiles,
+  // deploys, and silently rejects — or, if the public-signal count happens to match, one
+  // that verifies against the wrong constraint system. Phase 1 above has no such hazard: the
+  // ptau depends only on the power.
+  //
+  // Found the hard way: an edit that took the circuit from 9 public signals to 10 was
+  // followed by a ceremony that reported success and emitted a 9-signal verification key.
+  const staleZkey =
+    fs.existsSync(paths.zkeyInitial) &&
+    fs.statSync(paths.r1cs).mtimeMs > fs.statSync(paths.zkeyInitial).mtimeMs;
+  if (staleZkey) {
+    console.log("  Circuit is newer than the existing zkey — regenerating phase 2.");
+    for (const f of [paths.zkeyInitial, paths.zkeyFinal, paths.verificationKey]) {
+      if (fs.existsSync(f)) fs.rmSync(f);
+    }
+  }
   if (!fs.existsSync(paths.zkeyInitial)) {
     snarkjsCli(`groth16 setup "${paths.r1cs}" "${paths.ptauFinal}" "${paths.zkeyInitial}"`, paths.zkeyInitial);
   } else {

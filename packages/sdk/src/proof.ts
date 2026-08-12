@@ -1,9 +1,10 @@
 import { ethers } from "ethers";
 import { randomBytes, toHex } from "./random";
 import { poseidonHash } from "./crypto";
-import { computeNullifier } from "./entry";
+import { computeNullifier, POOL_LEVELS } from "./entry";
 
-const snarkjs = require("snarkjs");
+// @ts-ignore — snarkjs ships no types.
+import * as snarkjs from "snarkjs";
 
 export interface ArtifactPaths {
   wasmPath: string;
@@ -30,8 +31,23 @@ export interface TransactOutput {
   registrySiblings: bigint[];  // length = registry levels (32); SMT proof
 }
 
+/// The registry insertion this proof performs, if any.
+///
+/// Only a claim has one. It exists because a claim's change note is a non-zero output, so it
+/// needs registry membership for an alias that is not in the tree yet — the circuit derives
+/// the post-insertion tree from `registryRoot` rather than the client guessing at it. The
+/// leaf is public and the contract supplies it; the slot and siblings are private and are
+/// proved to be a genuinely empty position under `registryRoot`.
+export interface PendingRegistration {
+  leaf: bigint;             // SMT leaf hash: Poseidon(aliasKey, leafValue, 1)
+  slot: number;             // a free slot in the tree at registryRoot
+  siblings: bigint[];       // its siblings there — length = registry levels (32)
+}
+
 export interface TransactProveInput {
-  poolRoot: bigint;
+  /// One per input: two notes may live in different trees.
+  poolRoot: [bigint, bigint];
+  treeNumber: [number, number];
   registryRoot: bigint;
   publicAmount: bigint;   // positive = deposit, 0 = transfer, field-negative = withdraw
   tokenAddress: bigint;   // 0n for ETH
@@ -40,17 +56,48 @@ export interface TransactProveInput {
   outputCommitments: [bigint, bigint];
   inputs: [TransactInput, TransactInput];
   outputs: [TransactOutput, TransactOutput];
+  /// Omitted on every path but a claim, where it must match what the domain armed.
+  pending?: PendingRegistration;
+  /// Take the cheap exit: spend the inputs and insert nothing.
+  ///
+  /// Only legal when both outputs are zero-amount — the circuit enforces that direction, so
+  /// setting it while holding real change makes the proof invalid rather than destroying the
+  /// change. The converse is NOT enforced: a caller with nothing to keep may still leave this
+  /// unset and insert two dummy commitments, which costs ~1.87M more gas and is the reason
+  /// to do it — an exit is distinguishable on chain, where every ordinary transact looks
+  /// alike. Off by default.
+  outputsEmpty?: boolean;
 }
+
+// Tree depths, baked into the compiled circuit. Changing either here without recompiling
+// produces witnesses of the wrong shape rather than a type error. POOL_LEVELS is imported
+// from entry.ts rather than redeclared: it is the split point of the nullifier's global index,
+// so a second copy drifting from it corrupts nullifiers rather than merely failing to prove.
+const REGISTRY_LEVELS = 32;
+
+/// What an ordinary transaction supplies: no insertion, and dummy witness values for the
+/// slot and siblings the circuit computes but then discards.
+const NO_PENDING: PendingRegistration = {
+  leaf: 0n,
+  slot: 0,
+  siblings: new Array(REGISTRY_LEVELS).fill(0n),
+};
 
 function s(v: bigint): string { return v.toString(); }
 
 function serializeForCircuit(inp: TransactProveInput): Record<string, unknown> {
+  const pending = inp.pending ?? NO_PENDING;
   return {
-    poolRoot:             s(inp.poolRoot),
+    poolRoot:             inp.poolRoot.map(s),
+    treeNumber:           inp.treeNumber.map(String),
     registryRoot:         s(inp.registryRoot),
     publicAmount:         s(inp.publicAmount),
     tokenAddress:         s(inp.tokenAddress),
     paramsHash:           s(inp.paramsHash),
+    outputsEmpty:         inp.outputsEmpty ? "1" : "0",
+    pendingLeaf:          s(pending.leaf),
+    pendingSlot:          String(pending.slot),
+    pendingSiblings:      pending.siblings.map(s),
     inputNullifier:       inp.inputNullifiers.map(s),
     outputCommitment:     inp.outputCommitments.map(s),
     inSpendingPrivateKey: inp.inputs.map(i => s(i.spendingPrivKey)),
@@ -90,29 +137,40 @@ export async function proveTransact(
 
 // ── Dummy input/output helpers ────────────────────────────────────────────────
 
-const REGISTRY_LEVELS = 32;
-const POOL_LEVELS     = 32;
 
 export interface DummyInput {
   input: TransactInput;
   nullifier: bigint;
 }
 
-const DUMMY_IDX_START = (1 << 30);
-
-export function dummyInput(leafIndex: number = 0, poolLevels: number = POOL_LEVELS): DummyInput {
-  const finalIdx = DUMMY_IDX_START + leafIndex;
+/// A zero-amount input, used to pad a transaction to the circuit's two.
+///
+/// It proves nothing — a zero amount disables the Merkle check — but it still publishes a
+/// nullifier, so that nullifier must not collide with anything. Uniqueness comes from the
+/// freshly random keys, not from the index; the index only has to be *representable*, since
+/// the circuit packs it from `pathIndices` and folds it into the global position.
+///
+/// `treeNumber` must match the tree of whatever root this input names, because the pool
+/// checks that pairing for both inputs whether or not either is a dummy. Callers pass the
+/// same tree and root as the real input beside it, which costs nothing: two genuine notes
+/// spent together are usually proven against one root anyway.
+export function dummyInput(
+  treeNumber: number,
+  leafIndex: number = 0,
+  poolLevels: number = POOL_LEVELS,
+): DummyInput {
+  const idx = leafIndex % (1 << poolLevels);
   const spendingPrivKey = BigInt("0x" + toHex(randomBytes(31)));
   const viewingPrivKey  = BigInt("0x" + toHex(randomBytes(31)));
   const nullifierKey    = poseidonHash([viewingPrivKey]);
-  const nullifier       = computeNullifier(nullifierKey, finalIdx);
+  const nullifier       = computeNullifier(nullifierKey, treeNumber, idx);
   return {
     input: {
       spendingPrivKey,
       viewingPrivKey,
       blinding:    0n,
       amount:      0n,
-      pathIndices: Array.from({ length: poolLevels }, (_, i) => (finalIdx >> i) & 1),
+      pathIndices: Array.from({ length: poolLevels }, (_, i) => (idx >> i) & 1),
       pathElements: new Array(poolLevels).fill(0n),
     },
     nullifier,

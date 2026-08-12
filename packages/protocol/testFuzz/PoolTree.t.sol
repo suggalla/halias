@@ -7,10 +7,10 @@ import {MockTreeSequential} from "../contracts/mocks/MockTreeSequential.sol";
 
 // Exposes the internal insert so a fuzzer can drive it directly, without needing a proof.
 contract TreeHarness is MerkleTreeWithHistory {
-    function insertPair(bytes32 a, bytes32 b) external returns (uint32, uint32) {
-        (uint32 l, uint32 r) = _insertPair(a, b);
-        _commitPoolRoot();
-        return (l, r);
+    function insertPair(bytes32 a, bytes32 b) external returns (uint32, uint32, uint32) {
+        (uint32 t, uint32 l, uint32 r) = _insertPair(a, b);
+        _commitPoolRoot(t);
+        return (t, l, r);
     }
 }
 
@@ -39,7 +39,7 @@ contract PoolTreeDifferentialTest is Test {
         oracle.insertPairSequentially(a, b);
 
         assertEq(tree.getLastRoot(), oracle.lastRoot(), "root diverged after one pair");
-        assertEq(tree.nextIndex(), oracle.nextIndex(), "index diverged after one pair");
+        assertEq(tree.leafIndex(), oracle.nextIndex(), "index diverged after one pair");
     }
 
     // Arbitrary-length sequences are what actually exercise the even/odd branch at
@@ -60,7 +60,7 @@ contract PoolTreeDifferentialTest is Test {
             oracle.insertPairSequentially(a, b);
 
             assertEq(tree.getLastRoot(), oracle.lastRoot(), "root diverged mid-sequence");
-            assertEq(tree.nextIndex(), oracle.nextIndex(), "index diverged mid-sequence");
+            assertEq(tree.leafIndex(), oracle.nextIndex(), "index diverged mid-sequence");
         }
     }
 
@@ -84,14 +84,14 @@ contract PoolTreeDifferentialTest is Test {
 
     function testFuzz_indicesAreConsecutiveAndAligned(bytes32 a, bytes32 b) public {
         vm.assume(a != bytes32(0) && b != bytes32(0));
-        uint32 before_ = tree.nextIndex();
-        (uint32 l, uint32 r) = tree.insertPair(a, b);
+        uint32 before_ = tree.leafIndex();
+        (, uint32 l, uint32 r) = tree.insertPair(a, b);
 
         // These feed the nullifier. Shifting them by one would invalidate every proof.
         assertEq(l, before_, "left index moved");
         assertEq(r, before_ + 1, "right index not consecutive");
         assertEq(l % 2, 0, "pair not aligned to an even slot");
-        assertEq(tree.nextIndex(), before_ + 2, "index did not advance by exactly two");
+        assertEq(tree.leafIndex(), before_ + 2, "index did not advance by exactly two");
     }
 
     function testFuzz_everyCommittedRootIsKnown(bytes32 a, bytes32 b) public {
@@ -126,13 +126,16 @@ contract PoolTreeInvariantTest is Test {
     // nextIndex >> 1 would map two different pairs onto the same level-1 slot and
     // silently corrupt every proof rooted afterwards.
     function invariant_nextIndexIsAlwaysEven() public view {
-        assertEq(tree.nextIndex() % 2, 0, "nextIndex went odd");
+        assertEq(tree.leafIndex() % 2, 0, "nextIndex went odd");
     }
 
     // Insertion happens in pairs, so the leaf count must track the call count exactly —
     // catching any path that inserts one leaf, or three.
     function invariant_indexTracksInsertionCount() public view {
-        assertEq(uint256(tree.nextIndex()), handler.insertions() * 2, "leaf count drifted");
+        // Position is (tree, leaf) now, so the count is the global one — a rollover resets
+        // leafIndex without losing any leaves.
+        uint256 total = uint256(tree.treeNumber()) * (1 << 16) + uint256(tree.leafIndex());
+        assertEq(total, handler.insertions() * 2, "leaf count drifted");
     }
 
     // A proof is built against a root the client saw; if a committed root were not
