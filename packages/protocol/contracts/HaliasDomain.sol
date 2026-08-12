@@ -309,18 +309,16 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
     ///         The claimer still pays gas, or names a relayer in `p.relayerFee` and lets the
     ///         pool pay it out of the same withdrawal.
     ///
-    ///         Ordering is load-bearing, though not for the reason it used to be. The
-    ///         claimer's change note is a non-zero output, and the circuit demands registry
-    ///         membership for every non-zero output — so their own alias has to be in the
-    ///         tree the proof is checked against. It used to have to be in the tree *on
-    ///         chain* first, which meant the client predicted the post-registration root and
-    ///         any other registry write landing in between invalidated the claim (F1).
+    ///         Ordering is load-bearing. The claimer's change note is a non-zero output, and
+    ///         the circuit demands registry membership for every non-zero output — so their
+    ///         own alias has to be in the tree the proof is checked against, a tree that does
+    ///         not yet exist when the proof is built.
     ///
-    ///         Now the proof carries the insertion instead. It proves against the root from
-    ///         *before* this registration — still on chain, still inside the freshness
-    ///         window — and derives the tree that results from adding the claimer's leaf. The
-    ///         registry write still comes first, but only so that {armPendingLeaf} can read
-    ///         the leaf back out of stored state rather than trusting an argument.
+    ///         The proof therefore carries the insertion. It proves against the root from
+    ///         *before* this registration — on chain, and inside the freshness window — and
+    ///         derives the tree that results from adding the claimer's leaf. The registry
+    ///         write comes first only so {armPendingLeaf} can read the leaf back out of
+    ///         stored state rather than trusting an argument.
     ///
     ///         Arming is what stops this being a hole. Without it a prover on the ordinary
     ///         `transact` path could claim an insertion of their own unregistered keys into a
@@ -425,12 +423,12 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
 
     /// @notice Offer an alias to someone. Nothing moves until they accept.
     /// @dev    Recording an intent rather than performing the transfer is what makes the
-    ///         handover safe. The deleted `transferAlias` took the new owner *and* the new
-    ///         keys from the seller, and nothing related them — a seller could hand over the
-    ///         token while installing keys they controlled, leaving the recipient owning a
-    ///         name whose payments arrived for someone else. The contract cannot detect that:
-    ///         keys come from an EIP-191 wallet signature through Poseidon, so there is no
-    ///         on-chain relationship between an address and a pubkey.
+    ///         handover safe. Taking the new owner *and* the new keys from the seller in one
+    ///         step would let a seller hand over the token while installing keys they
+    ///         controlled, leaving the recipient owning a name whose payments arrive for
+    ///         someone else. The contract cannot detect that: keys come from an EIP-191
+    ///         wallet signature through Poseidon, so there is no on-chain relationship
+    ///         between an address and a pubkey.
     ///
     ///         Only the recipient can assert which keys are theirs, so only the recipient can
     ///         complete a transfer. Until then this changes nothing at all — the seller keeps

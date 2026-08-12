@@ -22,11 +22,8 @@ error RegistryFull();
 // of a recipient's keys may be: once someone rotates keys, a sender proving against an
 // old root would still pay the superseded (possibly compromised) key.
 //
-// The previous ring buffer expired by COUNT of registry updates, which made the real
-// window depend on registry traffic — minutes on a busy registry, years on a quiet one.
-// Recording the moment a root was superseded gives a window in time, which is what the
-// freshness property actually needs, and makes the lookup O(1) instead of a 300-slot
-// scan that cost 726k gas to miss.
+// Recording the moment a root was superseded expresses that window in time, which is what
+// the freshness property needs, and makes the lookup O(1).
 abstract contract SMTRegistry {
     // Slots are assigned in registration order, so depth is a capacity bound rather than
     // a birthday bound: 32 levels holds 4.29e9 aliases and two can never contend for one
@@ -37,23 +34,20 @@ abstract contract SMTRegistry {
     // changing hands on the slot they already hold. At 32 levels it is unreachable anyway.
     uint32 public constant REGISTRY_LEVELS = 32;
 
-    // How long a superseded root stays acceptable. A sender must refresh their registry
-    // view at least this often; keys replaced by a rotation or a handover stop receiving
-    // after at most this long.
+    // How long a superseded root stays acceptable. A sender must refresh their registry view
+    // at least this often; keys replaced by a handover stop receiving after at most this long.
     //
-    // Seconds, not blocks. The property being bounded is time — how long a replaced key
-    // remains payable — and a block count only expresses that on one chain: 7200 blocks is
-    // a day on mainnet and four hours on a two-second L2, so the guarantee would quietly
-    // change meaning with the deployment target. Miner drift of a few seconds is irrelevant
-    // at this scale.
+    // Seconds, not blocks. The bounded property is time, and a block count only expresses
+    // that on one chain — 7200 blocks is a day on mainnet and four hours on a two-second L2,
+    // so the guarantee would quietly change meaning with the deployment target. Validator
+    // drift of a few seconds is irrelevant at this scale.
     //
-    // An hour, matching World ID, rather than the day this used to be. The window's only
-    // job is to cover the gap between reading a root and being included — proving takes
-    // seconds to minutes even in a browser — and everything it costs is paid on the far
-    // side: for that long after a handover, a sender on a superseded root pays the previous
-    // owner's keys. Whatever exceeds proving time is exposure bought for nothing. What it
-    // does cost is prepared-but-unsubmitted transactions: a relay blob older than this is
-    // rejected and has to be rebuilt, which is a retry rather than a loss.
+    // An hour, matching World ID. The window's only job is to cover the gap between reading
+    // a root and being included, and proving takes seconds to minutes even in a browser.
+    // Everything beyond that is exposure bought for nothing, because it is paid on the far
+    // side: for this long after a handover, a sender on a superseded root pays the previous
+    // holder's keys. It also bounds prepared-but-unsubmitted transactions — a relay blob
+    // older than this is rejected and must be rebuilt, which is a retry rather than a loss.
     uint256 public constant REGISTRY_ROOT_MAX_AGE = 1 hours;
 
     bytes32 internal smtRoot;   // read via getRegistryRoot()
