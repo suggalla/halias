@@ -133,11 +133,10 @@ contract HaliasRegistry is SMTRegistry {
         emit AliasRegistered(aliasHash, spendingPubkey, leaf, encryptionPubkey, aliasSlot[aliasHash]);
     }
 
-    // There is no `rotateKeys`. It replaced the nullifier and encryption keys but never the
-    // spending pubkey, so it could not answer the only compromise that loses funds; and
-    // {reassign} already does all three in place, keeping the alias in its slot so senders
-    // holding a proof against its position stay valid. One writer fewer is also one fewer way
-    // to invalidate a claim proving against a predicted root.
+    // {reassign} is the only way an alias's keys change, and it replaces all three at once:
+    // anything replacing fewer cannot answer a compromised spending key, which is the only
+    // compromise that loses funds. It keeps the alias in its slot, so senders holding a proof
+    // against that position stay valid.
 
     /// @notice Announce, for the rest of this transaction, the registry insertion a claim's
     ///         proof is allowed to perform.
@@ -198,8 +197,8 @@ contract HaliasRegistry is SMTRegistry {
     }
 
     /// @notice Replace every key on an alias, for a transfer to a new holder.
-    /// @dev    `dataHash` is cleared: whatever the previous holder had accumulated against
-    ///         this name does not belong to the new one. Ownership itself is the
+    /// @dev    `dataHash` is cleared: whatever was accumulated against this name under its
+    ///         former holder does not belong to the new one. Ownership itself is the
     ///         controller's record — this only moves the keys the tree commits to.
     function reassign(
         bytes32 aliasHash,

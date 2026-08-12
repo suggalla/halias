@@ -11,6 +11,4 @@ interface IHaliasRegistry {
     function isKnownRegistryRoot(bytes32 root) external view returns (bool);
     /// The registry insertion armed for this transaction, or zero on every ordinary path.
     function pendingLeaf() external view returns (bytes32);
-
-    function getRegistryRoot() external view returns (bytes32);
 }

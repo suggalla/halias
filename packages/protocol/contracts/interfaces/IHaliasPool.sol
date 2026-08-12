@@ -60,6 +60,9 @@ struct TransactParams {
     bool       outputsEmpty;
 }
 
+// Exactly what {HaliasDomain} calls, and nothing else. The pool's read API is richer, but a
+// member here is a member the domain could call, and the domain has no business reading the
+// pool's tree or nullifier set. Clients use the full ABI directly.
 interface IHaliasPool {
     function transact(
         TransactParams calldata p,
@@ -67,15 +70,4 @@ interface IHaliasPool {
         bytes calldata encryptedOutput1,
         bytes calldata proof
     ) external payable;
-
-    function computeParamsHash(
-        TransactParams calldata p,
-        bytes calldata encryptedOutput0,
-        bytes calldata encryptedOutput1
-    ) external view returns (uint256);
-
-    function spentNullifiers(bytes32 nullifier) external view returns (bool);
-    function poolTokenBalance(address token) external view returns (uint256);
-    function isKnownPoolRoot(bytes32 root) external view returns (bool);
-    function getLastRoot() external view returns (bytes32);
 }
