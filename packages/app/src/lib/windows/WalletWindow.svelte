@@ -84,7 +84,7 @@
 		// Registration is the one action that asks for two signatures. Naming the step turns a
 		// second unexplained wallet prompt into an expected one — without it the natural read
 		// is that the first attempt failed.
-		if (await run(() => c.register(clean, true, (s: 'commit' | 'register') => (step = s)))) {
+		if (await run(() => c.register(clean, (s: 'commit' | 'register') => (step = s)))) {
 			step = null;
 			// The hash is derived from the name, not read back from the client — the contract
 			// stores a keccak and cannot return the plaintext, which is the whole reason this

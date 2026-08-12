@@ -94,18 +94,28 @@ export type {
 export class Halias extends HaliasCore {
   // ── Operations ─────────────────────────────────────────────────────────────
 
-  // publishName defaults on: without it the plaintext exists nowhere and a client that
-  // loses local storage cannot recover the name. Pass false for an alias meant to be
-  // unguessable — the hash is already public either way, so this only affects whether the
-  // name can be read back rather than brute-forced.
   /// Register `alias` under this client's alias index.
+  ///
+  /// The name is always published. It used to be optional, on the reasoning that an
+  /// unpublished alias is unguessable — which it is not. `aliasHash` is keccak of the name
+  /// and is public in the registration event regardless, so for any name a person would
+  /// choose and be able to type, a wordlist recovers it immediately. Withholding the
+  /// plaintext buys resistance only for a name with enough entropy that its holder cannot
+  /// remember it either, and must store it somewhere anyway.
+  ///
+  /// What it costs is absolute: registration is the only moment the plaintext can be
+  /// supplied — someone who has forgotten the name cannot supply it later — so an
+  /// unpublished name is unrecoverable the moment local storage is lost.
+  ///
+  /// The one caller that genuinely has no name to publish is {createInvite}, whose alias
+  /// hash is random rather than derived from anything. It registers through the contract
+  /// directly.
   ///
   /// The index is not stored on chain — it does not need to be. Recovery rederives indices
   /// and matches them against the spending pubkeys the registry publishes; see
   /// {aliasIndexOf}.
   async register(
     alias: string,
-    publishName: boolean = true,
     onStep?: (step: "commit" | "register") => void,
   ): Promise<{ txHash: string }> {
     this.ensureInit();
@@ -119,7 +129,7 @@ export class Halias extends HaliasCore {
     const fee = await this.domain.registrationFee() as bigint;
     const tx = await contractRegister(
       this.domain, aliasHash, spendingBytes32, nullifierKeyHash, encBytes32,
-      fee, publishName ? `${cleanAlias}.hls` : "", onStep,
+      fee, `${cleanAlias}.hls`, onStep,
     );
     return { txHash: await this.settle(tx) };
   }

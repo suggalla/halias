@@ -376,12 +376,19 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
     }
 
     /// @dev Publishes the plaintext when one is supplied, checked against the hash so a
-    ///      false name cannot be attached to someone else's alias. Empty means do not
-    ///      publish — an alias meant to be unguessable, or an unnamed invite account.
+    ///      false name cannot be attached to someone else's alias.
     ///
     ///      Registration is the only moment this is useful. Someone who has forgotten their
     ///      name cannot supply it later either, so a publish-afterwards function would not
-    ///      address the failure it exists for.
+    ///      address the failure it exists for — and the plaintext exists nowhere else, since
+    ///      `aliasHash` is one-way.
+    ///
+    ///      Empty is accepted for an alias that has no name at all: an invite account, whose
+    ///      hash is random rather than derived from anything. It is deliberately NOT a
+    ///      privacy setting, and the client no longer offers it as one. Withholding the name
+    ///      of a *named* alias hides very little — the hash is public in the registration
+    ///      event either way, so any name short enough to type falls to a wordlist — while
+    ///      costing recoverability outright.
     function _publishName(bytes32 aliasHash, string calldata name) private {
         if (bytes(name).length == 0) return;
         if (keccak256(bytes(name)) != aliasHash) revert NameDoesNotMatchAlias();
