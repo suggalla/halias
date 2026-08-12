@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 // BN254 scalar field prime — used for ZK circuit compatibility.
 // All public signals must be < FIELD_PRIME.

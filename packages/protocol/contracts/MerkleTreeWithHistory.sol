@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 import "poseidon-solidity/PoseidonT3.sol";
 
@@ -77,7 +77,7 @@ contract MerkleTreeWithHistory {
     // so the tree number is a public signal, and without checking it against the tree the
     // root actually belongs to a holder could re-spend one note under a different tree number
     // and mint a fresh nullifier each time. See HaliasPool.transact.
-    mapping(bytes32 => uint256) public knownPoolRootTree;
+    mapping(bytes32 => uint32) public knownPoolRootTree;
 
     bytes32 internal lastRoot;
     /// @notice Which tree is currently filling.
@@ -180,7 +180,7 @@ contract MerkleTreeWithHistory {
     }
 
     function _commitPoolRoot(uint32 tree) internal {
-        if (knownPoolRootTree[lastRoot] == 0) knownPoolRootTree[lastRoot] = uint256(tree) + 1;
+        if (knownPoolRootTree[lastRoot] == 0) knownPoolRootTree[lastRoot] = tree + 1;
     }
 
     function _hashLeftRight(bytes32 left, bytes32 right) internal pure returns (bytes32) {
@@ -195,8 +195,8 @@ contract MerkleTreeWithHistory {
 
     /// @notice The tree a published root belongs to. Reverts nothing; returns false if unknown.
     function poolRootTree(bytes32 root) public view returns (bool known, uint32 tree) {
-        uint256 v = knownPoolRootTree[root];
-        return v == 0 ? (false, 0) : (true, uint32(v - 1));
+        uint32 v = knownPoolRootTree[root];
+        return v == 0 ? (false, 0) : (true, v - 1);
     }
 
     function getLastRoot() public view returns (bytes32) {
@@ -211,6 +211,6 @@ contract MerkleTreeWithHistory {
     ///         pair a caller actually wants is always the last one that received leaves.
     function currentAnchor() external view returns (bytes32 root, uint32 tree) {
         root = lastRoot;
-        tree = uint32(knownPoolRootTree[lastRoot] - 1);
+        tree = knownPoolRootTree[lastRoot] - 1;
     }
 }

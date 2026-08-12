@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 // The only thing the pool needs from the registry. Kept minimal deliberately: the pool
 // holds every note in the system and must never gain a reason to call anything that

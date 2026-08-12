@@ -14,7 +14,7 @@ const FIELD_PRIME = 218882428718392752222464057452572750885483644004160343436982
 // TransactParams, as the pool declares it. Every member is fixed-size, so the struct is
 // statically encoded — `relayerFee` is a two-member static struct, which preserves that.
 const TRANSACT_PARAMS =
-  "(bytes32[2] poolRoot, uint32[2] treeNumber, bytes32 registryRoot, uint256 publicAmount, uint256 tokenAddress, " +
+  "(bytes32[2] poolRoot, uint32[2] treeNumber, bytes32 registryRoot, uint256 publicAmount, address tokenAddress, " +
   "bytes32[2] inputNullifiers, bytes32[2] outputCommitments, address recipient, " +
   "(address relayer, uint256 amount) relayerFee, bytes32 externalData, bytes32 pendingLeaf, " +
   "bool outputsEmpty)";
@@ -37,8 +37,8 @@ export const POOL_ABI = [
   "function leafIndex() external view returns (uint32)",
   "function poolRootTree(bytes32) external view returns (bool known, uint32 tree)",
   // tokenAddress is indexed — omitting that shifts every later argument during decoding.
-  "event Transact(uint256 publicAmount, uint256 indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
-  "event Withdrawal(address indexed recipient, uint256 amount, address indexed relayer, uint256 fee, uint256 indexed tokenAddress)",
+  "event Transact(uint256 publicAmount, address indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
+  "event Withdrawal(address indexed recipient, uint256 amount, address indexed relayer, uint256 fee, address indexed tokenAddress)",
 ];
 
 export const REGISTRY_ABI = [
@@ -114,6 +114,17 @@ function h32(n: bigint): string {
   return "0x" + n.toString(16).padStart(64, "0");
 }
 
+/// A token identifier as the *contract* wants it. The SDK carries `tokenAddress` as a bigint
+/// throughout, because that is what the note commitment hashes — it is a field element there,
+/// not an address. The pool declares the calldata field as `address`, so this is the one
+/// conversion, and it throws rather than truncating: a value that does not fit 160 bits is a
+/// bug upstream, and silently dropping the high bits is exactly the confusion the narrower
+/// type exists to prevent.
+export function tokenAddr(n: bigint): string {
+  if (n < 0n || n >= 1n << 160n) throw new Error(`tokenAddress out of 160-bit range: ${n}`);
+  return ethers.getAddress("0x" + n.toString(16).padStart(40, "0"));
+}
+
 export function getPool(address: string, runner: ethers.ContractRunner): ethers.Contract {
   return new ethers.Contract(address, POOL_ABI, runner);
 }
@@ -145,7 +156,7 @@ export function buildTransactParams(
     treeNumber,
     registryRoot:      h32(registryRoot),
     publicAmount,
-    tokenAddress,
+    tokenAddress:      tokenAddr(tokenAddress),
     inputNullifiers:   [h32(inputNullifiers[0]), h32(inputNullifiers[1])],
     outputCommitments: [h32(outputCommitments[0]), h32(outputCommitments[1])],
     recipient:         params.recipient,

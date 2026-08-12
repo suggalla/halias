@@ -36,7 +36,13 @@ async function main() {
   const contractName = config.contractName ?? `${circuit.charAt(0).toUpperCase() + circuit.slice(1)}Verifier`;
   const filename = `${contractName}.sol`;
   const outPath = path.join(outDir, filename);
-  const renamedCode = code.replace(/contract\s+Groth16Verifier\b/, `contract ${contractName}`);
+  // snarkjs emits a floating `>=0.7.0 <0.9.0`. Every other contract here pins 0.8.28, and a
+  // generated file is exactly the one that would silently drift to whatever compiler a
+  // reviewer or integrator happens to have — so pin it on the way out rather than leaving a
+  // hand edit to be lost on the next regeneration.
+  const renamedCode = code
+    .replace(/contract\s+Groth16Verifier\b/, `contract ${contractName}`)
+    .replace(/^pragma solidity .*$/m, "pragma solidity 0.8.28;");
   fs.writeFileSync(outPath, renamedCode);
 
   console.log(`Verifier written to ${outPath}`);

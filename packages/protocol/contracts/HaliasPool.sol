@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 import "./MerkleTreeWithHistory.sol";
 import "./base/Constants.sol";
@@ -108,7 +108,7 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
 
     event Transact(
         uint256 publicAmount,
-        uint256 indexed tokenAddress,
+        address indexed tokenAddress,
         bytes32 indexed inputNullifier0,
         bytes32 indexed inputNullifier1,
         bytes32 outputCommitment0,
@@ -128,7 +128,7 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     ///         say why.
     event PoolExit(
         uint256 publicAmount,
-        uint256 indexed tokenAddress,
+        address indexed tokenAddress,
         bytes32 indexed inputNullifier0,
         bytes32 indexed inputNullifier1
     );
@@ -144,7 +144,7 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
         uint256 amount,
         address indexed relayer,
         uint256 fee,
-        uint256 indexed tokenAddress
+        address indexed tokenAddress
     );
 
     // ── Construction ───────────────────────────────────────────────────────────
@@ -283,12 +283,6 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
             : 0;
     }
 
-    /// @dev The circuit bounds `tokenAddress` to 160 bits, so this truncation is lossless
-    ///      for any input a valid proof can carry.
-    function _token(uint256 tokenAddress) internal pure returns (address) {
-        return address(uint160(tokenAddress));
-    }
-
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /// @dev Cheap input validation — `msg.value`, destination, token sanity. No state
@@ -311,10 +305,14 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
         // msg.value is only ever an ETH deposit. A withdrawal, a transfer, and anything
         // denominated in a token all send nothing, so one comparison covers every shape —
         // and reports both numbers rather than just naming a category.
-        uint256 expected = (p.tokenAddress == 0 && !pay.isWithdraw) ? p.publicAmount : 0;
+        uint256 expected =
+            (p.tokenAddress == address(0) && !pay.isWithdraw) ? p.publicAmount : 0;
         if (msg.value != expected) revert WrongMsgValue(expected, msg.value);
 
-        if (p.tokenAddress != 0 && _token(p.tokenAddress).code.length == 0) {
+        // Both this test and the one above read the same `address`, so "is it ETH" cannot
+        // answer differently here than it does at settlement. That equivalence is why
+        // `tokenAddress` is not a uint256 — see the field's declaration in IHaliasPool.
+        if (p.tokenAddress != address(0) && p.tokenAddress.code.length == 0) {
             revert InvalidTokenAddress();
         }
 
@@ -365,7 +363,9 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
         pubSignals[3]  = p.treeNumber[1];
         pubSignals[4]  = uint256(p.registryRoot);
         pubSignals[5]  = p.publicAmount;
-        pubSignals[6]  = p.tokenAddress;
+        // The one place the address is widened back into a field element, because that is
+        // what the verifier's public-signal array is. Widening is total; narrowing was not.
+        pubSignals[6]  = uint256(uint160(p.tokenAddress));
         pubSignals[7]  = _computeParamsHash(p, encryptedOutput0, encryptedOutput1);
         pubSignals[8]  = uint256(p.pendingLeaf);
         pubSignals[9]  = p.outputsEmpty ? 1 : 0;
@@ -390,7 +390,7 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     ///      {_payOut}. Nothing above them branches on ETH versus token, so the two paths
     ///      cannot drift apart in the rules that govern them.
     function _settlePayment(TransactParams calldata p, Payment memory pay) internal {
-        address token = _token(p.tokenAddress);
+        address token = p.tokenAddress;
 
         if (pay.isWithdraw) {
             // Invariant: relayerFee + recipientPayout == absAmount, both resolved in

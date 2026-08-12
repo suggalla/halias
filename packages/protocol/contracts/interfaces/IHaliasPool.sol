@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.28;
 
 /// @notice Payment to whoever submits the transaction, taken out of the value leaving
 ///         the pool and denominated in whatever asset is being withdrawn.
@@ -38,7 +38,14 @@ struct TransactParams {
     uint32[2]  treeNumber;
     bytes32    registryRoot;
     uint256    publicAmount;   // signed in the field: positive = deposit, negative = withdraw
-    uint256    tokenAddress;   // 0 for ETH
+    // `address(0)` for ETH. This is a circuit public signal and therefore a field element,
+    // but it is declared `address` rather than `uint256` deliberately: the ABI decoder
+    // rejects a calldata `address` with any of the top 96 bits set, before a line of this
+    // contract runs. ETH is the `address(0)` sentinel, so a value that read as non-zero
+    // here while truncating to zero at settlement would be a free ETH note. Narrowing the
+    // type makes that unrepresentable rather than merely checked. Widened back to a field
+    // element only where the verifier wants it — see HaliasPool._verifyTransact.
+    address    tokenAddress;
     bytes32[2] inputNullifiers;
     bytes32[2] outputCommitments;
     address    recipient;      // withdrawal destination; may be zero when the fee consumes the payout

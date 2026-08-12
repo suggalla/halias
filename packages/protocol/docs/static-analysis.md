@@ -209,14 +209,33 @@ withdraw function, but the assembly reads `create2(callvalue(), ...)`, forwardin
 `msg.value` to the contract being deployed. Nothing is retained, so there is nothing to strand.
 Both tools miss this because neither models `callvalue()` inside inline assembly.
 
-**Unsafe downcast** (Aderyn H-4) — `address(uint160(tokenAddress))` at `HaliasPool.sol:289`. This
-one deserved checking rather than dismissal, because a truncating cast here would be serious: if
-two distinct field values mapped to one address, a note committed under `X + 2^160` would be
-spendable as the token at `X`, and the commitment would bind something different from what the
-contract enforces. It is safe because the circuit range-checks the signal —
-`tokenAddressCheck = Num2Bits(160)` at `transact.circom:489`, on a public signal. The truncation
-is lossless for any input a valid proof can carry. **This is a load-bearing cross-layer invariant:
-if that `Num2Bits(160)` is ever weakened, this cast becomes a live bug.**
+**Unsafe downcast** (Aderyn H-4) — `address(uint160(tokenAddress))`, when `TransactParams.tokenAddress`
+was a `uint256`. **This one was right, and the code changed rather than the finding being waved
+off.**
+
+The cast itself was lossless — the circuit range-checks that public signal with
+`Num2Bits(160)` at `transact.circom:489`. But chasing *why* the bound mattered turned up
+something sharper than a truncation concern. ETH is the sentinel `tokenAddress == 0`, and that
+test ran on the full `uint256` in `_checkPayment` while settlement branched on the *truncated*
+address. Those disagree exactly when the high bits are set: `tokenAddress = 2**160` reads as
+"not ETH", so the caller owes no `msg.value`, then truncates to `address(0)`, which
+`_creditPool` treats as ETH. A free ETH note — minting, not aliasing. (Aliasing two field
+values onto one *real* ERC-20 is harmless by comparison: the depositor pays that token in and
+takes it out again.)
+
+Two things already blocked it — the circuit bound, and `_checkPayment`'s rejection of a
+non-zero `tokenAddress` whose address has no code, which `address(0)` never has. It is now
+unrepresentable instead: `tokenAddress` is declared `address`, so Solidity's ABI decoder
+rejects any value with the top 96 bits set before a line of the pool runs (verified — a
+calldata `address` with dirty high bits reverts at decode, both bare and inside a struct). The
+`_token()` helper is deleted; the single remaining conversion is the *widening* back to a field
+element for the verifier's public-signal array, which is total.
+
+The general lesson, since it recurred: a type wider than its domain forces an unchecked
+narrowing at every read. `knownPoolRootTree` was the same shape — a `uint256` mapping holding
+only a `uint32 + 1`, narrowed by two readers — and is now `uint32`. The casts that survive are
+the ones where truncation *is* the definition (CREATE2 taking the low 20 bytes of a keccak) or
+where the narrowing is deliberate packing (`uint64(block.timestamp)`).
 
 **Reentrancy: state change after external call** (Slither ID-5, Aderyn H-3, 5 instances) — three
 in `HaliasDomain.claim`, two in `HaliasPool.transact`. Both functions are `nonReentrant`, both

@@ -88,9 +88,12 @@ export function decodeRelayBlob(blob: string): RelayPayload {
     throw new Error(`Unknown relay kind ${raw?.kind}`);
   if (raw.kind === "claim" && !raw.claim?.domain)
     throw new Error("Claim blob is missing its registration");
+  // Only the fields the encoder turned into hex because they were bigints come back. The
+  // address-typed members — `recipient`, `relayerFee.relayer`, and `tokenAddress` — survive
+  // JSON as the strings they already were, and reviving one into a bigint would hand ethers
+  // the wrong type for an `address` parameter.
   const big = (x: any) => (typeof x === "string" && x.startsWith("0x") ? BigInt(x) : x);
   raw.params.publicAmount = big(raw.params.publicAmount);
-  raw.params.tokenAddress = big(raw.params.tokenAddress);
   raw.params.relayerFee.amount = big(raw.params.relayerFee.amount);
   return raw as RelayPayload;
 }
