@@ -67,7 +67,13 @@ abstract contract SMTRegistry {
     uint32 public nextAliasSlot;
 
     // _smtNodes[level][nodePath] = node hash (0 = empty/unset, use _smtZeros[level])
-    mapping(uint256 => mapping(uint256 => bytes32)) private _smtNodes;
+    //
+    // An array of mappings rather than a mapping of mappings. The level is dense and bounded
+    // at compile time while nodePath is genuinely sparse, so only the inner dimension needs
+    // hashing: the compiler reaches level `i` by adding to a base slot, where a nested mapping
+    // would keccak twice per access. This tree is walked REGISTRY_LEVELS deep with two node
+    // reads per level, so the difference is paid on every registration.
+    mapping(uint256 => bytes32)[REGISTRY_LEVELS] private _smtNodes;
     bytes32[REGISTRY_LEVELS + 1] private _smtZeros;
 
     function _initSMT() internal {
@@ -146,9 +152,9 @@ abstract contract SMTRegistry {
 
     // Siblings for a given slot (for off-chain proof construction). Takes the slot, not
     // the alias — resolve it with aliasSlot(aliasHash) - 1.
-    function getSmtSiblings(uint256 pathKey) external view returns (bytes32[REGISTRY_LEVELS] memory siblings) {
+    function getSmtSiblings(uint32 pathKey) external view returns (bytes32[REGISTRY_LEVELS] memory siblings) {
         for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
-            uint256 siblingPath = (pathKey >> i) ^ 1;
+            uint256 siblingPath = (uint256(pathKey) >> i) ^ 1;
             bytes32 s = _smtNodes[i][siblingPath];
             siblings[i] = s == bytes32(0) ? _smtZeros[i] : s;
         }

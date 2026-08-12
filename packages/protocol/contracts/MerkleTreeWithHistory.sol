@@ -68,8 +68,12 @@ contract MerkleTreeWithHistory {
     // This holds only because a tree fills sequentially from zero. Anything that breaks that —
     // a resumable tree, an out-of-order insert, a tree starting part-full — silently reads the
     // previous tree's values and produces a root nobody can prove against.
-    mapping(uint256 => bytes32) private filledSubtrees;
-    mapping(uint256 => bytes32) private poolZeros;
+    // Fixed arrays, not mappings: both are dense, indexed only by level, and LEVELS is a
+    // compile-time constant — so the index space IS the array. A mapping would additionally
+    // pay a keccak per access to reach a slot the compiler can compute directly, on every
+    // level of every insert. {SMTRegistry-_smtZeros} already does it this way.
+    bytes32[LEVELS] private filledSubtrees;
+    bytes32[LEVELS] private poolZeros;
 
     // root => treeNumber + 1. Zero means unknown, which is why it is offset.
     //

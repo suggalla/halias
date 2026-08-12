@@ -137,7 +137,7 @@ async function main() {
   const registryContract = new ethers.Contract(cfg.registry, [
     "function getRegistryRoot() view returns (bytes32)",
     "function aliasSlot(bytes32) view returns (uint32)",
-    "function aliases(bytes32) view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint64 registeredAt)",
+    "function aliases(bytes32) view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint256 registeredAt)",
     "function isRegistered(bytes32) view returns (bool)",
   ], provider);
   const domainContract = new ethers.Contract(cfg.domain, [

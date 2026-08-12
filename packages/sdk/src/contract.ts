@@ -42,14 +42,14 @@ export const POOL_ABI = [
 ];
 
 export const REGISTRY_ABI = [
-  "function aliases(bytes32 aliasHash) external view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint64 registeredAt)",
+  "function aliases(bytes32 aliasHash) external view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint256 registeredAt)",
   "function aliasSlot(bytes32 aliasHash) external view returns (uint32)",
   "function nextAliasSlot() external view returns (uint32)",
   "function isRegistered(bytes32 aliasHash) external view returns (bool)",
   "function leafOf(bytes32 aliasHash) external view returns (bytes32)",
   "function getRegistryRoot() external view returns (bytes32)",
   "function isKnownRegistryRoot(bytes32) external view returns (bool)",
-  "function getSmtSiblings(uint256 slot) external view returns (bytes32[32] memory siblings)",
+  "function getSmtSiblings(uint32 slot) external view returns (bytes32[32] memory siblings)",
   "function controller() external view returns (address)",
   "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 leaf, bytes32 encryptionPubkey, uint32 slot)",
   "event AliasDataUpdated(bytes32 indexed aliasHash, bytes32 dataHash, bytes32 leaf)",
