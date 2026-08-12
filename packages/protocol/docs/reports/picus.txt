@@ -1,0 +1,4 @@
+merkle_proof       The circuit is properly constrained
+note_commitment    The circuit is properly constrained
+note_nullifier     The circuit is properly constrained
+registry_leaf      The circuit is properly constrained
