@@ -49,7 +49,11 @@ contract HaliasRegistry is SMTRegistry {
         bytes32 nullifierKeyHash;   // Poseidon(nullifierKey, 1) — the raw key is never on chain
         bytes32 encryptionPubkey;
         bytes32 dataHash;
-        uint64  registeredAt;
+        // uint256, not a narrower timestamp type. It follows four bytes32 fields, so it
+        // starts a fresh slot with nothing to pack against — the narrower type buys no
+        // storage and costs a `uint64(block.timestamp)` cast at the only write. Matches
+        // {SMTRegistry-registryRootSeenAt}, which is a timestamp for the same reason.
+        uint256 registeredAt;
     }
 
     mapping(bytes32 => AliasRecord) public aliases;
@@ -122,7 +126,7 @@ contract HaliasRegistry is SMTRegistry {
             nullifierKeyHash: nullifierKeyHash,
             encryptionPubkey: encryptionPubkey,
             dataHash:         bytes32(0),
-            registeredAt:     uint64(block.timestamp)
+            registeredAt:     block.timestamp
         });
 
         bytes32 leaf = _writeLeaf(aliasHash);
