@@ -18,8 +18,10 @@ let jsonMode = false;
 
 function field(key: string, value: string) {
   if (jsonMode) return;
+  // padEnd does nothing when the label is already longer, which ran the label straight into
+  // the value. A single space is the floor.
   const pad = 12;
-  process.stdout.write(`  ${key.padEnd(pad)}${value}\n`);
+  process.stdout.write(`  ${key.length >= pad ? key + " " : key.padEnd(pad)}${value}\n`);
 }
 
 function ok(msg: string) {
@@ -99,9 +101,22 @@ COMMANDS
   invite   create <amount>               Create a funded invite link for a new user
   invite   claim <code> <alias>          Claim an invite and register your alias
 
+  aliases                                List the aliases this wallet owns
+  history                                Transactions involving this alias
+  privacy                                What a withdrawal now would reveal
+
+  offer    <alias.hls> <address>         Offer an alias to a new owner
+  cancel   <alias.hls>                   Withdraw an outstanding offer
+  accept   <alias.hls>                   Accept an alias offered to you
+  data     <alias.hls> <hash>            Set the alias's dataHash
+  sweep    <alias.hls> <to> <new-owner>  Empty an alias, then offer it on
+
 FLAGS
   --token <address>    ERC-20 token address (default: ETH)
   --relayer <addr>     Pay a third party to broadcast (with --relayer-fee)\n  --relayer-fee <eth>  Fee paid to the relayer out of the note
+  --alias-index <n>    Which of this wallet's aliases to act as (default: 0)
+  --to <alias.hls>     For deposit: fund someone else's alias instead of your own
+  --prepare            For accept: sign only, print the signature, submit nothing
   --json               Output JSON
 
 ENVIRONMENT
@@ -113,7 +128,7 @@ ENVIRONMENT
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
-async function bootstrap() {
+async function bootstrap(aliasIndex = 0) {
   const { ethers } = await import("ethers");
   const { Halias }  = await import("./halias");
   const { FileCache } = await import("./cache");
@@ -153,7 +168,7 @@ async function bootstrap() {
     cache: new FileCache(CACHE_DIR),
   });
 
-  await halias.init();
+  await halias.init(aliasIndex);
   return { halias, ethers };
 }
 
@@ -172,14 +187,24 @@ async function main() {
     return;
   }
 
-  const KNOWN = ["register", "deposit", "send", "withdraw", "balance", "scan", "lookup", "invite", "keys"];
+  const KNOWN = [
+    "register", "deposit", "send", "withdraw", "balance", "scan", "lookup", "invite", "keys",
+    "aliases", "offer", "cancel", "accept", "data", "sweep", "history", "privacy",
+  ];
   if (!KNOWN.includes(command)) {
     process.stderr.write(`Unknown command: ${command}\n`);
     usage();
     process.exit(1);
   }
 
-  const { halias, ethers } = await bootstrap();
+  // Each index is a separate alias with its own keys, so balances and notes do not merge.
+  // One signature covers every index, so switching costs no extra wallet prompt.
+  const aliasIndex = flags["alias-index"] ? parseInt(flags["alias-index"] as string, 10) : 0;
+  if (Number.isNaN(aliasIndex) || aliasIndex < 0) {
+    process.stderr.write("Error: --alias-index must be a non-negative integer\n");
+    process.exit(1);
+  }
+  const { halias, ethers } = await bootstrap(aliasIndex);
 
   const tokenAddress = flags["token"]
     ? BigInt(flags["token"] as string)
@@ -212,7 +237,11 @@ async function main() {
     const amount = args[1];
     if (!amount) { process.stderr.write("Usage: halias deposit <amount> [--token <addr>]\n"); process.exit(1); }
 
-    const result = await withSpinner("Generating proof", () => halias.deposit(amount, tokenAddress));
+    // --to funds someone else's alias. The note is encrypted to their keys, so it is theirs
+    // the moment it lands; this is the same proof shape, aimed elsewhere.
+    const to = flags["to"] as string | undefined;
+    const result = await withSpinner("Generating proof", () =>
+      to ? halias.depositTo(to, amount, tokenAddress) : halias.deposit(amount, tokenAddress));
 
     if (jsonMode) { outputJson({ amount: ethers.formatEther(result.amount), token: tokenLabel, txHash: result.txHash }); return; }
     ok(`Deposited ${amount} ${tokenLabel}`);
@@ -328,6 +357,149 @@ async function main() {
     process.stdout.write(`  ${clean}.hls\n\n`);
     field("attested", result.dataHash !== 0n ? `${GREEN}yes${RESET}` : `${DIM}no${RESET}`);
     if (result.dataHash !== 0n) field("dataHash", result.dataHash.toString(16).slice(0, 16) + "…");
+    return;
+  }
+
+  // ── aliases ───────────────────────────────────────────────────────────────
+
+  if (command === "aliases") {
+    // Slots come from the registry, so the list is what the chain says this wallet owns —
+    // not what a local cache remembers. The index is what `--alias-index` selects.
+    const owned = await halias.myAliases();
+    if (jsonMode) { outputJson({ aliases: owned }); return; }
+    if (owned.length === 0) { process.stdout.write("  No aliases.\n"); return; }
+    for (const [i, a] of owned.entries()) {
+      process.stdout.write(`  ${String(i).padEnd(4)}slot ${String(a.slot).padEnd(8)}${a.aliasHash}\n`);
+    }
+    return;
+  }
+
+  // ── history ───────────────────────────────────────────────────────────────
+
+  if (command === "history") {
+    const entries = await halias.history(tokenAddress);
+    if (jsonMode) {
+      outputJson({
+        token: tokenLabel,
+        entries: entries.map(e => ({
+          kind: e.kind, amount: ethers.formatEther(e.amount), txHash: e.txHash,
+          blockNumber: e.blockNumber, gasFee: ethers.formatEther(e.gasFee),
+        })),
+      });
+      return;
+    }
+    if (entries.length === 0) { process.stdout.write("  Nothing yet.\n"); return; }
+    for (const e of entries) {
+      const amount = e.kind === "register" ? "" : `${ethers.formatEther(e.amount)} ${tokenLabel}`;
+      process.stdout.write(
+        `  ${e.kind.padEnd(9)}${amount.padEnd(22)}${DIM}${e.txHash.slice(0, 12)}…${RESET}\n`);
+    }
+    return;
+  }
+
+  // ── privacy ───────────────────────────────────────────────────────────────
+
+  if (command === "privacy") {
+    // Deliberately not a score. The inputs are legible on their own, and one number would
+    // invite confidence the data does not support.
+    const pc = await halias.privacyContext(tokenAddress);
+    if (jsonMode) { outputJson({ ...pc }); return; }
+    field("crowd", `${pc.anonymitySet} notes in the pool`);
+    field("yours", `${pc.myNotes}`);
+    field("your last", `${pc.blocksSinceLastNote} blocks ago`);
+    field("since then", `${pc.othersSinceLastNote} notes by others`);
+    if (pc.othersSinceLastNote === 0) {
+      process.stdout.write(`\n  ${DIM}Nothing has moved since your note landed — a withdrawal now\n` +
+                           `  is linkable to it by ordering alone.${RESET}\n`);
+    }
+    return;
+  }
+
+  // ── offer / cancel / accept ───────────────────────────────────────────────
+
+  if (command === "offer") {
+    const [, alias, to] = args;
+    if (!alias || !to) { process.stderr.write("Usage: halias offer <alias.hls> <address>\n"); process.exit(1); }
+    dim("Offering...");
+    const { txHash } = await halias.offerAlias(alias, to);
+    if (jsonMode) { outputJson({ alias: normalizeAlias(alias) + ".hls", to, txHash }); return; }
+    field("offered to", to);
+    field("tx", txHash);
+    // Nothing has moved yet, and saying so matters: the seller keeps the alias, and its
+    // payments, until the recipient accepts with keys only they can produce.
+    process.stdout.write(`\n  ${DIM}Nothing moves until they accept.${RESET}\n`);
+    return;
+  }
+
+  if (command === "cancel") {
+    const alias = args[1];
+    if (!alias) { process.stderr.write("Usage: halias cancel <alias.hls>\n"); process.exit(1); }
+    dim("Cancelling...");
+    const { txHash } = await halias.cancelOffer(alias);
+    if (jsonMode) { outputJson({ alias: normalizeAlias(alias) + ".hls", txHash }); return; }
+    field("cancelled", normalizeAlias(alias) + ".hls");
+    field("tx", txHash);
+    return;
+  }
+
+  if (command === "accept") {
+    const alias = args[1];
+    if (!alias) { process.stderr.write("Usage: halias accept <alias.hls>\n"); process.exit(1); }
+    const prepare = !!flags["prepare"];
+    dim(prepare ? "Signing..." : "Accepting...");
+    const res = await halias.acceptAlias(alias, { prepare });
+    if (jsonMode) {
+      outputJson({ alias: normalizeAlias(alias) + ".hls", txHash: res.txHash,
+                   signature: res.signature, deadline: res.deadline.toString() });
+      return;
+    }
+    if (prepare) {
+      // The whole point of signing separately: authority is the signature, not msg.sender,
+      // so someone with no ETH can still take ownership if a relayer submits for them.
+      field("signature", res.signature);
+      field("deadline", new Date(Number(res.deadline) * 1000).toISOString());
+      process.stdout.write(`\n  ${DIM}Nothing submitted. Hand this to whoever pays the gas.${RESET}\n`);
+      return;
+    }
+    field("accepted", normalizeAlias(alias) + ".hls");
+    field("tx", res.txHash);
+    return;
+  }
+
+  // ── data ──────────────────────────────────────────────────────────────────
+
+  if (command === "data") {
+    const [, alias, hash] = args;
+    if (!alias || !hash) { process.stderr.write("Usage: halias data <alias.hls> <hash>\n"); process.exit(1); }
+    let value: bigint;
+    try { value = BigInt(hash); }
+    catch { process.stderr.write("Error: hash must be a number or 0x-prefixed hex\n"); process.exit(1); return; }
+    dim("Updating...");
+    const { txHash } = await halias.updateAliasData(alias, value);
+    if (jsonMode) { outputJson({ alias: normalizeAlias(alias) + ".hls", dataHash: value.toString(), txHash }); return; }
+    field("alias", normalizeAlias(alias) + ".hls");
+    field("dataHash", value.toString());
+    field("tx", txHash);
+    return;
+  }
+
+  // ── sweep ─────────────────────────────────────────────────────────────────
+
+  if (command === "sweep") {
+    const [, alias, to, newOwner] = args;
+    if (!alias || !to || !newOwner) {
+      process.stderr.write("Usage: halias sweep <alias.hls> <recipient-address> <new-owner-address>\n");
+      process.exit(1);
+    }
+    // Empty first, then offer. Handing over an alias with notes still in it would hand over
+    // the notes as well — the new keys can decrypt anything that arrives afterwards.
+    dim("Sweeping, then offering...");
+    const res = await halias.sweepAndOffer(alias, to, newOwner);
+    if (jsonMode) { outputJson({ alias: normalizeAlias(alias) + ".hls", ...res }); return; }
+    field("sweeps", String(res.sweepTxHashes.length));
+    for (const h of res.sweepTxHashes) process.stdout.write(`  ${DIM}${h}${RESET}\n`);
+    field("offered to", newOwner);
+    field("tx", res.offerTxHash);
     return;
   }
 
