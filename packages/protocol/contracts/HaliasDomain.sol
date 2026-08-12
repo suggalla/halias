@@ -365,6 +365,14 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
         // alias that is already taken. Minting before that would let a failed registration
         // leave a token behind.
         registry.register(r.aliasHash, r.spendingPubkey, r.nullifierKeyHash, r.encryptionPubkey);
+
+        // `_mint`, deliberately, not `_safeMint` — static analysers flag this, so: `_safeMint`
+        // calls `onERC721Received` on the recipient, and the recipient is `r.owner`, chosen by
+        // the prover. That hands attacker-controlled code a re-entry point in the middle of a
+        // claim, while the registry holds an armed pending leaf. `nonReentrant` stops re-entry
+        // into `claim` but not calls into everything else, and reasoning about that window is
+        // strictly worse than not opening it. The cost is that an alias minted to a contract
+        // that cannot handle ERC-721 is stuck — an owner who asked for exactly that address.
         _mint(r.owner, uint256(r.aliasHash));
         _publishName(r.aliasHash, name);
     }
