@@ -6,6 +6,7 @@ import * as crypto from "crypto";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { MerkleTree } from "./helpers/merkleTree";
 import { SMT, registryLeaf, aliasHashToKey, toNullifierKeyHash } from "./helpers/smt";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 const snarkjs = require("snarkjs");
 
@@ -116,11 +117,10 @@ describe("Circuit/contract alignment", function () {
   });
 
   beforeEach(async function () {
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const tv = await (await ethers.getContractFactory("TransactVerifier")).deploy();
     const dep = await (await ethers.getContractFactory("HaliasDeployer", {
-      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(await tv.getAddress(), (await ethers.getSigners())[0].address);
     pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());

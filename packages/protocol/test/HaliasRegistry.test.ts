@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { SMT, aliasHashToKey } from "./helpers/smt";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 // The registry stores nullifierKeyHash already hashed, so the leaf is a direct Poseidon of
 // the three stored fields. registryLeaf() in the helpers takes a raw nullifier key and
@@ -43,10 +44,9 @@ describe("HaliasRegistry", function () {
 
   beforeEach(async function () {
     [controller, stranger] = await ethers.getSigners();
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     registry = await (await ethers.getContractFactory("HaliasRegistry", {
-      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(controller.address);
   });
 
@@ -56,8 +56,8 @@ describe("HaliasRegistry", function () {
     it("rejects a zero controller", async function () {
       const F = await ethers.getContractFactory("HaliasRegistry", {
         libraries: {
-          PoseidonT3: await (await (await ethers.getContractFactory("PoseidonT3")).deploy()).getAddress(),
-          PoseidonT4: await (await (await ethers.getContractFactory("PoseidonT4")).deploy()).getAddress(),
+          PoseidonT3: (await ensurePoseidon()).PoseidonT3,
+          PoseidonT4: (await ensurePoseidon()).PoseidonT4,
         },
       });
       await expect(F.deploy(ethers.ZeroAddress)).to.be.revertedWithCustomError(F, "ZeroController");

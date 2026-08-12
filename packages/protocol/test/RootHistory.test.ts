@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { registerAlias } from "./helpers/register";
 import { mine, time } from "@nomicfoundation/hardhat-network-helpers";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 // Root acceptance rules. Pool roots and registry roots deliberately differ:
 // a stale pool root is harmless because nullifiers stop double spends, but a stale
@@ -23,11 +24,10 @@ describe("Root history", function () {
   }
 
   beforeEach(async function () {
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
     const dep = await (await ethers.getContractFactory("HaliasDeployer", {
-      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(await mv.getAddress(), (await ethers.getSigners())[0].address);
     pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
@@ -189,16 +189,15 @@ describe("Pairwise insertion equivalence", function () {
 
   beforeEach(async function () {
     const [deployer] = await ethers.getSigners();
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
     const dep = await (await ethers.getContractFactory("HaliasDeployer", {
-      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(await mv.getAddress(), deployer.address);
     pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
     seq = await (await ethers.getContractFactory("MockTreeSequential", {
-      libraries: { PoseidonT3: await t3.getAddress() },
+      libraries: { PoseidonT3: t3 },
     })).deploy();
   });
 

@@ -5,6 +5,7 @@ import {
   POOL_ABI, POOL_REGISTRY_ABI as REGISTRY_ABI, DOMAIN_ABI,
   NO_RELAYER, type TransactParams,
 } from "halias-sdk";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 // The SDK's paramsHash, checked against the pool's own.
 //
@@ -32,12 +33,11 @@ describe("SDK preimage agreement", function () {
   before(async function () {
     [signer, other] = await ethers.getSigners();
 
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const verifier = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
 
     const deployer = await (await ethers.getContractFactory("HaliasDeployer", {
-      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(verifier, signer.address);
 
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());

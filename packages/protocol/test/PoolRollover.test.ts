@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 // Tree rollover, and the two bugs it creates.
 //
@@ -69,14 +70,13 @@ describe("pool tree rollover", function () {
 
   beforeEach(async function () {
     [registrar, user] = await ethers.getSigners();
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const verifier = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
     registry = await (await ethers.getContractFactory("HaliasRegistry", {
-      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(registrar.address);
     pool = await (await ethers.getContractFactory("MockSmallTreePool", {
-      libraries: { PoseidonT3: await t3.getAddress() },
+      libraries: { PoseidonT3: t3 },
     })).deploy(verifier, await registry.getAddress());
   });
 

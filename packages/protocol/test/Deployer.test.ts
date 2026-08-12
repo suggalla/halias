@@ -3,6 +3,7 @@ import { ethers } from "hardhat";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { aliasHashToKey } from "./helpers/smt";
 import { registerAlias } from "./helpers/register";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 // HaliasDeployer — the three contracts brought up wired, in one transaction.
 //
@@ -28,12 +29,11 @@ describe("HaliasDeployer", function () {
   beforeEach(async function () {
     [admin, user] = await ethers.getSigners();
 
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     verifier = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
 
     deployer = await (await ethers.getContractFactory("HaliasDeployer", {
-      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(verifier, admin.address);
 
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
