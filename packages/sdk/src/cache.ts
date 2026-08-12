@@ -1,6 +1,5 @@
 import { ethers } from "ethers";
 import { MerkleTree, PoolTrees } from "./merkle";
-import { SMT } from "./smt";
 import type { RegistryEntry, Output } from "./events";
 import type { OwnedEntry } from "./entry";
 
@@ -11,7 +10,6 @@ export interface CacheStore {
 
 export interface CacheData {
   poolTrees: PoolTrees;
-  smt: SMT;
   registryEntries: RegistryEntry[];
   aliasHashByPubkey: Map<bigint, bigint>;
   keyActiveFrom: Map<bigint, number>;
@@ -39,8 +37,6 @@ interface SerializedCache {
   /// tree a commitment belonged to — and the tree number feeds the nullifier, so guessing
   /// it would produce notes that look unspendable.
   poolTrees?: [number, string[]][];
-  smtNodes: Record<string, string>;
-  smtRoot: string;
   spentNullifiers: string[];
   registryEntries: Array<{
     aliasHash: string;
@@ -48,8 +44,6 @@ interface SerializedCache {
     txHash: string;
     blockNumber: number;
     spendingPubkey: string;
-    nullifierKeyHash: string;
-    leafHash: string;
     encryptionPubkey: string;
     dataHash: string;
   }>;
@@ -75,8 +69,6 @@ export function serializeCache(d: CacheData): string {
     // an older build has `poolLeaves` and no tree numbers; it is rejected rather than
     // guessed at, because assuming tree 0 would produce wrong nullifiers.
     poolTrees:    d.poolTrees.entries().map(([n, ls]) => [n, ls.map(l => "0x" + l.toString(16))]),
-    smtNodes:     d.smt.serializeNodes(),
-    smtRoot:      "0x" + d.smt.root.toString(16),
     spentNullifiers: [...d.spentNullifiers].map(n => "0x" + n.toString(16)),
     registryEntries: d.registryEntries.map(e => ({
       aliasHash:        e.aliasHash,
@@ -88,8 +80,6 @@ export function serializeCache(d: CacheData): string {
       txHash:           e.txHash,
       blockNumber:      e.blockNumber,
       spendingPubkey:   "0x" + e.spendingPubkey.toString(16),
-      nullifierKeyHash: "0x" + e.nullifierKeyHash.toString(16),
-      leafHash:         "0x" + e.leafHash.toString(16),
       encryptionPubkey: ethers.hexlify(e.encryptionPubkey),
       dataHash:         "0x" + e.dataHash.toString(16),
     })),
@@ -135,16 +125,12 @@ export function deserializeCache(raw: string): CacheData {
     leaves.forEach((leaf, i) => poolTrees.insert(n, i, BigInt(leaf)));
   }
 
-  const smt = SMT.fromSerialized(d.smtNodes, BigInt(d.smtRoot));
-
   const registryEntries: RegistryEntry[] = d.registryEntries.map(e => ({
     aliasHash:        e.aliasHash,
     txHash:           String((e as any).txHash ?? ""),
     blockNumber:      Number((e as any).blockNumber ?? 0),
     registrySlot:     Number((e as any).registrySlot ?? 0),
     spendingPubkey:   BigInt(e.spendingPubkey),
-    nullifierKeyHash: BigInt(e.nullifierKeyHash),
-    leafHash:         BigInt(e.leafHash),
     encryptionPubkey: ethers.getBytes(e.encryptionPubkey),
     dataHash:         BigInt(e.dataHash),
   }));
@@ -197,7 +183,7 @@ export function deserializeCache(raw: string): CacheData {
   }));
 
   return {
-    poolTrees, smt, registryEntries, aliasHashByPubkey, keyActiveFrom, spentNullifiers,
+    poolTrees, registryEntries, aliasHashByPubkey, keyActiveFrom, spentNullifiers,
     lastBlock: warm ? d.lastBlock : 0,
     myEntries, outputs,
   };
