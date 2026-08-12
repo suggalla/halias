@@ -6,6 +6,7 @@ import {
   NO_RELAYER, type TransactParams,
 } from "halias-sdk";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { anchorOf } from "./helpers/anchor";
 
 // The SDK's paramsHash, checked against the pool's own.
 //
@@ -48,7 +49,7 @@ describe("SDK preimage agreement", function () {
   });
 
   async function assertAgrees(params: TransactParams, enc0: string, enc1: string) {
-    const root = BigInt(await pool.getLastRoot());
+    const root = BigInt((await anchorOf(pool)).root);
     const p = buildTransactParams(
       [root, root], [0, 0], BigInt(await registry.getRegistryRoot()),
       0n, 0n, [randBig(), randBig()], [randBig(), randBig()], params,

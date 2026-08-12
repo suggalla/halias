@@ -6,6 +6,7 @@ import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { MerkleTree } from "./helpers/merkleTree";
 import { SMT, aliasHashToKey } from "./helpers/smt";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { anchorOf } from "./helpers/anchor";
 
 const snarkjs = require("snarkjs");
 
@@ -238,7 +239,7 @@ describe("E2E against the real verifier", function () {
     aliceNote = out0;
 
     expect(await ethers.provider.getBalance(poolAddr)).to.equal(DEPOSIT);
-    expect(BigInt(await pool.getLastRoot())).to.equal(tree.getRoot());
+    expect(BigInt((await anchorOf(pool)).root)).to.equal(tree.getRoot());
   });
 
   it("transfers privately to another alias with a real proof", async function () {
@@ -352,14 +353,14 @@ describe("E2E against the real verifier", function () {
       outputsEmpty: true,
     }));
 
-    const rootBefore = await pool.getLastRoot();
-    const idxBefore  = await pool.leafIndex();
+    const rootBefore = (await anchorOf(pool)).root;
+    const idxBefore  = (await pool.position()).leaf;
     const before     = await ethers.provider.getBalance(recipient.address);
 
     await expect(pool.transact(ep, "0x", "0x", eProof)).to.emit(pool, "PoolExit");
 
-    expect(await pool.getLastRoot()).to.equal(rootBefore);   // tree did not move
-    expect(await pool.leafIndex()).to.equal(idxBefore);
+    expect((await anchorOf(pool)).root).to.equal(rootBefore);   // tree did not move
+    expect((await pool.position()).leaf).to.equal(idxBefore);
     expect(await ethers.provider.getBalance(recipient.address) - before)
       .to.equal(ethers.parseEther("0.2"));
     expect(await pool.spentNullifiers(ep.inputNullifiers[0])).to.equal(true);

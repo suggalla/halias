@@ -7,6 +7,7 @@ import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { MerkleTree } from "./helpers/merkleTree";
 import { SMT, registryLeaf, aliasHashToKey, toNullifierKeyHash } from "./helpers/smt";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { anchorOf } from "./helpers/anchor";
 
 const snarkjs = require("snarkjs");
 
@@ -220,7 +221,7 @@ describe("Circuit/contract alignment", function () {
       // One below the boundary is a deposit as far as the contract is concerned, so it
       // demands msg.value — proving the split sits exactly where the circuit puts it.
       await expect(pool.transact({
-        poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
+        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
         publicAmount: atBoundary - 1n, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [ethers.keccak256("0x01"), ethers.keccak256("0x02")],
         outputCommitments: [ethers.keccak256("0x03"), ethers.keccak256("0x04")],

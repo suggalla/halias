@@ -1,4 +1,5 @@
 import { ethers } from "hardhat";
+import { anchorOf } from "../test/helpers/anchor";
 // Reports gas for the two hot paths so a type/storage change can be judged, not guessed.
 async function main() {
   const [dep] = await ethers.getSigners();
@@ -40,7 +41,7 @@ async function main() {
   // 31 bytes: a full 32 exceeds FIELD_PRIME ~81% of the time and the registry rejects it.
   const rF = () => ethers.zeroPadValue(ethers.hexlify(ethers.randomBytes(31)), 32);
   const base = async (over: any = {}) => ({
-    poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
+    poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
     registryRoot: await reg.getRegistryRoot(),
     publicAmount: ethers.parseEther("1"), tokenAddress: ethers.ZeroAddress,
     inputNullifiers: [r32(), r32()], outputCommitments: [r32(), r32()],

@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { anchorOf } from "./helpers/anchor";
 
 // HaliasPool, exercised against the real HaliasRegistry.
 //
@@ -30,7 +31,7 @@ describe("HaliasPool", function () {
 
   async function baseParams(overrides: any = {}) {
     return {
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0],
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      0n,
       tokenAddress:      ethers.ZeroAddress,
@@ -122,11 +123,11 @@ describe("HaliasPool", function () {
     // admin to rescue it. It is also much cheaper, because the tree walk is most of the cost.
 
     it("inserts nothing and does not move the root", async function () {
-      const before = await pool.getLastRoot();
-      const idx    = await pool.leafIndex();
+      const before = (await anchorOf(pool)).root;
+      const idx    = (await pool.position()).leaf;
       await (await send(await baseParams({ outputsEmpty: true }))).wait();
-      expect(await pool.getLastRoot()).to.equal(before);
-      expect(await pool.leafIndex()).to.equal(idx);
+      expect((await anchorOf(pool)).root).to.equal(before);
+      expect((await pool.position()).leaf).to.equal(idx);
     });
 
     it("emits PoolExit rather than Transact, so a scanner inserts nothing", async function () {
@@ -186,9 +187,9 @@ describe("HaliasPool", function () {
     it("accepts a historical pool root, not just the newest", async function () {
       // A client one block behind is the common case, not an attack. Nullifiers prevent
       // double spends; root freshness is not load-bearing for the pool tree.
-      const oldRoot = await pool.getLastRoot();
+      const oldRoot = (await anchorOf(pool)).root;
       await depositETH(ethers.parseEther("1"));
-      expect(await pool.getLastRoot()).to.not.equal(oldRoot);
+      expect((await anchorOf(pool)).root).to.not.equal(oldRoot);
       await expect(send(await baseParams({ poolRoot: [oldRoot, oldRoot], treeNumber: [0, 0]}))).to.not.be.reverted;
     });
 
@@ -487,9 +488,9 @@ describe("HaliasPool", function () {
 
     it("assigns sequential leaf index pairs", async function () {
       await expect(send(await baseParams())).to.emit(pool, "Transact");
-      expect(await pool.leafIndex()).to.equal(2n);
+      expect((await pool.position()).leaf).to.equal(2n);
       await (await send(await baseParams())).wait();
-      expect(await pool.leafIndex()).to.equal(4n);
+      expect((await pool.position()).leaf).to.equal(4n);
     });
   });
 

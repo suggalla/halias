@@ -3,6 +3,7 @@ import { ethers } from "hardhat";
 import { registerAlias } from "./helpers/register";
 import { mine, time } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { anchorOf } from "./helpers/anchor";
 
 // Root acceptance rules. Pool roots and registry roots deliberately differ:
 // a stale pool root is harmless because nullifiers stop double spends, but a stale
@@ -37,26 +38,26 @@ describe("Root history", function () {
 
   describe("pool roots", function () {
     it("accepts the genesis root", async function () {
-      expect(await pool.isKnownPoolRoot(await pool.getLastRoot())).to.equal(true);
+      expect((await pool.poolRootTree((await anchorOf(pool)).root)).known).to.equal(true);
     });
 
     it("rejects the zero root", async function () {
-      expect(await pool.isKnownPoolRoot(ethers.ZeroHash)).to.equal(false);
+      expect((await pool.poolRootTree(ethers.ZeroHash)).known).to.equal(false);
     });
 
     it("rejects an unknown root", async function () {
-      expect(await pool.isKnownPoolRoot(randRoot())).to.equal(false);
+      expect((await pool.poolRootTree(randRoot())).known).to.equal(false);
     });
 
     it("never expires a known root, however long passes", async function () {
-      const genesis = await pool.getLastRoot();
+      const genesis = (await anchorOf(pool)).root;
       await mine(100);
       await time.increase(Number(MAX_AGE) * 10);
-      expect(await pool.isKnownPoolRoot(genesis)).to.equal(true);
+      expect((await pool.poolRootTree(genesis)).known).to.equal(true);
     });
 
     it("keeps an old root valid after the tree advances", async function () {
-      const before = await pool.getLastRoot();
+      const before = (await anchorOf(pool)).root;
       const amt = ethers.parseEther("1");
       const proof = ethers.AbiCoder.defaultAbiCoder().encode(
         ["uint256[2]", "uint256[2][2]", "uint256[2]"], [[0, 0], [[0, 0], [0, 0]], [0, 0]]);
@@ -70,10 +71,10 @@ describe("Root history", function () {
       outputsEmpty:      false,
       }, "0x", "0x", proof, { value: amt });
 
-      const after = await pool.getLastRoot();
+      const after = (await anchorOf(pool)).root;
       expect(after).to.not.equal(before);
-      expect(await pool.isKnownPoolRoot(before)).to.equal(true);
-      expect(await pool.isKnownPoolRoot(after)).to.equal(true);
+      expect((await pool.poolRootTree(before)).known).to.equal(true);
+      expect((await pool.poolRootTree(after)).known).to.equal(true);
     });
 
     it("does not publish the intermediate root between the two inserts", async function () {
@@ -84,7 +85,7 @@ describe("Root history", function () {
         ["uint256[2]", "uint256[2][2]", "uint256[2]"], [[0, 0], [[0, 0], [0, 0]], [0, 0]]);
       const c0 = randRoot(), c1 = randRoot();
       await pool.transact({
-        poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
+        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
         publicAmount: amt, tokenAddress: ethers.ZeroAddress,
         inputNullifiers: [randRoot(), randRoot()],
         outputCommitments: [c0, c1],
@@ -93,8 +94,8 @@ describe("Root history", function () {
       outputsEmpty:      false,
       }, "0x", "0x", proof, { value: amt });
 
-      expect(await pool.isKnownPoolRoot(await pool.getLastRoot())).to.equal(true);
-      expect(await pool.leafIndex()).to.equal(2n);
+      expect((await pool.poolRootTree((await anchorOf(pool)).root)).known).to.equal(true);
+      expect((await pool.position()).leaf).to.equal(2n);
     });
   });
 
@@ -204,7 +205,7 @@ describe("Pairwise insertion equivalence", function () {
   async function transactWith(c0: string, c1: string) {
     const amt = ethers.parseEther("0.01");
     await (await pool.transact({
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: amt, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
       recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n }, externalData: ethers.ZeroHash,
@@ -214,15 +215,15 @@ describe("Pairwise insertion equivalence", function () {
   }
 
   it("starts from the same empty root", async function () {
-    expect(await pool.getLastRoot()).to.equal(await seq.lastRoot());
+    expect((await anchorOf(pool)).root).to.equal(await seq.lastRoot());
   });
 
   it("matches after one pair", async function () {
     const c0 = rand(), c1 = rand();
     await transactWith(c0, c1);
     await (await seq.insertPairSequentially(c0, c1)).wait();
-    expect(await pool.getLastRoot()).to.equal(await seq.lastRoot());
-    expect(await pool.leafIndex()).to.equal(await seq.nextIndex());
+    expect((await anchorOf(pool)).root).to.equal(await seq.lastRoot());
+    expect((await pool.position()).leaf).to.equal(await seq.nextIndex());
   });
 
   it("matches across many pairs, exercising both parity branches at levels 1-5", async function () {
@@ -236,11 +237,11 @@ describe("Pairwise insertion equivalence", function () {
       const c0 = rand(), c1 = rand();
       await transactWith(c0, c1);
       await (await seq.insertPairSequentially(c0, c1)).wait();
-      expect(await pool.getLastRoot(), `divergence after pair ${i + 1}`)
+      expect((await anchorOf(pool)).root, `divergence after pair ${i + 1}`)
         .to.equal(await seq.lastRoot());
-      expect((await pool.leafIndex()) % 2n, `nextIndex went odd at pair ${i + 1}`).to.equal(0n);
+      expect(((await pool.position()).leaf) % 2n, `nextIndex went odd at pair ${i + 1}`).to.equal(0n);
     }
-    expect(await pool.leafIndex()).to.equal(64n);
+    expect((await pool.position()).leaf).to.equal(64n);
   });
 
   it("advances nextIndex only in steps of two", async function () {
@@ -248,11 +249,11 @@ describe("Pairwise insertion equivalence", function () {
     // insertion fails here rather than corrupting the tree in a way only a diverging
     // root would reveal. The deployed contract is immutable, so this guards the next
     // version, not this one.
-    let prev = await pool.leafIndex();
+    let prev = (await pool.position()).leaf;
     expect(prev).to.equal(0n);
     for (let i = 0; i < 3; i++) {
       await transactWith(rand(), rand());
-      const now = await pool.leafIndex();
+      const now = (await pool.position()).leaf;
       expect(now - prev).to.equal(2n);
       prev = now;
     }
@@ -262,7 +263,7 @@ describe("Pairwise insertion equivalence", function () {
     const c0 = rand(), c1 = rand();
     const amt = ethers.parseEther("0.01");
     const receipt = await (await pool.transact({
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: amt, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
       recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n }, externalData: ethers.ZeroHash,
@@ -281,7 +282,7 @@ describe("Pairwise insertion equivalence", function () {
   it("still rejects a zero commitment in either slot", async function () {
     const amt = ethers.parseEther("0.01");
     const base = async (c0: string, c1: string) => ({
-      poolRoot: [await pool.getLastRoot(), await pool.getLastRoot()], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: amt, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
       recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n }, externalData: ethers.ZeroHash,
