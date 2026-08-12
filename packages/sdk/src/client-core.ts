@@ -14,7 +14,7 @@ import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADD
 import { MerkleTree, PoolTrees } from "./merkle";
 import { SMT, aliasHashToSmtKey } from "./smt";
 import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
-import { scanEvents, findMyOutputs, Output, RegistryEntry } from "./events";
+import { scanEvents, findMyOutputs, Output, RegistryEntry, ScanResult } from "./events";
 import { deriveInviteKeys, InviteKeys, encodeInviteCode } from "./invite";
 import {
   getPool,
@@ -108,6 +108,7 @@ export abstract class HaliasCore {
   }
   protected smt: SMT = new SMT();
   protected aliasHashByPubkey = new Map<bigint, bigint>(); // spendingPubkey → aliasHash (bigint)
+  protected keyActiveFrom = new Map<bigint, number>();     // spendingPubkey → block it became active
   protected registryEntries: RegistryEntry[] = [];
   protected myEntries: OwnedEntry[] = [];
   protected allOutputs: Output[] = [];
@@ -176,6 +177,16 @@ export abstract class HaliasCore {
     return `${this.config.chainId}:${this.config.poolAddress.toLowerCase()}`;
   }
 
+  /// Where to resume from, kept as its own record rather than a field of the main blob.
+  ///
+  /// Two reasons. The blob can fail to write — localStorage has a hard per-origin quota and
+  /// a large pool tree reaches it — and a cursor written beside data that never landed would
+  /// skip the range that data covered. And clearing the cursor alone is exactly what a full
+  /// rescan is, so it costs nothing and discards nothing.
+  protected cursorKey(): string {
+    return `${this.cacheKey()}:cursor`;
+  }
+
   protected async loadCache(): Promise<void> {
     if (!this.config.cache) return;
     const raw = await this.config.cache.load(this.cacheKey());
@@ -186,8 +197,17 @@ export abstract class HaliasCore {
       this.smt = d.smt;
       this.registryEntries = d.registryEntries;
       this.aliasHashByPubkey = d.aliasHashByPubkey;
+      this.keyActiveFrom = d.keyActiveFrom;
       this.spentNullifiers = d.spentNullifiers;
       this.lastBlock = d.lastBlock;
+      this.myEntries = d.myEntries;
+      this.allOutputs = d.outputs;
+
+      // The cursor is authoritative when present, and its absence means resume from nothing.
+      // A blob without one was written by a build that did not keep them apart, or by a run
+      // whose cursor write did not land — either way, rescanning is the safe reading.
+      const cursorRaw = await this.config.cache.load(this.cursorKey());
+      this.lastBlock = cursorRaw ? (JSON.parse(cursorRaw).lastBlock ?? 0) : 0;
     } catch (e) {
       console.warn("Failed to load cache:", e);
     }
@@ -200,25 +220,55 @@ export abstract class HaliasCore {
       smt: this.smt,
       registryEntries: this.registryEntries,
       aliasHashByPubkey: this.aliasHashByPubkey,
+      keyActiveFrom: this.keyActiveFrom,
       spentNullifiers: this.spentNullifiers,
       lastBlock: this.lastBlock,
+      myEntries: this.myEntries,
+      outputs: this.allOutputs,
     });
     await this.config.cache.save(this.cacheKey(), raw);
+    // Only after the data it describes is safely stored. The other order loses notes.
+    await this.config.cache.save(this.cursorKey(), JSON.stringify({ lastBlock: this.lastBlock }));
+  }
+
+  /// Throw away everything learned from the chain and read it again from the deployment
+  /// block.
+  ///
+  /// The escape hatch, and worth having a visible one. Every incremental scan depends on a
+  /// cursor being right, and the failure mode when it is not is a balance that is quietly
+  /// too low rather than an error — the worst shape a bug can take here. This is the answer
+  /// to "my balance looks wrong" that needs no diagnosis and cannot make anything worse.
+  async rescan(): Promise<void> {
+    this.ensureInit();
+    this.poolTrees = new PoolTrees();
+    this.smt = new SMT();
+    this.registryEntries = [];
+    this.aliasHashByPubkey = new Map();
+    this.keyActiveFrom = new Map();
+    this.spentNullifiers = new Set();
+    this.myEntries = [];
+    this.allOutputs = [];
+    this.lastBlock = 0;
+    await this.refresh();
   }
 
   async refresh(): Promise<void> {
     this.ensureInit();
-    // Always rescan from the deployment block rather than from lastBlock + 1.
+
+    // Resume from the cache when there is one, rather than rescanning from the deployment
+    // block. The scan itself is cheap; what is not is what follows it — every output costs an
+    // X25519 shared-secret derivation to trial-decrypt (~541 microseconds, and several times
+    // that in a browser), and every registration costs a REGISTRY_LEVELS-deep SMT path.
+    // Repeating both for the entire history on every call is what made a warm client as slow
+    // as a cold one.
     //
-    // scanEvents rebuilds the registry SMT from the events it sees, and the assignments
-    // below replace rather than merge, so an incremental scan would return a tree built
-    // only from the new range and silently discard every earlier registration. Combined
-    // with lastBlock jumping to head after the first scan, a freshly registered account
-    // could not find itself — which is exactly what the live Sepolia run hit.
-    //
-    // Rescanning is correct but O(history); making scanEvents merge into an existing
-    // tree, so the cache can warm-start an incremental scan, is the follow-up.
-    const fromBlock = this.config.startBlock ?? 0;
+    // scanEvents merges into the state handed to it, which is what makes this safe: a partial
+    // range on its own would rebuild a registry holding only the aliases it saw and a pool
+    // tree starting at whatever leaf the range began with. Neither disagreement announces
+    // itself — the symptom is proofs being rejected much later.
+    const prior = this.lastBlock > 0 ? this.priorScan() : undefined;
+    const fromBlock = prior ? this.lastBlock + 1 : (this.config.startBlock ?? 0);
+
     const result = await scanEvents(
       this.config.provider,
       this.config.poolAddress,
@@ -226,38 +276,59 @@ export abstract class HaliasCore {
       fromBlock,
       this.config.rpcChunkSize,
       this.config.onProgress,
+      prior,
     );
 
-    // Rebuilt from scratch, so start from empty trees rather than appending to the
-    // commitments already inserted by a previous refresh. scanEvents has already assembled
-    // and order-checked them, so take its set rather than replaying the outputs here — two
-    // places building the same trees is two places to disagree with the contract.
     this.poolTrees = result.poolTrees;
-
-    // Update SMT
     this.smt = result.smt;
     this.registryEntries = result.registryEntries;
     this.aliasHashByPubkey = result.aliasHashByPubkey;
+    this.keyActiveFrom = result.keyActiveFrom;
+    this.spentNullifiers = result.spentNullifiers;
+    this.allOutputs = result.outputs;
 
-    this.spentNullifiers = new Set(result.spentNullifiers);
+    // Conservative, and reported by the scan rather than read here: the final chunk ends at
+    // "latest", so it covers at least this block and possibly more. Resuming one past it
+    // re-reads a little; resuming past what was actually covered would skip notes.
+    this.lastBlock = result.scannedThrough;
 
-    this.lastBlock = await this.config.provider.getBlockNumber();
-
-    // Find our own regular outputs
+    // Only the outputs this pass had not already seen are trial-decrypted. Entries found by
+    // earlier passes are still ours — a note does not stop being ours once it is spent, and
+    // spent-ness is applied at read time from spentNullifiers, not here.
+    // Trial decryption is the expensive half — one X25519 shared secret per output — and
+    // nothing older than this key can possibly decrypt to it. The scan itself still runs from
+    // the deployment block: the pool tree needs every commitment to produce a sibling path,
+    // so events cannot be skipped, only the decryption attempts.
     const keys = this.keys!;
-    this.myEntries = findMyOutputs(
-      result.outputs,
+    const activeFrom = this.keyActiveFrom.get(keys.spendingPubkey);
+    const candidates = activeFrom === undefined
+      ? result.newOutputs
+      : result.newOutputs.filter((o) => o.blockNumber >= activeFrom);
+    const found = findMyOutputs(
+      candidates,
       keys.spendingPubkey,
       keys.nullifierKey,
       keys.encryption.privateKey,
     );
+    this.myEntries = prior ? [...this.myEntries, ...found] : found;
 
-    // Retained so an invite claimer can locate the note belonging to a derived keypair.
-    // Assigned, not appended: refresh() rescans from the start, so appending would
-    // duplicate every output on each call.
-    this.allOutputs = result.outputs;
 
     await this.saveCache();
+  }
+
+  /// The state a resumed scan continues from, in the shape scanEvents merges into.
+  private priorScan(): ScanResult {
+    return {
+      poolTrees: this.poolTrees,
+      smt: this.smt,
+      outputs: this.allOutputs,
+      registryEntries: this.registryEntries,
+      aliasHashByPubkey: this.aliasHashByPubkey,
+      keyActiveFrom: this.keyActiveFrom,
+      spentNullifiers: this.spentNullifiers,
+      scannedThrough: this.lastBlock,
+      newOutputs: [],
+    };
   }
 
   protected consumeDummyIdx(count: number): number {
@@ -307,9 +378,32 @@ export abstract class HaliasCore {
     };
   }
 
+  /// One past the nonce of the last transaction this client sent, or null before it has
+  /// sent one. Kept locally because the node's own answer is not reliable at this moment.
+  private nonceHint: number | null = null;
+
+  /// The nonce to sign the next transaction with.
+  ///
+  /// ethers resolves nonces from the *pending* count, which has been observed lagging
+  /// "latest" by one immediately after a receipt — so a second transaction signs with a
+  /// nonce already spent and is rejected as "nonce too low". Awaiting the receipt does not
+  /// close that window, and a UI sends back-to-back writes constantly.
+  ///
+  /// So the count this client knows it has reached wins, and the chain's answer is a floor
+  /// rather than the answer. Taking the maximum covers the case the local count cannot see:
+  /// the same account sending a transaction from somewhere else — a wallet UI, another tab —
+  /// which would otherwise leave this hint permanently behind and every send rejected.
+  protected async nextNonce(): Promise<number> {
+    const onChain = await this.config.signer.getNonce("latest");
+    return this.nonceHint === null ? onChain : Math.max(onChain, this.nonceHint);
+  }
+
   /// Wait for inclusion, then resync. Every mutating call ends this way: skipping the
   /// resync leaves the client's view of its own notes behind the chain.
   protected async settle(tx: ethers.ContractTransactionResponse): Promise<string> {
+    // Recorded before awaiting: this is what the client knows it consumed, whatever the node
+    // reports next.
+    this.nonceHint = tx.nonce + 1;
     const receipt = await tx.wait();
     await this.refresh();
     return receipt!.hash;

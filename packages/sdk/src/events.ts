@@ -71,7 +71,27 @@ export interface ScanResult {
   outputs: Output[];
   registryEntries: RegistryEntry[];
   aliasHashByPubkey: Map<bigint, bigint>;
+  /// Spending pubkey → the block at which it became an alias's key.
+  ///
+  /// Not the same as the alias's registration block. A handover installs the new owner's
+  /// keys, and notes sent before that were encrypted to the previous owner's — so for a
+  /// received alias this is the reassignment, not the original registration.
+  ///
+  /// Nothing before it can decrypt to that key, which is what lets a scan skip the
+  /// X25519 derivation for every output older than it.
+  keyActiveFrom: Map<bigint, number>;
   spentNullifiers: Set<bigint>;
+  /// The last block this result is known to include. Resume from `scannedThrough + 1`.
+  ///
+  /// Deliberately the block number read *before* the final chunk, not after. That chunk ends
+  /// at "latest", which the node resolves to something at or beyond it, so the scan covers at
+  /// least this far and possibly further. Reporting the conservative bound re-reads a few
+  /// blocks on the next pass instead of skipping any — and the merge below is idempotent
+  /// precisely so that overlap is free.
+  scannedThrough: number;
+  /// How many outputs this pass actually decrypted, as opposed to inherited. Diagnostic:
+  /// it is the number that should be small once a cache is warm.
+  newOutputs: Output[];
 }
 
 export async function scanEvents(
@@ -83,6 +103,14 @@ export async function scanEvents(
   fromBlock: number = 0,
   chunkSize: number = DEFAULT_CHUNK_SIZE,
   onProgress?: (pct: number) => void,
+  /// Everything an earlier scan already established. Given this, `fromBlock` should be
+  /// `prior.scannedThrough + 1` and only the difference is fetched, decrypted and hashed.
+  ///
+  /// Merging rather than replacing is the whole point. Rebuilding from the events of a
+  /// partial range alone would produce a registry tree containing only the aliases in that
+  /// range, and a pool tree starting at whatever leaf the range began with — both of which
+  /// disagree with the contract, and neither of which announces itself.
+  prior?: ScanResult,
 ): Promise<ScanResult> {
   const jsIface        = new ethers.Interface(TRANSACT_ABI);
   const regIface       = new ethers.Interface(REGISTRY_ABI);
@@ -104,7 +132,19 @@ export async function scanEvents(
   const allLogs: ethers.Log[] = [];
   let cur = fromBlock;
   const total = latestBlock - fromBlock;
-  while (cur <= latestBlock) {
+  // At least one request, always, even when fromBlock is already past `latestBlock`.
+  //
+  // That happens routinely on a resumed scan: `latestBlock` comes from the provider, which
+  // updates its view by polling and lags the node — awaiting a receipt does not advance it.
+  // So a refresh straight after a transaction asks to resume from a block the provider does
+  // not believe exists yet, and a `cur <= latestBlock` loop makes no request at all. The
+  // transaction's own outputs are then missed until some later refresh, and a balance read
+  // in between is simply wrong.
+  //
+  // A full rescan never saw this: it started far below `latestBlock`, so the loop always ran
+  // and its final chunk ended at "latest" — resolved by the node, which does know about the
+  // block just mined. Ending at "latest" is what makes one request sufficient here too.
+  for (;;) {
     const isLast = cur + chunkSize - 1 >= latestBlock;
     const end = Math.min(cur + chunkSize - 1, latestBlock);
     if (onProgress) onProgress(Math.floor(((cur - fromBlock) / (total || 1)) * 100));
@@ -123,9 +163,17 @@ export async function scanEvents(
   if (onProgress) onProgress(100);
 
   const outputsByGlobalIndex = new Map<number, Output>();
-  const spentNullifiers = new Set<bigint>();
-  const registryByAlias = new Map<string, RegistryEntry>();
-  const aliasHashByPubkey = new Map<bigint, bigint>();
+  const spentNullifiers = new Set<bigint>(prior?.spentNullifiers ?? []);
+  // Seeded from the prior scan so an AliasDataUpdated or AliasReassigned in this range can
+  // still find the registration it amends, which may have happened thousands of blocks ago.
+  // Without this a rotation would land as a record with no slot and no history.
+  const registryByAlias = new Map<string, RegistryEntry>(
+    (prior?.registryEntries ?? []).map((e) => [e.aliasHash, { ...e }]),
+  );
+  const aliasHashByPubkey = new Map<bigint, bigint>(prior?.aliasHashByPubkey ?? []);
+  const keyActiveFrom = new Map<bigint, number>(prior?.keyActiveFrom ?? []);
+  // Which aliases this range touched, so only their SMT paths are recomputed.
+  const touchedAliases = new Set<string>();
 
   for (const log of allLogs) {
     const topic = log.topics[0];
@@ -184,6 +232,8 @@ export async function scanEvents(
         dataHash:          0n,
       };
       registryByAlias.set(aliasHash, entry);
+      touchedAliases.add(aliasHash);
+      keyActiveFrom.set(entry.spendingPubkey, log.blockNumber);
       aliasHashByPubkey.set(spendingPubkey, BigInt(aliasHash));
 
     } else if (topic === dataUpdTopic) {
@@ -194,6 +244,7 @@ export async function scanEvents(
         existing.dataHash = BigInt(e.args[1]);
         existing.leafHash  = BigInt(e.args[2]);
         registryByAlias.set(aliasHash, existing);
+        touchedAliases.add(aliasHash);
       }
 
     } else if (topic === transferTopic) {
@@ -216,8 +267,14 @@ export async function scanEvents(
         dataHash:         0n,
       };
       registryByAlias.set(aliasHash, entry);
-      if (existing) aliasHashByPubkey.delete(existing.spendingPubkey);
+      touchedAliases.add(aliasHash);
+      keyActiveFrom.set(entry.spendingPubkey, log.blockNumber);
+      if (existing) {
+        aliasHashByPubkey.delete(existing.spendingPubkey);
+        keyActiveFrom.delete(existing.spendingPubkey);
+      }
       aliasHashByPubkey.set(newSpendingPubkey, BigInt(aliasHash));
+      keyActiveFrom.set(newSpendingPubkey, log.blockNumber);
 
     }
   }
@@ -225,20 +282,43 @@ export async function scanEvents(
   // Sorted by global position, so trees are filled in the order the chain filled them —
   // which PoolTrees.insert asserts, because building on a gap yields a tree that silently
   // disagrees with the contract's.
-  const sortedOutputs = [...outputsByGlobalIndex.values()]
+  //
+  // Anything the prior scan already holds is dropped first. The resumed range deliberately
+  // overlaps (see `scannedThrough`), and re-inserting a leaf would not merely duplicate it —
+  // insert() would throw, because the index is no longer the next free slot.
+  //
+  // The test is the tree's own leaf count, not a record of which outputs were seen. Trees
+  // fill sequentially, so the count is exactly the boundary between known and new — and it
+  // survives a cache round-trip, which a list of outputs does not. Keying this off
+  // `prior.outputs` was wrong for that reason: a client resuming from cache has the trees but
+  // not the outputs, so every overlapping leaf looked new and insert() threw a scan gap.
+  const newOutputs = [...outputsByGlobalIndex.values()]
+    .filter((o) => o.leafIndex >= (prior?.poolTrees.leafCount(o.treeNumber) ?? 0))
     .sort((a, b) => globalIndex(a.treeNumber, a.leafIndex) - globalIndex(b.treeNumber, b.leafIndex));
-  const poolTrees = new PoolTrees();
-  for (const out of sortedOutputs) {
+
+  const poolTrees = prior?.poolTrees ?? new PoolTrees();
+  for (const out of newOutputs) {
     poolTrees.insert(out.treeNumber, out.leafIndex, out.commitment);
   }
+  const outputs = [...(prior?.outputs ?? []), ...newOutputs];
 
   const registryEntries = [...registryByAlias.values()];
-  const smt = new SMT();
+  // Only the aliases this range touched are re-hashed. An SMT update rewrites one leaf's
+  // path, so replaying every entry would cost REGISTRY_LEVELS hashes per alias on every
+  // refresh — the cost this whole change exists to remove.
+  const smt = prior?.smt ?? new SMT();
   for (const entry of registryEntries) {
+    if (prior && !touchedAliases.has(entry.aliasHash)) continue;
     smt.update(entry.registrySlot, aliasHashToSmtKey(BigInt(entry.aliasHash)), entry.leafHash);
   }
 
-  return { poolTrees, smt, outputs: sortedOutputs, registryEntries, aliasHashByPubkey, spentNullifiers };
+  return {
+    poolTrees, smt, outputs, registryEntries, aliasHashByPubkey, keyActiveFrom, spentNullifiers,
+    // Never below where this scan began: a lagging provider must not make the resume point
+    // travel backwards.
+    scannedThrough: Math.max(latestBlock, fromBlock - 1),
+    newOutputs,
+  };
 }
 
 
