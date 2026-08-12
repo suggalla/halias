@@ -347,8 +347,14 @@ export async function offerAlias(
   domain: ethers.Contract,
   aliasHash: bigint,
   to: string,
+  /// Pass when a transaction from the same account was just mined. Awaiting the receipt is
+  /// not enough — `getTransactionCount(_, "pending")` has been observed lagging `"latest"` by
+  /// one, so ethers resolves a nonce that is already spent and the send is rejected as
+  /// "nonce too low". Same fix as {register}'s commit-then-reveal pair.
+  nonce?: number,
 ): Promise<ethers.ContractTransactionResponse> {
-  return domain.offerAlias(h32(aliasHash), to, 0n, NO_SIGNATURE);
+  return domain.offerAlias(h32(aliasHash), to, 0n, NO_SIGNATURE,
+                           nonce === undefined ? {} : { nonce });
 }
 
 export async function signOfferAlias(
