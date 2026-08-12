@@ -6,7 +6,7 @@ import "poseidon-solidity/PoseidonT3.sol";
 // The pre-optimisation insertion, kept only so a test can prove the pairwise version
 // produces a byte-identical tree. Never deployed outside tests.
 contract MockTreeSequential {
-    uint32 public constant LEVELS = 32;
+    uint32 public constant LEVELS = 16;
     mapping(uint256 => bytes32) public filledSubtrees;
     mapping(uint256 => bytes32) public poolZeros;
     bytes32 public lastRoot;

@@ -40,21 +40,7 @@ export function deriveInviteKeys(secret: bigint): InviteKeys {
   };
 }
 
-// Relayer fee as Halias._decodeRelayerFee reads it: address in the high 160 bits,
-// fee in wei in the low 96. Zero means no relayer and the ordinary self-submitted path.
-export function packRelayerFee(relayer: string, feeWei: bigint): string {
-  if (feeWei >= 1n << 96n) throw new Error("relayer fee exceeds uint96");
-  if (feeWei > 0n && relayer === ethers.ZeroAddress) throw new Error("relayer fee requires a relayer address");
-  return ethers.toBeHex((BigInt(relayer) << 96n) | feeWei, 32);
-}
 
-export function unpackRelayerFee(externalData: string): { relayer: string; fee: bigint } {
-  const v = BigInt(externalData);
-  return {
-    relayer: ethers.getAddress(ethers.toBeHex(v >> 96n, 20)),
-    fee:     v & ((1n << 96n) - 1n),
-  };
-}
 
 // Invite link payload. The secret is the whole invite — treat it like cash.
 export function encodeInviteCode(secret: bigint): string {

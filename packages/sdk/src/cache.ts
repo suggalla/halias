@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { MerkleTree } from "./merkle";
+import { MerkleTree, PoolTrees } from "./merkle";
 import { SMT } from "./smt";
 import type { RegistryEntry } from "./events";
 
@@ -9,7 +9,7 @@ export interface CacheStore {
 }
 
 export interface CacheData {
-  poolTree: MerkleTree;
+  poolTrees: PoolTrees;
   smt: SMT;
   registryEntries: RegistryEntry[];
   aliasHashByPubkey: Map<bigint, bigint>;
@@ -19,7 +19,10 @@ export interface CacheData {
 
 interface SerializedCache {
   lastBlock: number;
-  poolLeaves: string[];
+  /// [treeNumber, leaves] per tree. Replaced `poolLeaves`, which could not express which
+  /// tree a commitment belonged to — and the tree number feeds the nullifier, so guessing
+  /// it would produce notes that look unspendable.
+  poolTrees?: [number, string[]][];
   smtNodes: Record<string, string>;
   smtRoot: string;
   spentNullifiers: string[];
@@ -37,7 +40,10 @@ interface SerializedCache {
 export function serializeCache(d: CacheData): string {
   const data: SerializedCache = {
     lastBlock:    d.lastBlock,
-    poolLeaves:   d.poolTree.leaves.map(l => "0x" + l.toString(16)),
+    // Per tree, since a leaf index alone no longer identifies a note. A cache written by
+    // an older build has `poolLeaves` and no tree numbers; it is rejected rather than
+    // guessed at, because assuming tree 0 would produce wrong nullifiers.
+    poolTrees:    d.poolTrees.entries().map(([n, ls]) => [n, ls.map(l => "0x" + l.toString(16))]),
     smtNodes:     d.smt.serializeNodes(),
     smtRoot:      "0x" + d.smt.root.toString(16),
     spentNullifiers: [...d.spentNullifiers].map(n => "0x" + n.toString(16)),
@@ -62,13 +68,20 @@ export function serializeCache(d: CacheData): string {
 export function deserializeCache(raw: string): CacheData {
   const d: SerializedCache = JSON.parse(raw);
 
-  const poolTree = new MerkleTree();
-  for (const leaf of d.poolLeaves) poolTree.insert(BigInt(leaf));
+  if (!d.poolTrees) throw new Error("cache predates multi-tree pool; discard and rescan");
+  const poolTrees = new PoolTrees();
+  for (const [n, leaves] of d.poolTrees as [number, string[]][]) {
+    leaves.forEach((leaf, i) => poolTrees.insert(n, i, BigInt(leaf)));
+  }
 
   const smt = SMT.fromSerialized(d.smtNodes, BigInt(d.smtRoot));
 
   const registryEntries: RegistryEntry[] = d.registryEntries.map(e => ({
     aliasHash:        e.aliasHash,
+    // Defaulted: a cache written before these fields existed is still usable, it just
+    // cannot show where the registration happened until the next full scan.
+    txHash:           String((e as any).txHash ?? ""),
+    blockNumber:      Number((e as any).blockNumber ?? 0),
     registrySlot:     Number((e as any).registrySlot ?? 0),
     spendingPubkey:   BigInt(e.spendingPubkey),
     nullifierKeyHash: BigInt(e.nullifierKeyHash),
@@ -83,15 +96,22 @@ export function deserializeCache(raw: string): CacheData {
 
   const spentNullifiers = new Set<bigint>(d.spentNullifiers.map(BigInt));
 
-  return { poolTree, smt, registryEntries, aliasHashByPubkey, spentNullifiers, lastBlock: d.lastBlock };
+  return { poolTrees, smt, registryEntries, aliasHashByPubkey, spentNullifiers, lastBlock: d.lastBlock };
 }
 
 // Required lazily inside the methods, not at module scope. BrowserCache lives in this
 // same module, so a top-level require("fs") would drag Node built-ins into every browser
 // bundle that imports the cache at all.
-function nodeFs() {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return { fs: require("fs") as typeof import("fs"), path: require("path") as typeof import("path") };
+// Dynamic import keeps this lazy — the point of the wrapper — while staying valid ESM.
+// A static import would pull Node built-ins into every browser bundle. Cached after the
+// first call so the repeated use below costs one import, not one per file operation.
+let nodeMods: { fs: typeof import("fs"); path: typeof import("path") } | null = null;
+async function nodeFs() {
+  if (!nodeMods) {
+    const [fs, path] = await Promise.all([import("fs"), import("path")]);
+    nodeMods = { fs, path };
+  }
+  return nodeMods;
 }
 
 export class FileCache implements CacheStore {
@@ -99,15 +119,17 @@ export class FileCache implements CacheStore {
 
   async load(key: string): Promise<string | null> {
     try {
-      return nodeFs().fs.readFileSync(nodeFs().path.join(this.dir, `${key}.json`), "utf-8");
+      const { fs, path } = await nodeFs();
+      return fs.readFileSync(path.join(this.dir, `${key}.json`), "utf-8");
     } catch {
       return null;
     }
   }
 
   async save(key: string, data: string): Promise<void> {
-    nodeFs().fs.mkdirSync(this.dir, { recursive: true });
-    nodeFs().fs.writeFileSync(nodeFs().path.join(this.dir, `${key}.json`), data);
+    const { fs, path } = await nodeFs();
+    fs.mkdirSync(this.dir, { recursive: true });
+    fs.writeFileSync(path.join(this.dir, `${key}.json`), data);
   }
 }
 
@@ -115,10 +137,37 @@ export class BrowserCache implements CacheStore {
   constructor(private prefix: string = "halias") {}
 
   async load(key: string): Promise<string | null> {
-    return localStorage.getItem(`${this.prefix}:${key}`);
+    return localStorage.getItem(this.full(key));
   }
 
   async save(key: string, data: string): Promise<void> {
-    localStorage.setItem(`${this.prefix}:${key}`, data);
+    this.evictSiblings(key);
+    try {
+      localStorage.setItem(this.full(key), data);
+    } catch (e) {
+      // localStorage is a hard ~5 MB per origin and a large pool tree will reach it. The
+      // cache is an optimisation — losing it costs a rescan, so a full quota must not take
+      // the client down with it.
+      console.warn("Cache write failed; continuing without a saved cache:", e);
+    }
+  }
+
+  private full(key: string): string {
+    return `${this.prefix}:${key}`;
+  }
+
+  /// Drop caches for the same chain but a different pool.
+  ///
+  /// Keys are `<chainId>:<poolAddress>`, so a redeploy leaves the previous pool's entry
+  /// behind for good — dead weight against a quota that is already the binding constraint.
+  /// Only one pool per chain is ever live, so any sibling is by definition stale.
+  private evictSiblings(key: string): void {
+    const chain = key.split(":")[0];
+    if (!chain) return;
+    const keep = this.full(key);
+    const scope = `${this.prefix}:${chain}:`;
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith(scope) && k !== keep) localStorage.removeItem(k);
+    }
   }
 }

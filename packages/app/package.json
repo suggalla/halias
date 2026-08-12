@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "npm run sync-artifacts && vite build",
+    "preview": "vite preview",
+    "sync-artifacts": "cp ../protocol/circuits/out/transact/transact_js/transact.wasm static/artifacts/ && cp ../protocol/circuits/out/transact/ceremony/transact_final.zkey static/artifacts/"
   },
   "dependencies": {
     "ethers": "^6.16.0",

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
@@ -12,8 +13,23 @@ export default defineConfig({
 		// dependencies we do not control.
 		nodePolyfills({ include: ['buffer', 'events', 'util', 'stream', 'process'] })
 	],
+	resolve: {
+		alias: {
+			// Resolve the SDK to its TypeScript source rather than its build output.
+			//
+			// It was pre-bundled from dist/ before, which froze it at whatever existed when
+			// the dev server started: rebuilding the SDK left the browser serving the old
+			// copy, surfacing as "X is not a function" for anything newly exported. Reading
+			// source means Vite watches those files and picks changes up like any other.
+			//
+			// This only works because the SDK is valid ESM — the three `require` calls it
+			// used to carry are now imports. Reintroducing one breaks the browser build.
+			'halias-sdk': fileURLToPath(new URL('../sdk/src/index.ts', import.meta.url))
+		}
+	},
 	optimizeDeps: {
-		include: ['halias-sdk', 'ethers', 'snarkjs']
+		// halias-sdk is deliberately absent: it is source now, not a dependency to bundle.
+		include: ['ethers', 'snarkjs']
 	},
 	build: {
 		commonjsOptions: {
@@ -24,6 +40,11 @@ export default defineConfig({
 		global: 'globalThis'
 	},
 	server: {
+		fs: {
+			// The SDK is served from source now, which lives outside this package. Without
+			// this Vite refuses to serve it: "outside of Vite serving allow list".
+			allow: [fileURLToPath(new URL('..', import.meta.url))]
+		},
 		watch: {
 			// The repo lives on /mnt/e, a Windows drive mounted through drvfs, where inotify
 			// does not fire. Without polling Vite never sees a file change: it keeps serving

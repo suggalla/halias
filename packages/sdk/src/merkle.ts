@@ -1,6 +1,57 @@
 import { poseidonHash } from "./crypto";
+import { POOL_LEVELS } from "./entry";
 
-const LEVELS = 32; // must match POOL_LEVELS baked into the circuit WASM
+// One definition, in entry.ts — see the note there.
+const LEVELS = POOL_LEVELS;
+
+/// The pool is a sequence of trees, so a client holds several. Trees other than the newest
+/// are frozen on chain and never change again, which is why keeping them all in memory is
+/// cheap and why a proof against an old one stays valid indefinitely.
+export class PoolTrees {
+  private trees = new Map<number, MerkleTree>();
+
+  tree(treeNumber: number): MerkleTree {
+    let t = this.trees.get(treeNumber);
+    if (!t) { t = new MerkleTree(); this.trees.set(treeNumber, t); }
+    return t;
+  }
+
+  insert(treeNumber: number, leafIndex: number, leaf: bigint) {
+    const t = this.tree(treeNumber);
+    // Events arrive in order, so an index should be exactly the next slot. Anything else means
+    // a gap — a dropped log — and building on it would silently produce a tree that disagrees
+    // with the contract's, whose only symptom is every proof being rejected.
+    if (leafIndex !== t.leaves.length) {
+      throw new Error(
+        `pool scan gap: tree ${treeNumber} expected leaf ${t.leaves.length}, got ${leafIndex}`,
+      );
+    }
+    t.insert(leaf);
+  }
+
+  /// The newest tree — where a new note will land, and the anchor a dummy input uses.
+  /// Zero when nothing has been scanned yet, which is correct: tree 0's empty root is
+  /// published by the pool's constructor.
+  get latest(): number {
+    let n = 0;
+    for (const k of this.trees.keys()) if (k > n) n = k;
+    return n;
+  }
+
+  /// Flattened for serialisation: [treeNumber, leaves...] per tree, in tree order.
+  entries(): [number, bigint[]][] {
+    return this.numbers.map(n => [n, this.trees.get(n)!.leaves] as [number, bigint[]]);
+  }
+
+  get size(): number { return this.trees.size; }
+  get numbers(): number[] { return [...this.trees.keys()].sort((a, b) => a - b); }
+  /// Total leaves across every tree — the anonymity set, not a position.
+  get totalLeaves(): number {
+    let n = 0;
+    for (const t of this.trees.values()) n += t.leaves.length;
+    return n;
+  }
+}
 
 export class MerkleTree {
   levels: number;

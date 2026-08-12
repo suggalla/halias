@@ -127,3 +127,94 @@ body {
 	letter-spacing: 1.5px;
 	color: var(--text-dim);
 }
+
+/* === FORM CONTROLS ===
+ *
+ * Components style layout (padding, flex) and leave colour to these. Without them a
+ * `<button class="primary">` and a bare `<input>` fell through to browser defaults — a light
+ * grey button and a white field on a mauve panel, which is what made the wallet unreadable.
+ * Defined globally rather than per component so a control looks the same everywhere and a
+ * new screen inherits the theme instead of re-deriving it. */
+
+button {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: none;
+	cursor: pointer;
+}
+
+button:disabled {
+	cursor: default;
+}
+
+/* The one action a screen is steering toward. Filled, because on this palette an outline is
+ * indistinguishable from the secondary buttons beside it. Dark text on pink clears 8:1. */
+.primary {
+	background: var(--accent);
+	color: var(--bg-dark);
+	border: 1px solid var(--accent);
+	border-radius: 6px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	transition: background 0.15s, border-color 0.15s;
+}
+
+.primary:hover:not(:disabled) {
+	background: var(--accent-bright);
+	border-color: var(--accent-bright);
+}
+
+/* Not a faded pink — that reads as a styling bug rather than an unavailable control. */
+.primary:disabled {
+	background: var(--bg-titlebar);
+	border-color: var(--border);
+	color: var(--text-dim);
+}
+
+input:not([type='checkbox']):not([type='radio']),
+textarea,
+select {
+	width: 100%;
+	padding: 0.5rem 0.6rem;
+	font: inherit;
+	font-size: 0.9rem;
+	background: var(--bg-input);
+	color: var(--text-bright);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	outline: none;
+	transition: border-color 0.15s;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+	border-color: var(--accent);
+}
+
+input::placeholder,
+textarea::placeholder {
+	color: var(--text-dim);
+	opacity: 0.75;
+}
+
+/* Readonly fields are output, not input: same box, visibly not editable. */
+input[readonly],
+textarea[readonly] {
+	color: var(--text-dim);
+	background: var(--bg-dark);
+}
+
+input[type='checkbox'] {
+	accent-color: var(--accent);
+	width: 0.95rem;
+	height: 0.95rem;
+	cursor: pointer;
+}
+
+/* Keyboard users get a visible focus ring that does not rely on the accent alone. */
+:focus-visible {
+	outline: 2px solid var(--accent-bright);
+	outline-offset: 2px;
+}

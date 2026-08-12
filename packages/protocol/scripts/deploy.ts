@@ -1,216 +1,205 @@
-import { ethers } from "hardhat";
-import { keccak256, solidityPacked, randomBytes } from "ethers";
+import hre, { ethers } from "hardhat";
 import { loadDeployment, saveDeployment } from "./deployment";
-import { buildHaliasInitCode } from "./haliasInitCode";
 
-/**
- * Master deployment script — deploys the full Halias v1.5 stack.
- *
- * Reads deployments/<network>.json and skips any contract that already
- * has an address. Run it repeatedly to resume a partial deployment.
- *
- * Usage:
- *   npx hardhat run scripts/deploy.ts --network sepolia
- *
- * Optional env:
- *   VANITY_PREFIX  — hex prefix to mine (defaults to "a11a5")
- *   SKIP_VANITY=1  — skip vanity mining, deploy Halias with random salt
- */
+// Deploys the whole system.
+//
+// The three contracts depend on each other in a cycle — the pool reads the registry, the
+// domain writes to it and spends from the pool, and the registry must name its controller
+// before that contract exists. HaliasDeployer closes the loop on-chain in one constructor,
+// so this script has exactly one deployment step for them and no address bookkeeping.
+//
+// That is a deliberate change from the previous idempotent, step-by-step script. Predicting
+// addresses off-chain from a nonce is correct only while nothing else sends a transaction
+// from the deployer account in between; if something does, the registry ends up naming a
+// controller that will never hold code, nothing reverts, and the failure surfaces later as a
+// registration that cannot work. On-chain it is atomic.
+//
+// Env:
+//   ADMIN            admin for HaliasDomain (defaults to the deployer)
+//   POSEIDON_T3/T4   reuse already-deployed libraries instead of deploying new ones
+//   VERIFIER         reuse an already-deployed TransactVerifier
 
-const TARGET_PREFIX = process.env.VANITY_PREFIX || "a11a5";
-
-// poseidon-solidity ships precompiled, EIP-170-safe bytecode deployed via a deterministic
-// CREATE2 proxy to fixed addresses on every chain. We deploy through the proxy rather than
-// recompiling from source (our viaIR settings bloat the libs past the 24,576-byte limit).
-const poseidon = require("poseidon-solidity") as {
-  proxy: { from: string; gas: bigint | number | string; tx: string; address: string };
-  PoseidonT3: { address: string; data: string };
-  PoseidonT4: { address: string; data: string };
-};
-
-function logGas(receipt: { gasUsed: bigint; gasPrice: bigint }): bigint {
-  const cost = receipt.gasUsed * receipt.gasPrice;
-  console.log(`  gas:  ${receipt.gasUsed.toLocaleString()} @ ${ethers.formatUnits(receipt.gasPrice, "gwei")} gwei = ${ethers.formatEther(cost)} ETH`);
-  return cost;
+// Is `addr` running exactly this contract's code?
+//
+// "Has code" is not enough, and the way that fails is worth recording. On a restarted local
+// node every cached address is empty; redeploying the first contract can land it exactly on
+// the second one's old address, at which point the second's existence check passes against
+// the *wrong contract's* code. PoseidonT4 calls then execute PoseidonT3, every wiring check
+// in this script still passes because none of them hash anything, and the failure surfaces
+// later as a bare `require(false)` from the first registration.
+async function runsExactly(name: string, addr: string, libs?: any): Promise<boolean> {
+  const onChain = await ethers.provider.getCode(addr);
+  if (onChain === "0x") return false;
+  const artifact = await hre.artifacts.readArtifact(name);
+  let expected = artifact.deployedBytecode;
+  // Library placeholders are filled at link time, so compare only the unlinked prefix when
+  // the artifact still carries them.
+  if (expected.includes("__$")) return onChain.length === expected.length;
+  return onChain.toLowerCase() === expected.toLowerCase();
 }
 
-async function deploy(name: string, factory: any, ...args: any[]): Promise<string> {
-  const contract = await factory.deploy(...args);
-  const receipt = await contract.deploymentTransaction()!.wait();
-  const addr = await contract.getAddress();
-  console.log(`  -> ${addr}`);
+async function deployOrReuse(name: string, key: string, cfg: Record<string, any>, libs?: any) {
+  const existing = process.env[key.toUpperCase()] ?? cfg[key];
+  if (existing) {
+    if (await runsExactly(name, existing, libs)) {
+      console.log(`  ${name.padEnd(18)} reused   ${existing}`);
+      return existing as string;
+    }
+    console.log(`  ${name.padEnd(18)} stale    ${existing} is not ${name} — redeploying`);
+  }
+  const factory = libs
+    ? await ethers.getContractFactory(name, { libraries: libs })
+    : await ethers.getContractFactory(name);
+  const c = await factory.deploy();
+  await c.waitForDeployment();
+  const addr = await c.getAddress();
+  console.log(`  ${name.padEnd(18)} deployed ${addr}`);
   return addr;
 }
 
-// Deploy a poseidon-solidity library at its canonical address via the deterministic proxy.
-// Idempotent: skips if the library (or proxy) already has code on-chain.
-async function deployPoseidonLib(name: string, lib: { address: string; data: string }): Promise<string> {
-  const [sender] = await ethers.getSigners();
+/// Wallets that must have a balance on a fresh local chain.
+///
+/// Hardhat funds its own twenty accounts and nothing else, so a MetaMask account starts every
+/// reset at zero — the app connects, then fails on the first transaction for a reason that
+/// looks like a bug in the app. These are dev wallets on a throwaway chain; override with
+/// FUND_ADDRESSES=0x…,0x… and FUND_ETH.
+const DEV_WALLETS = [
+  "0xDa5C820D6d7381Ef43209D071fe7fd56AaAD22A6",
+  // A second account, so paying an alias from a wallet unconnected to it can be exercised
+  // the way a user would actually do it.
+  "0xC46b971bEba81D75f4CFD990C9C1226E6b78B27D",
+];
 
-  // Ensure the deterministic deployment proxy exists (present on virtually every chain).
-  if (await ethers.provider.getCode(poseidon.proxy.address) === "0x") {
-    console.log("  [proxy] funding keyless deployer + deploying CREATE2 proxy...");
-    await (await sender.sendTransaction({ to: poseidon.proxy.from, value: BigInt(poseidon.proxy.gas) })).wait();
-    await (await ethers.provider.broadcastTransaction(poseidon.proxy.tx)).wait();
+/// Top up to a target rather than sending a fixed amount, so re-running the deploy against a
+/// live chain is a no-op instead of piling on ETH every time.
+async function fundDevWallets(): Promise<void> {
+  const chainId = Number((await ethers.provider.getNetwork()).chainId);
+  // Real ETH has to be sent deliberately, never as a side effect of deploying.
+  if (chainId !== 31337) return;
+
+  const targets = (process.env.FUND_ADDRESSES ?? DEV_WALLETS.join(","))
+    .split(",").map((a) => a.trim()).filter(Boolean);
+  if (targets.length === 0) return;
+
+  const target = ethers.parseEther(process.env.FUND_ETH ?? "1000");
+  const [payer] = await ethers.getSigners();
+
+  console.log(`
+funding dev wallets to ${ethers.formatEther(target)} ETH`);
+  for (const to of targets) {
+    if (!ethers.isAddress(to)) {
+      console.log(`  skip ${to} — not an address`);
+      continue;
+    }
+    const have = await ethers.provider.getBalance(to);
+    if (have >= target) {
+      console.log(`  ok   ${to}  ${ethers.formatEther(have)} ETH — already funded`);
+      continue;
+    }
+    await (await payer.sendTransaction({ to, value: target - have })).wait();
+    console.log(`  sent ${to}  ${ethers.formatEther(target - have)} ETH`);
   }
-
-  if (await ethers.provider.getCode(lib.address) !== "0x") {
-    console.log(`  [skip] ${name} already deployed: ${lib.address}`);
-    return lib.address;
-  }
-
-  await (await sender.sendTransaction({ to: poseidon.proxy.address, data: lib.data })).wait();
-  console.log(`  -> ${name} ${lib.address}`);
-  return lib.address;
 }
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-  const config = loadDeployment();
-  let totalGasCost = 0n;
+  const network = process.env.HARDHAT_NETWORK ?? "localhost";
+  const admin = process.env.ADMIN ?? deployer.address;
+  const cfg = loadDeployment();
 
-  console.log(`Deployer:     ${deployer.address}`);
-  console.log(`Network:      ${process.env.HARDHAT_NETWORK || "localhost"}`);
+  console.log(`\nHalias deploy — ${network}`);
+  console.log(`  deployer           ${deployer.address}`);
+  console.log(`  admin              ${admin}`);
+  console.log(`  balance            ${ethers.formatEther(await ethers.provider.getBalance(deployer.address))} ETH\n`);
+
+  // Poseidon must come from a library deployment rather than being inlined: viaIR bloats it
+  // past EIP-170. See docs/deploy-poseidon-eip170.md.
+  const poseidonT3 = await deployOrReuse("PoseidonT3", "poseidonT3", cfg);
+  const poseidonT4 = await deployOrReuse("PoseidonT4", "poseidonT4", cfg);
+  const verifier   = await deployOrReuse("TransactVerifier", "verifier", cfg);
+
+  // Reuse before redeploying, like every step above.
+  //
+  // This one was deploying unconditionally, so re-running the script — to change the admin,
+  // to fund a wallet, to re-check wiring — silently replaced a live pool. The old contracts
+  // keep the funds and every registered alias, while the config and app move to an empty
+  // deployment. Nothing reports it; the app simply comes up with no aliases.
+  const existing = cfg.pool && cfg.registry && cfg.domain
+    && (await ethers.provider.getCode(cfg.pool)) !== "0x";
+
+  let pool: string, registry: string, domain: string, startBlock: number;
+  let deployerAddress: string = cfg.deployer ?? ethers.ZeroAddress;
+
+  if (existing && !process.env.FORCE_REDEPLOY) {
+    ({ pool, registry, domain } = cfg as any);
+    startBlock = cfg.startBlock ?? 0;
+    console.log(`  HaliasDeployer     reusing  ${deployerAddress}`);
+    console.log(`    -> HaliasRegistry         ${registry}`);
+    console.log(`    -> HaliasPool             ${pool}`);
+    console.log(`    -> HaliasDomain           ${domain}`);
+    console.log(`  (set FORCE_REDEPLOY=1 to replace them — this abandons existing aliases)`);
+  } else {
+    // One transaction. Either all three exist and are wired, or the deployment reverts —
+    // HaliasDeployer asserts its own address prediction before returning.
+    startBlock = await ethers.provider.getBlockNumber();
+    const deployerContract = await (await ethers.getContractFactory("HaliasDeployer", {
+      libraries: { PoseidonT3: poseidonT3, PoseidonT4: poseidonT4 },
+    })).deploy(verifier, admin);
+    await deployerContract.waitForDeployment();
+
+    pool     = await deployerContract.pool();
+    registry = await deployerContract.registry();
+    domain   = await deployerContract.domain();
+    deployerAddress = await deployerContract.getAddress();
+
+    console.log(`  HaliasDeployer     deployed ${deployerAddress}`);
+    console.log(`    -> HaliasRegistry         ${registry}`);
+    console.log(`    -> HaliasPool             ${pool}`);
+    console.log(`    -> HaliasDomain           ${domain}`);
+  }
+
+  // Read the wiring back from chain rather than trusting the constructor. A deployment that
+  // looks fine and is mis-wired is inert in a way nothing else would catch until a user hits
+  // it, so it is worth the three calls.
+  const poolC = await ethers.getContractAt("HaliasPool", pool);
+  const regC  = await ethers.getContractAt("HaliasRegistry", registry);
+  const domC  = await ethers.getContractAt("HaliasDomain", domain);
+
+  const checks: [string, string, string][] = [
+    ["registry.controller", await regC.controller(), domain],
+    ["pool.registry",       await poolC.registry(),  registry],
+    ["domain.pool",         await domC.pool(),       pool],
+    ["domain.registry",     await domC.registry(),   registry],
+    ["domain.admin",        await domC.admin(),      admin],
+  ];
   console.log("");
-
-  // ── Step 1: Create2Factory ──────────────────────────────────────────────────
-  let factoryAddr = config.factory;
-  if (factoryAddr) {
-    console.log(`[skip] Create2Factory:     ${factoryAddr}`);
-  } else {
-    console.log("[deploy] Create2Factory...");
-    const Factory = await ethers.getContractFactory("Create2Factory");
-    const factory = await Factory.deploy();
-    const receipt = await factory.deploymentTransaction()!.wait();
-    factoryAddr = await factory.getAddress();
-    console.log(`  -> ${factoryAddr}`);
-    totalGasCost += logGas(receipt!);
-    saveDeployment({ deployer: deployer.address, factory: factoryAddr });
+  for (const [label, got, want] of checks) {
+    const ok = got.toLowerCase() === want.toLowerCase();
+    console.log(`  ${ok ? "ok  " : "FAIL"} ${label.padEnd(20)} ${got}`);
+    if (!ok) throw new Error(`${label} is ${got}, expected ${want}`);
   }
 
-  // ── Step 2: PoseidonT3 (deterministic proxy → canonical address) ─────────────
-  let poseidonT3Addr = config.poseidonT3;
-  if (poseidonT3Addr) {
-    console.log(`[skip] PoseidonT3:         ${poseidonT3Addr}`);
-  } else {
-    console.log("[deploy] PoseidonT3 (via deterministic proxy)...");
-    poseidonT3Addr = await deployPoseidonLib("PoseidonT3", poseidon.PoseidonT3);
-    saveDeployment({ poseidonT3: poseidonT3Addr });
-  }
-
-  // ── Step 3: PoseidonT4 (deterministic proxy → canonical address) ─────────────
-  let poseidonT4Addr = config.poseidonT4;
-  if (poseidonT4Addr) {
-    console.log(`[skip] PoseidonT4:         ${poseidonT4Addr}`);
-  } else {
-    console.log("[deploy] PoseidonT4 (via deterministic proxy)...");
-    poseidonT4Addr = await deployPoseidonLib("PoseidonT4", poseidon.PoseidonT4);
-    saveDeployment({ poseidonT4: poseidonT4Addr });
-  }
-
-  // ── Step 4: TransactVerifier ────────────────────────────────────────────────
-  let verifierAddr = config.transactVerifier;
-  if (verifierAddr) {
-    console.log(`[skip] TransactVerifier:   ${verifierAddr}`);
-  } else {
-    console.log("[deploy] TransactVerifier...");
-    const TransactVerifier = await ethers.getContractFactory("TransactVerifier");
-    const verifier = await TransactVerifier.deploy();
-    const receipt = await verifier.deploymentTransaction()!.wait();
-    verifierAddr = await verifier.getAddress();
-    console.log(`  -> ${verifierAddr}`);
-    totalGasCost += logGas(receipt!);
-    saveDeployment({ transactVerifier: verifierAddr });
-  }
-
-  // ── Step 5: Mine vanity salt for Halias ────────────────────────────────────
-  // initCode embeds PoseidonT3 + PoseidonT4 addresses (external library linking),
-  // so salt must be (re)mined whenever either library is redeployed.
-  const { initCode, initCodeHash } = await buildHaliasInitCode({
-    poseidonT3: poseidonT3Addr,
-    poseidonT4: poseidonT4Addr,
-    transactVerifier: verifierAddr,
-    admin: deployer.address,
+  saveDeployment({
+    poseidonT3, poseidonT4,
+    verifier,
+    deployer: deployerAddress,
+    // The three the SDK and app read. `halias` is deliberately absent: the monolith is gone,
+    // and a stale key would let a client silently point at the wrong contract.
+    pool, registry, domain,
+    admin,
+    startBlock,
   });
 
-  let salt = config.vanitySalt;
-  if (salt) {
-    console.log(`[skip] Vanity salt:        ${salt}`);
-  } else if (process.env.SKIP_VANITY === "1") {
-    salt = ethers.hexlify(randomBytes(32));
-    console.log(`[skip] Vanity mining skipped, using random salt`);
-    saveDeployment({ vanitySalt: salt });
-  } else {
-    console.log(`[mine] Searching for 0x${TARGET_PREFIX}... prefix`);
-    let attempts = 0;
-    const startTime = Date.now();
-    let lastReport = startTime;
+  await fundDevWallets();
 
-    while (true) {
-      salt = ethers.hexlify(randomBytes(32));
-      const packed = solidityPacked(
-        ["bytes1", "address", "bytes32", "bytes32"],
-        ["0xff", factoryAddr, salt, initCodeHash]
-      );
-      const hash = keccak256(packed);
-      const addr = hash.slice(26);
-      attempts++;
-
-      if (addr.slice(0, TARGET_PREFIX.length) === TARGET_PREFIX) {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const checksummed = ethers.getAddress("0x" + addr);
-        console.log(`  -> Found in ${attempts.toLocaleString()} attempts (${elapsed}s)`);
-        console.log(`  -> Salt: ${salt}`);
-        console.log(`  -> Predicted: ${checksummed}`);
-        saveDeployment({ vanitySalt: salt, predictedAddress: checksummed });
-        break;
-      }
-
-      const now = Date.now();
-      if (now - lastReport > 5000) {
-        const rate = Math.floor(attempts / ((now - startTime) / 1000));
-        console.log(`  ${attempts.toLocaleString()} attempts... (${rate.toLocaleString()}/s)`);
-        lastReport = now;
-      }
-    }
-  }
-
-  // ── Step 6: Deploy Halias via CREATE2 ──────────────────────────────────────
-  let haliasAddr = config.halias;
-  if (haliasAddr) {
-    console.log(`[skip] Halias:             ${haliasAddr}`);
-  } else {
-    console.log("[deploy] Halias via CREATE2...");
-    const factory = await ethers.getContractAt("Create2Factory", factoryAddr);
-    const predicted = await factory.computeAddress(initCode, salt);
-    console.log(`  Predicted: ${predicted}`);
-
-    const tx = await factory.deploy(initCode, salt);
-    const receipt = await tx.wait();
-    haliasAddr = predicted;
-
-    const prefix = predicted.slice(2, 7).toLowerCase();
-    console.log(`  -> ${predicted} ${prefix === TARGET_PREFIX ? "(vanity match!)" : ""}`);
-    totalGasCost += logGas(receipt!);
-    saveDeployment({ halias: haliasAddr, deployTxHash: receipt?.hash, startBlock: receipt?.blockNumber });
-  }
-
-  // ── Summary ─────────────────────────────────────────────────────────────────
-  console.log(`\n${"=".repeat(56)}`);
-  console.log("Deployment complete:");
-  console.log(`  Create2Factory      ${factoryAddr}`);
-  console.log(`  PoseidonT3          ${poseidonT3Addr}`);
-  console.log(`  PoseidonT4          ${poseidonT4Addr}`);
-  console.log(`  TransactVerifier    ${verifierAddr}`);
-  console.log(`  Halias              ${haliasAddr}`);
-  if (totalGasCost > 0n) console.log(`  Total gas cost      ${ethers.formatEther(totalGasCost)} ETH`);
-  console.log(`${"=".repeat(56)}`);
-  console.log("\nPost-deploy checklist:");
-  console.log(`  [ ] SDK config: update HALIAS_ADDRESS`);
-  console.log(`  [ ] Verify contracts on the block explorer`);
+  console.log(`\nRegistration fee: ${ethers.formatEther(await domC.registrationFee())} ETH`);
+  console.log("Verify with:");
+  console.log(`  npx hardhat verify --network ${network} ${registry} ${domain}`);
+  console.log(`  npx hardhat verify --network ${network} ${pool} ${verifier} ${registry}`);
+  console.log(`  npx hardhat verify --network ${network} ${domain} ${pool} ${registry} ${admin}`);
 }
 
-main().catch((error) => {
-  console.error(error);
+main().catch((e) => {
+  console.error(e);
   process.exitCode = 1;
 });
