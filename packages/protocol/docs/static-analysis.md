@@ -1,13 +1,14 @@
 # Static analysis
 
-Four tools run against this repo: two on the circuits, two on the contracts. This page says
+Five tools run against this repo: three on the circuits, two on the contracts. This page says
 what each one actually proves, how to run it, and how every finding it currently reports was
 triaged.
 
-Last full run: **2026-08-12**, at commit `2935033`.
+Last full run: **2026-08-12**, at commit `2adeef7`.
 
 | Tool | Version | Target | Result |
 |---|---|---|---|
+| [Picus](https://github.com/Veridise/Picus) | `d0e2f5c` + cvc5 1.3.4 | each template | all 4 properly constrained (strong mode) |
 | [Ecne](https://github.com/0xPARC/Ecne) | `2593535` | `transact.r1cs` | 94,454 / 94,463 signals determined; 9 exceptions accounted for |
 | [circomspect](https://github.com/trailofbits/circomspect) | 0.9.0 | `transact.circom` | 5 warnings, all triaged |
 | [Slither](https://github.com/crytic/slither) | 0.11.6 | `contracts/` | 11 findings, all triaged |
@@ -108,22 +109,40 @@ asserts and what the contract enforces — and no off-the-shelf tool checks it, 
 specific to this protocol. That is what `test/` and `testFuzz/` are for, and it is where review
 effort should go.
 
-### On Picus
+### Picus, and why it runs per template
 
 [Picus](https://github.com/Veridise/Picus) targets **the same property as Ecne** by a different
 route: an SMT solver rather than rule propagation, producing a concrete counterexample — two
 witnesses satisfying the same public inputs — where Ecne produces only silence.
 
-The initial read here was that it would merely re-derive a verdict already in hand, and that it
-was worth installing only once a circuit change made Ecne stop verifying. **The vacuous-banner
-finding above weakens that.** Ecne's automated conclusion on a zero-output circuit is worth
-nothing; what closes the gap is the nine-way hand accounting, redone by a human every time the
-circuit changes. Picus reasons about `IsZero`-style patterns directly and targets public signals
-rather than declared outputs, so it would answer this without the manual step.
+**It inherits the same vacuity, for the same reason.** Its target set is the main component's
+output list unless `--strong` is passed (`picus.rkt:162`), and `transact` declares no outputs,
+so the default run reports "properly constrained" without examining anything. `--strong` targets
+every wire instead, which is the honest question — and at 94,480 constraints it is undecidable:
+**"Cannot determine whether the circuit is properly constrained"**, with both z3 and cvc5.
 
-It is still not urgent — the accounting above is complete, and the argument it makes is sound.
-But "Ecne passes" is not a maintainable substitute for it, and Picus is the tool that would make
-it automatic. Install it before the next circuit change, not after.
+So Picus is not a drop-in upgrade over Ecne on the whole circuit. It is *less* informative there,
+because Ecne at least returns a signal-by-signal count. What Picus can do that nothing else here
+can is decide a **template**, completely, including every internal wire.
+
+That is what `circuits/verify/` exists for. `transact.circom`'s templates were moved into
+`circuits/lib/notes.circom` so each can be given its own `main` — the compiled `transact.r1cs` is
+byte-identical after the move, so it cost no ceremony — and each wrapper is small enough for
+`--strong` to terminate:
+
+| Template | Constraints | `--strong` verdict |
+|---|---|---|
+| `NoteCommitment` | 324 | properly constrained |
+| `NoteNullifier(16)` | 296 | properly constrained |
+| `RegistryLeaf` | 264 | properly constrained |
+| `MerkleProof(16)` | 3,936 | properly constrained |
+
+These are genuine results: every wire, not just outputs, uniquely determined given the inputs.
+
+**Neither tool subsumes the other, so both are kept.** Picus decides the components. Ecne is the
+only evidence that covers the assembled 94k-constraint circuit at all. Read together they say:
+the pieces are individually sound under a complete check, and the whole determines 94,454 of
+94,463 signals with the nine exceptions accounted for.
 
 ## Running them
 
@@ -134,11 +153,15 @@ Requires the circuit to have been compiled — `npm run circuits:compile` writes
 
 ```bash
 # From packages/protocol/
-npm run analyze:circuit       # circomspect — seconds
-npm run analyze:ecne          # Ecne — a few minutes on transact
+npm run analyze:circuit       # circomspect + Picus per template
+npm run analyze:picus         # Picus alone — minutes
+npm run analyze:ecne          # Ecne on the whole circuit — a few minutes
 ```
 
-`analyze:ecne` expects Ecne checked out at `$ECNE_HOME`, defaulting to `~/tools/EcneProject`.
+`analyze:picus` expects Picus at `$PICUS_HOME` (default `~/tools/Picus`) and honours
+`$PICUS_SOLVER` (default `cvc5`). `analyze:ecne` expects `$ECNE_HOME`, default
+`~/tools/EcneProject`. Picus recompiles anything in `circuits/verify/` that has no `.r1cs` yet,
+so adding a template to check is a three-line wrapper and nothing else.
 
 ### Contracts
 
@@ -170,6 +193,17 @@ tar xf aderyn.tar.xz && install aderyn-*/aderyn ~/.local/bin/
 
 # circomspect
 cargo install circomspect
+
+# Picus. Racket installs to $HOME with no root; the distro package needs sudo.
+sh <(curl -sL https://download.racket-lang.org/releases/8.12/installers/racket-8.12-x86_64-linux-cs.sh) \
+  --in-place --dest ~/racket
+git clone https://github.com/Veridise/Picus ~/tools/Picus
+cd ~/tools/Picus && PATH=~/racket/bin:$PATH raco pkg install --auto --batch
+
+# cvc5 WITH finite-field support, which Picus wants and which the plain build lacks.
+# The GPL static release has it already — no CoCoA build, no sudo. Verify with a QF_FF query.
+curl -sL -o cvc5.zip https://github.com/cvc5/cvc5/releases/download/cvc5-1.3.4/cvc5-Linux-x86_64-static-gpl.zip
+unzip -q cvc5.zip && install cvc5-Linux-x86_64-static-gpl/bin/cvc5 ~/.local/bin/
 
 # Ecne — needs Julia 1.8 EXACTLY. Its pinned dependencies use `@_pure_meta`, which was
 # removed from Base, so any current Julia fails to instantiate.

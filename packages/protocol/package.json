@@ -17,7 +17,8 @@
     "analyze:circuit": "./scripts/analyze.sh circuit",
     "analyze:ecne": "./scripts/analyze.sh ecne",
     "analyze:slither": "./scripts/analyze.sh slither",
-    "analyze:aderyn": "./scripts/analyze.sh aderyn"
+    "analyze:aderyn": "./scripts/analyze.sh aderyn",
+    "analyze:picus": "./scripts/analyze.sh picus"
   },
   "keywords": [],
   "author": "",
