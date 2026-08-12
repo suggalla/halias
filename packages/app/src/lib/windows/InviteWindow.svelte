@@ -1,0 +1,147 @@
+<script lang="ts">
+	import { formatEther } from 'ethers';
+	import { clientState, getClient, run } from '../sdk/client.js';
+
+	// Giving someone an alias and the funds to use it, in one code.
+	//
+	// The claimer needs no wallet balance, no alias and no prior involvement — the invite note
+	// pays their registration fee and the remainder becomes their own shielded change. That is
+	// the only onboarding path here that does not assume the recipient already has something.
+	//
+	// Creating sits with the alias's other actions because it spends the same thing they do —
+	// a note. Redeeming is the opposite: it needs no alias and no balance, so it lives in the
+	// top bar where someone holding only a code can reach it.
+
+	let amount = $state('');
+	let created = $state<{ inviteCode: string; amount: bigint } | null>(null);
+	let copied = $state<'code' | 'link' | null>(null);
+	let formError = $state<string | null>(null);
+
+	const busy = $derived($clientState.status === 'syncing');
+	// Rendered inside the alias screen, so the alias is settled before this mounts.
+	const source = $derived($clientState.selected);
+
+	// Short enough to be a real link — the code is one 32-byte secret, not a proof.
+	const claimLink = $derived(
+		created && typeof location !== 'undefined'
+			? `${location.origin}${location.pathname}#claim=${created.inviteCode}`
+			: ''
+	);
+
+	async function create() {
+		formError = null;
+		const amt = amount.trim();
+		if (!amt || !(Number(amt) > 0)) return (formError = 'Enter an amount greater than zero');
+		if (!source) return (formError = 'No alias selected');
+		if (parseFloat(amt) > parseFloat(formatEther(source.balance)))
+			return (formError =
+				`${source.name ? source.name + '.hls' : 'That alias'} holds ${formatEther(source.balance)} ETH`);
+
+		const r = await run(() => getClient().createInvite(amt));
+		if (r) {
+			created = { inviteCode: (r as any).inviteCode, amount: (r as any).amount };
+			amount = '';
+		}
+	}
+
+	async function copy(text: string, which: 'code' | 'link') {
+		await navigator.clipboard.writeText(text);
+		copied = which;
+		setTimeout(() => (copied = null), 2000);
+	}
+</script>
+
+<div class="invite">
+	{#if !source || source.balance === 0n}
+		<p class="empty">
+			An invite is funded from this alias's shielded balance, and there is none yet. Deposit
+			first — or, if someone sent <em>you</em> a code, use <strong>Redeem</strong> in the top
+			bar, which needs nothing.
+		</p>
+	{:else if created}
+		<h3>Invite created</h3>
+		<p class="lede">
+			{formatEther(created.amount)} ETH is held for whoever redeems this. They pick a name, the
+			invite pays the registration fee, and the rest becomes their balance.
+		</p>
+
+		<!-- Unlike a prepared relay transaction — which is worthless to anyone but its named
+		     submitter — this is a bearer secret. Whoever holds it can take the funds. The
+		     distinction has to be stated, not implied, because the two flows look alike. -->
+		<aside class="note warn">
+			<strong>Anyone holding this code can redeem it.</strong>
+			There is no recipient bound into it, so treat it like cash: send it through something
+			private, and to one person. It cannot be revoked, only spent.
+		</aside>
+
+		<label>
+			<span>Link</span>
+			<input readonly value={claimLink} onfocus={(e) => e.currentTarget.select()} />
+		</label>
+		<label>
+			<span>Or the code alone</span>
+			<input readonly value={created.inviteCode} onfocus={(e) => e.currentTarget.select()} />
+		</label>
+
+		<div class="actions">
+			<button class="ghost" onclick={() => (created = null)}>Create another</button>
+			<button class="ghost" onclick={() => copy(created!.inviteCode, 'code')}>
+				{copied === 'code' ? 'Copied' : 'Copy code'}
+			</button>
+			<button class="primary" onclick={() => copy(claimLink, 'link')}>
+				{copied === 'link' ? 'Copied' : 'Copy link'}
+			</button>
+		</div>
+	{:else}
+		<h3>Invite someone</h3>
+		<p class="lede">
+			Creates a code worth the amount you choose. Whoever redeems it registers a
+			<code>.hls</code> name and receives the remainder — without needing funds of their own
+			first.
+		</p>
+
+		<label>
+			<span>Amount (ETH)</span>
+			<input bind:value={amount} placeholder="0.2" inputmode="decimal" disabled={busy} />
+		</label>
+		<p class="hint">
+			From this alias's shielded balance of {formatEther(source.balance)} ETH. Both the
+			registration fee and — if they have no ETH and need someone to submit for them — a
+			relay fee come out of this, so leave room for both. They choose the relay fee at
+			redemption, not you.
+		</p>
+
+		<button class="primary" disabled={busy} onclick={create}>
+			{busy ? 'Working…' : 'Create invite'}
+		</button>
+	{/if}
+
+	{#if formError}<p class="err">{formError}</p>{/if}
+	{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
+</div>
+
+<style>
+	.invite { display: flex; flex-direction: column; gap: 0.85rem; }
+	h3 { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+		color: var(--text-dim); font-weight: 600; }
+	.lede { margin: 0; font-size: 0.85rem; opacity: 0.88; line-height: 1.55; max-width: 34rem; }
+	label { display: flex; flex-direction: column; gap: 0.25rem; }
+	label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+		color: var(--text-dim); }
+	input[readonly] { width: 100%; font-family: ui-monospace, monospace; font-size: 0.72rem;
+		background: var(--bg-input); color: inherit; border: 1px solid var(--border);
+		border-radius: 6px; padding: 0.55rem; }
+	.note { font-size: 0.78rem; line-height: 1.5; padding: 0.7rem 0.8rem;
+		border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; }
+	.note.warn { border-left-color: #ffb27a; }
+	strong { font-weight: 600; }
+	code { font-family: ui-monospace, monospace; }
+	.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+	.actions .primary { flex: 1; min-width: 8rem; }
+	.ghost { padding: 0.55rem 1rem; background: none; color: inherit;
+		border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font: inherit; }
+	.ghost:hover { border-color: var(--accent); }
+	.primary { padding: 0.55rem; }
+	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
+	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; line-height: 1.5; }
+</style>

@@ -47,9 +47,12 @@ coverage.json
 *.tsbuildinfo
 
 # Foundry (fuzz + invariant tests). Restore with: forge install foundry-rs/forge-std --no-git
-lib/
-cache_forge/
-out/
+# Anchored to the repo root. Unanchored, `lib/` and `out/` match at every depth — which
+# silently swallowed packages/protocol/circuits/lib/notes.circom, a source file the circuit
+# does not compile without. circuits/out is still ignored, explicitly, below.
+/lib/
+/cache_forge/
+/out/
 
 # Proof artifacts are copied from packages/protocol at build time
 static/artifacts/
