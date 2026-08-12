@@ -1,6 +1,5 @@
 import { ethers } from "ethers";
 import { MerkleTree, PoolTrees } from "./merkle";
-import { SMT, aliasHashToSmtKey } from "./smt";
 import { buildEntry, computeNullifier, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS } from "./entry";
 import { decodeOutputBlob, tryDecryptOutput, poseidonHash } from "./crypto";
 
@@ -59,15 +58,12 @@ export interface RegistryEntry {
   blockNumber: number;
   registrySlot: number;        // position in the SMT, assigned at registration and never reused
   spendingPubkey: bigint;
-  nullifierKeyHash: bigint;    // Poseidon(nullifierKey, 1) — not in events; read from contract for proof construction
-  leafHash: bigint;            // Poseidon(spendingPubkey, nullifierKeyHash, dataHash) — emitted in events; used for SMT
   encryptionPubkey: Uint8Array;
   dataHash: bigint;
 }
 
 export interface ScanResult {
   poolTrees: PoolTrees;
-  smt: SMT;
   outputs: Output[];
   registryEntries: RegistryEntry[];
   aliasHashByPubkey: Map<bigint, bigint>;
@@ -172,8 +168,6 @@ export async function scanEvents(
   );
   const aliasHashByPubkey = new Map<bigint, bigint>(prior?.aliasHashByPubkey ?? []);
   const keyActiveFrom = new Map<bigint, number>(prior?.keyActiveFrom ?? []);
-  // Which aliases this range touched, so only their SMT paths are recomputed.
-  const touchedAliases = new Set<string>();
 
   for (const log of allLogs) {
     const topic = log.topics[0];
@@ -226,13 +220,10 @@ export async function scanEvents(
         blockNumber:       log.blockNumber,
         registrySlot:      Number(e.args[4]) - 1,  // stored offset by one on-chain
         spendingPubkey,
-        nullifierKeyHash:  0n,            // not in event; fetch from contract when building proofs
-        leafHash:          BigInt(e.args[2]),  // Poseidon(pubkey, nullifierKeyHash, dataHash)
         encryptionPubkey:  ethers.getBytes(e.args[3]),
         dataHash:          0n,
       };
       registryByAlias.set(aliasHash, entry);
-      touchedAliases.add(aliasHash);
       keyActiveFrom.set(entry.spendingPubkey, log.blockNumber);
       aliasHashByPubkey.set(spendingPubkey, BigInt(aliasHash));
 
@@ -242,9 +233,7 @@ export async function scanEvents(
       const existing = registryByAlias.get(aliasHash);
       if (existing) {
         existing.dataHash = BigInt(e.args[1]);
-        existing.leafHash  = BigInt(e.args[2]);
         registryByAlias.set(aliasHash, existing);
-        touchedAliases.add(aliasHash);
       }
 
     } else if (topic === transferTopic) {
@@ -261,13 +250,10 @@ export async function scanEvents(
         blockNumber:      existing ? existing.blockNumber : log.blockNumber,
         registrySlot:     existing ? existing.registrySlot : 0,  // reassignment keeps the slot
         spendingPubkey:  newSpendingPubkey,
-        nullifierKeyHash: 0n,
-        leafHash:         BigInt(e.args[2]),
         encryptionPubkey: ethers.getBytes(e.args[3]),
         dataHash:         0n,
       };
       registryByAlias.set(aliasHash, entry);
-      touchedAliases.add(aliasHash);
       keyActiveFrom.set(entry.spendingPubkey, log.blockNumber);
       if (existing) {
         aliasHashByPubkey.delete(existing.spendingPubkey);
@@ -303,17 +289,9 @@ export async function scanEvents(
   const outputs = [...(prior?.outputs ?? []), ...newOutputs];
 
   const registryEntries = [...registryByAlias.values()];
-  // Only the aliases this range touched are re-hashed. An SMT update rewrites one leaf's
-  // path, so replaying every entry would cost REGISTRY_LEVELS hashes per alias on every
-  // refresh — the cost this whole change exists to remove.
-  const smt = prior?.smt ?? new SMT();
-  for (const entry of registryEntries) {
-    if (prior && !touchedAliases.has(entry.aliasHash)) continue;
-    smt.update(entry.registrySlot, aliasHashToSmtKey(BigInt(entry.aliasHash)), entry.leafHash);
-  }
 
   return {
-    poolTrees, smt, outputs, registryEntries, aliasHashByPubkey, keyActiveFrom, spentNullifiers,
+    poolTrees, outputs, registryEntries, aliasHashByPubkey, keyActiveFrom, spentNullifiers,
     // Never below where this scan began: a lagging provider must not make the resume point
     // travel backwards.
     scannedThrough: Math.max(latestBlock, fromBlock - 1),

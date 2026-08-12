@@ -128,7 +128,7 @@ export class Halias extends HaliasCore {
   async deposit(amountEth: string, tokenAddress: bigint = ETH_TOKEN_ADDRESS): Promise<DepositResult> {
     this.ensureInit();
     await this.ensureSync();
-    const selfProof = this.selfSmtProof();
+    const selfProof = await this.selfRegistryProof();
     return this._deposit(amountEth, tokenAddress, {
       pubkey:           this.keys!.spendingPubkey,
       nullifierKeyHash: this.myNullifierKeyHash(),
@@ -157,7 +157,7 @@ export class Halias extends HaliasCore {
     await this.ensureSync();
 
     const recipient = await this.lookup(recipientName);
-    const proof     = this.recipientSmtProof(recipient.spendingPubkey);
+    const proof     = await this.registryProof(recipient.spendingPubkey);
     return this._deposit(amountEth, tokenAddress, {
       pubkey:           recipient.spendingPubkey,
       nullifierKeyHash: recipient.nullifierKeyHash,
@@ -173,7 +173,7 @@ export class Halias extends HaliasCore {
       pubkey: bigint;
       nullifierKeyHash: bigint;
       encryptionPubkey?: Uint8Array;
-      proof: { aliasHash: bigint; registrySlot: number; siblings: bigint[]; dataHash: bigint };
+      proof: { aliasHash: bigint; registrySlot: number; siblings: bigint[]; dataHash: bigint; registryRoot: bigint };
     },
   ): Promise<DepositResult> {
     const amount   = ethers.parseEther(amountEth);
@@ -208,7 +208,7 @@ export class Halias extends HaliasCore {
 
     const paramsHash = computeParamsHash(ZERO_TRANSACT_PARAMS, encryptedOutput0, "0x", BigInt(this.config.chainId), this.config.poolAddress);
     const anchor       = this.poolAnchor();
-    const registryRoot = this.smt.root;
+    const registryRoot = to.proof.registryRoot;
 
     const dummy0 = dummyInput(anchor.tree, dBase, POOL_LEVELS);
     const dummy1 = dummyInput(anchor.tree, dBase + 1, POOL_LEVELS);
@@ -276,8 +276,8 @@ export class Halias extends HaliasCore {
     // The fee comes out of the same note, so the note has to cover both.
     const entry      = this.selectEntry(sendAmount + relayerFeeAmount, tokenAddress);
     const nullifier  = computeNullifier(keys.nullifierKey, entry.treeNumber, entry.leafIndex);
-    const recProof   = this.recipientSmtProof(recipient.spendingPubkey);
-    const selfProof  = this.selfSmtProof();
+    const recProof   = await this.registryProof(recipient.spendingPubkey);
+    const selfProof  = await this.selfRegistryProof();
 
     const recipientBlinding = randomBlinding();
     const changeBlinding    = randomBlinding();
@@ -329,7 +329,7 @@ export class Halias extends HaliasCore {
           externalData: ethers.ZeroHash }
       : ZERO_TRANSACT_PARAMS;
     const paramsHash  = computeParamsHash(sendParams, blob0, blob1, BigInt(this.config.chainId), this.config.poolAddress);
-        const registryRoot = this.smt.root;
+    const registryRoot = selfProof.registryRoot;
     const publicAmount = relayerFeeAmount > 0n ? FIELD_PRIME - relayerFeeAmount : 0n;
 
     const { proofBytes } = await proveTransact({
@@ -419,10 +419,13 @@ export class Halias extends HaliasCore {
     let comm0: bigint;
     let encBlob0 = "0x";
 
+    // Read whether or not there is change: the root it carries is what the proof commits to,
+    // and a full withdrawal still has to name a registry root the pool will accept.
+    const selfProof = await this.selfRegistryProof();
+
     if (changeAmount > 0n) {
       const changeBlinding = randomBlinding();
       const changeEntry    = buildEntry(keys.spendingPubkey, nullifierKeyHash, changeBlinding, changeAmount, tokenAddress);
-      const selfProof      = this.selfSmtProof();
       encBlob0 = this.sealNote(changeBlinding, changeAmount);
       out0 = {
         pubkey:           keys.spendingPubkey,
@@ -472,7 +475,7 @@ export class Halias extends HaliasCore {
       externalData,
     };
     const paramsHash  = computeParamsHash(withdrawParams, encBlob0, "0x", BigInt(this.config.chainId), this.config.poolAddress);
-        const registryRoot = this.smt.root;
+    const registryRoot = selfProof.registryRoot;
     const publicAmount = FIELD_PRIME - amount;
 
     const { proofBytes } = await proveTransact({
@@ -790,10 +793,9 @@ export class Halias extends HaliasCore {
     const dummy1 = dummyInput(anchor.tree, dBase + 1, POOL_LEVELS);
 
     const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, encryptedOutput0, "0x", BigInt(this.config.chainId), this.config.poolAddress);
-    const registryRoot = this.smt.root;
-    const tempEntry    = this.registryEntries.find(e => BigInt(e.aliasHash) === tempAliasHash);
-    if (!tempEntry) throw new Error("Invite account did not appear in the registry after refresh");
-    const siblings     = this.smt.getSiblings(tempEntry.registrySlot);
+    const tempProof    = await this.registryProof(temp.spendingPubkey, "Invite account");
+    const registryRoot = tempProof.registryRoot;
+    const siblings     = tempProof.siblings;
 
     const { proofBytes } = await proveTransact({
       poolRoot: [anchor.root, anchor.root], treeNumber: [anchor.tree, anchor.tree], registryRoot, publicAmount: amount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
@@ -802,7 +804,7 @@ export class Halias extends HaliasCore {
       inputs: [dummy0.input, dummy1.input],
       outputs: [
         { pubkey: temp.spendingPubkey, nullifierKeyHash: temp.nullifierKeyHash, blinding: temp.blinding,
-          amount, aliasHash: tempAliasHash, registrySlot: tempEntry.registrySlot,
+          amount, aliasHash: tempAliasHash, registrySlot: tempProof.registrySlot,
           dataHash: 0n, registrySiblings: siblings },
         out1,
       ],
@@ -888,11 +890,22 @@ export class Halias extends HaliasCore {
     const ownSlot     = Number(await this.registry.nextAliasSlot() as bigint);
     const leafValue   = poseidonHash([keys.spendingPubkey, nullifierKeyHash, 0n]);
     const pendingLeaf = poseidonHash([smtKey, leafValue, 1n]);
-    // Siblings of a slot do not change when only that slot does, so one array serves both
-    // the emptiness proof against the current root and the change note's membership proof
-    // against the derived one.
-    const pendingSiblings = this.smt.getSiblings(ownSlot);
-    const registryRoot    = this.smt.root;
+    // The claim reads its witness straight from the registry, which is the case that looked
+    // like it needed a local tree and does not. `ownSlot` is unassigned — nobody holds it
+    // yet — and getSmtSiblings answers for an empty slot exactly as it does for a full one:
+    // the path nodes are absent, but the siblings beside them are what matter, and those
+    // exist. They serve both proofs at once, because the siblings of a slot do not change
+    // when only that slot does — the emptiness proof against the current root, and the change
+    // note's membership proof against the root derived by filling it.
+    //
+    // Pinned to one block, so the root the proof commits to is the root these siblings build.
+    const blockTag = await this.headBlock();
+    const [pendingSiblingsRaw, registryRootRaw] = await Promise.all([
+      this.registry.getSmtSiblings(ownSlot, { blockTag }) as Promise<string[]>,
+      this.registry.getRegistryRoot({ blockTag }) as Promise<string>,
+    ]);
+    const pendingSiblings = pendingSiblingsRaw.map(BigInt);
+    const registryRoot    = BigInt(registryRootRaw);
 
     const changeAmount = note.amount - absAmount;
     const changeBlind  = randomBlinding();
@@ -1010,7 +1023,6 @@ export class Halias extends HaliasCore {
       this.allOutputs = [];
       this.myEntries = [];
       this.poolTrees = new PoolTrees();
-      this.smt = new SMT();
       this.registryEntries = [];
       this.aliasHashByPubkey = new Map();
       this.spentNullifiers = new Set();

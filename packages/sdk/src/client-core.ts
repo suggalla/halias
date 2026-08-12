@@ -12,7 +12,7 @@ import {
 } from "./crypto";
 import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS } from "./entry";
 import { MerkleTree, PoolTrees } from "./merkle";
-import { SMT, aliasHashToSmtKey } from "./smt";
+import { aliasHashToSmtKey } from "./smt";
 import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
 import { scanEvents, findMyOutputs, Output, RegistryEntry, ScanResult } from "./events";
 import { deriveInviteKeys, InviteKeys, encodeInviteCode } from "./invite";
@@ -106,7 +106,6 @@ export abstract class HaliasCore {
     const tree = treeNumber ?? this.poolTrees.latest;
     return { root: this.poolTrees.tree(tree).getRoot(), tree };
   }
-  protected smt: SMT = new SMT();
   protected aliasHashByPubkey = new Map<bigint, bigint>(); // spendingPubkey → aliasHash (bigint)
   protected keyActiveFrom = new Map<bigint, number>();     // spendingPubkey → block it became active
   protected registryEntries: RegistryEntry[] = [];
@@ -194,7 +193,6 @@ export abstract class HaliasCore {
     try {
       const d = deserializeCache(raw);
       this.poolTrees = d.poolTrees;
-      this.smt = d.smt;
       this.registryEntries = d.registryEntries;
       this.aliasHashByPubkey = d.aliasHashByPubkey;
       this.keyActiveFrom = d.keyActiveFrom;
@@ -217,7 +215,6 @@ export abstract class HaliasCore {
     if (!this.config.cache) return;
     const raw = serializeCache({
       poolTrees: this.poolTrees,
-      smt: this.smt,
       registryEntries: this.registryEntries,
       aliasHashByPubkey: this.aliasHashByPubkey,
       keyActiveFrom: this.keyActiveFrom,
@@ -241,7 +238,6 @@ export abstract class HaliasCore {
   async rescan(): Promise<void> {
     this.ensureInit();
     this.poolTrees = new PoolTrees();
-    this.smt = new SMT();
     this.registryEntries = [];
     this.aliasHashByPubkey = new Map();
     this.keyActiveFrom = new Map();
@@ -280,7 +276,6 @@ export abstract class HaliasCore {
     );
 
     this.poolTrees = result.poolTrees;
-    this.smt = result.smt;
     this.registryEntries = result.registryEntries;
     this.aliasHashByPubkey = result.aliasHashByPubkey;
     this.keyActiveFrom = result.keyActiveFrom;
@@ -320,7 +315,6 @@ export abstract class HaliasCore {
   private priorScan(): ScanResult {
     return {
       poolTrees: this.poolTrees,
-      smt: this.smt,
       outputs: this.allOutputs,
       registryEntries: this.registryEntries,
       aliasHashByPubkey: this.aliasHashByPubkey,
@@ -409,33 +403,74 @@ export abstract class HaliasCore {
     return receipt!.hash;
   }
 
-  // Identity and position are separate, matching the circuit: aliasHash is the
-  // field-reduced key hashed into the leaf, registrySlot is the tree position the
-  // contract assigned. aliasHash must be reduced — a raw 256-bit keccak is >= p about
-  // 81% of the time and would not match the on-chain leaf.
-  protected selfSmtProof() {
-    const pubkey = this.keys!.spendingPubkey;
+  /// The registry witness for an alias, read from the chain rather than from a local copy.
+  ///
+  /// Root and siblings come back together, pinned to one block, and that is the point. They
+  /// have to describe the same tree: siblings from one block against a root from another
+  /// produce a proof that verifies against nothing, with no error to say why. Reading them
+  /// as one value makes that impossible rather than merely unlikely.
+  ///
+  /// A pinned block that lags head is fine — the pool accepts any root inside
+  /// REGISTRY_ROOT_MAX_AGE — so consistency is what matters here, not freshness.
+  ///
+  /// Identity and position stay separate, matching the circuit: aliasHash is the
+  /// field-reduced key hashed into the leaf, registrySlot is the position the contract
+  /// assigned. aliasHash must be reduced — a raw 256-bit keccak is >= p about 81% of the
+  /// time and would not match the on-chain leaf.
+  protected async registryProof(pubkey: bigint, label = "Recipient pubkey"): Promise<{
+    aliasHash: bigint;
+    registrySlot: number;
+    siblings: bigint[];
+    dataHash: bigint;
+    registryRoot: bigint;
+  }> {
     const aliasHash = this.aliasHashByPubkey.get(pubkey);
-    if (aliasHash === undefined) throw new Error("Account not registered or not synced");
-    const entry = this.registryEntries.find(e => BigInt(e.aliasHash) === aliasHash)!;
+    if (aliasHash === undefined) throw new Error(`${label} not found in registry`);
+    const h = "0x" + aliasHash.toString(16).padStart(64, "0");
+    const blockTag = await this.headBlock();
+
+    // The slot comes first because the sibling lookup needs it. The contract stores it
+    // one-based so that zero reads as "unassigned", and takes the path key, which is one
+    // less — the same derivation its own tree walk uses.
+    const oneBased = Number(await this.registry.aliasSlot(h, { blockTag }) as bigint);
+    if (oneBased === 0) {
+      throw new Error(`${label} is not registered as of block ${blockTag}`);
+    }
+    const slot = oneBased - 1;
+
+    const [siblings, root, record] = await Promise.all([
+      this.registry.getSmtSiblings(slot, { blockTag }) as Promise<string[]>,
+      this.registry.getRegistryRoot({ blockTag }) as Promise<string>,
+      this.registry.aliases(h, { blockTag }) as Promise<{ dataHash: string }>,
+    ]);
+
     return {
       aliasHash: aliasHashToSmtKey(aliasHash),
-      registrySlot: entry.registrySlot,
-      siblings: this.smt.getSiblings(entry.registrySlot),
-      dataHash: entry.dataHash,
+      registrySlot: slot,
+      siblings: siblings.map(BigInt),
+      dataHash: BigInt(record.dataHash),
+      registryRoot: BigInt(root),
     };
   }
 
-  protected recipientSmtProof(pubkey: bigint) {
-    const aliasHash = this.aliasHashByPubkey.get(pubkey);
-    if (aliasHash === undefined) throw new Error("Recipient pubkey not found in registry");
-    const entry = this.registryEntries.find(e => BigInt(e.aliasHash) === aliasHash)!;
-    return {
-      aliasHash: aliasHashToSmtKey(aliasHash),
-      registrySlot: entry.registrySlot,
-      siblings: this.smt.getSiblings(entry.registrySlot),
-      dataHash: entry.dataHash,
-    };
+  /// The head block, read from the node rather than from the provider's view of it.
+  ///
+  /// `getBlockNumber()` is updated by polling and lags — awaiting a receipt does not advance
+  /// it. Pinning registry reads to a stale number is not merely stale here, it is wrong: a
+  /// registration that has already been mined reads as unregistered, and the witness cannot
+  /// be built at all. The relay quote reads the node directly for the same reason.
+  protected async headBlock(): Promise<number> {
+    const raw = (this.config.provider as { send?: (m: string, p: unknown[]) => Promise<string> }).send;
+    if (raw) {
+      try { return Number(await raw.call(this.config.provider, "eth_blockNumber", [])); }
+      catch { /* provider exposes no raw channel; fall through */ }
+    }
+    return this.config.provider.getBlockNumber();
+  }
+
+  /// This client's own registry witness.
+  protected selfRegistryProof() {
+    return this.registryProof(this.keys!.spendingPubkey, "Account");
   }
 
   protected selectEntry(amount: bigint, tokenAddress: bigint): OwnedEntry {
