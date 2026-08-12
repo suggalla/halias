@@ -4,6 +4,7 @@ import { registerAlias, acceptAliasAs, signOwnerAction } from "./helpers/registe
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { aliasHashToKey } from "./helpers/smt";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 // The SMT leaf a registration inserts: Poseidon(aliasKey, Poseidon(pk, nkh, dataHash), 1).
 // A claim's proof performs this insertion itself, and the pool requires the public signal to
@@ -99,10 +100,9 @@ describe("HaliasDomain", function () {
   beforeEach(async function () {
     [admin, user, claimer, relayer, other] = await ethers.getSigners();
 
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
-    const registryLibs = { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() };
-    const poolLibs     = { PoseidonT3: await t3.getAddress() };
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
+    const registryLibs = { PoseidonT3: t3, PoseidonT4: t4 };
+    const poolLibs     = { PoseidonT3: t3 };
     const verifier = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
 
     // Registry needs the domain, the domain needs the registry: the dependency is a

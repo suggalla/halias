@@ -5,6 +5,7 @@ import * as path from "path";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { MerkleTree } from "./helpers/merkleTree";
 import { SMT, aliasHashToKey } from "./helpers/smt";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 const snarkjs = require("snarkjs");
 
@@ -148,14 +149,13 @@ describe("E2E against the real verifier", function () {
     [user, recipient, relayer] = await ethers.getSigners();
     chainId = (await ethers.provider.getNetwork()).chainId;
 
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     // The real verifier. If this is ever swapped for the mock, the file stops testing
     // anything it was written for.
     const verifier = await (await (await ethers.getContractFactory("TransactVerifier")).deploy()).getAddress();
 
     const deployer = await (await ethers.getContractFactory("HaliasDeployer", {
-      libraries: { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() },
+      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(verifier, user.address);
 
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());

@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 // The empty-subtree hashes are constants in TreeZeros rather than a storage array seeded at
 // construction. That is only safe while the constants are exactly the chain the hash function
@@ -13,7 +14,9 @@ describe("TreeZeros", function () {
   let poseidon: any;
 
   before(async function () {
-    poseidon = await (await ethers.getContractFactory("PoseidonT3")).deploy();
+    const { PoseidonT3 } = await ensurePoseidon();
+    poseidon = new ethers.Contract(
+      PoseidonT3, ["function hash(uint256[2]) pure returns (uint256)"], ethers.provider);
     zeros = await (await ethers.getContractFactory("TreeZerosHarness")).deploy();
   });
 

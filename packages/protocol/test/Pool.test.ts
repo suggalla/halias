@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { ensurePoseidon } from "../scripts/poseidon";
 
 // HaliasPool, exercised against the real HaliasRegistry.
 //
@@ -63,12 +64,11 @@ describe("HaliasPool", function () {
   beforeEach(async function () {
     [registrar, user, recipient, relayer] = await ethers.getSigners();
 
-    const t3 = await (await ethers.getContractFactory("PoseidonT3")).deploy();
-    const t4 = await (await ethers.getContractFactory("PoseidonT4")).deploy();
+    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     // The registry hashes leaves with PoseidonT4 and nodes with T3; the pool tree only
     // ever hashes pairs, so it links T3 alone.
-    const registryLibs = { PoseidonT3: await t3.getAddress(), PoseidonT4: await t4.getAddress() };
-    const poolLibs     = { PoseidonT3: await t3.getAddress() };
+    const registryLibs = { PoseidonT3: t3, PoseidonT4: t4 };
+    const poolLibs     = { PoseidonT3: t3 };
 
     verifierAddr = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
 
@@ -89,7 +89,7 @@ describe("HaliasPool", function () {
   describe("construction", function () {
     it("rejects a zero verifier or registry", async function () {
       const F = await ethers.getContractFactory("HaliasPool", {
-        libraries: { PoseidonT3: await (await (await ethers.getContractFactory("PoseidonT3")).deploy()).getAddress() },
+        libraries: { PoseidonT3: (await ensurePoseidon()).PoseidonT3 },
       });
       await expect(F.deploy(ethers.ZeroAddress, registryAddr)).to.be.revertedWithCustomError(F, "ZeroAddress");
       await expect(F.deploy(verifierAddr, ethers.ZeroAddress)).to.be.revertedWithCustomError(F, "ZeroAddress");
