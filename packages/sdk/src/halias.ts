@@ -724,12 +724,20 @@ export class Halias extends HaliasCore {
       e.amount > 0n &&
       !this.spentNullifiers.has(computeNullifier(keys.nullifierKey, e.treeNumber, e.leafIndex))
     );
+    let lastNonce: number | undefined;
     for (const entry of unspent) {
       const result = await this.withdraw(recipientAddress, ethers.formatEther(entry.amount));
       sweepTxHashes.push(result.txHash);
+      lastNonce = (await this.config.provider.getTransaction(result.txHash))?.nonce;
     }
 
-    const tx = await contractOfferAlias(this.domain, this.aliasHashOf(alias), newOwner);
+    // Chained from the sweep we just mined rather than resolved by ethers. Sweeping and
+    // offering are the only two sends in this SDK with no proof between them, and a proof is
+    // what usually gives the provider's view time to catch up.
+    const tx = await contractOfferAlias(
+      this.domain, this.aliasHashOf(alias), newOwner,
+      lastNonce === undefined ? undefined : lastNonce + 1,
+    );
     return { sweepTxHashes, offerTxHash: await this.settle(tx) };
   }
 

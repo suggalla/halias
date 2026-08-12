@@ -119,7 +119,14 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
     ///      legitimate users time.
     uint256 public constant MIN_COMMIT_AGE = 1;
     /// @dev Commitments expire so abandoned ones cannot be hoarded and revealed much later.
-    uint256 public constant MAX_COMMIT_AGE = 7200;   // ~1 day at 12s blocks
+    ///
+    ///      Seconds, not blocks, and the difference from MIN_COMMIT_AGE is deliberate: that
+    ///      one is genuinely a block property — a front-runner who first learns the name from
+    ///      the reveal must not be able to commit in the same block — while this bounds a
+    ///      *duration*. Expressed in blocks it meant a day on mainnet and four hours on a
+    ///      two-second L2, which quietly shortens how long a legitimate registrant has to
+    ///      reveal. Same reasoning as REGISTRY_ROOT_MAX_AGE.
+    uint256 public constant MAX_COMMIT_AGE = 1 days;
 
     uint256 public registrationFee = 0.001 ether;
     uint256 public accumulatedFees;
@@ -231,11 +238,19 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
     ///         a commitment go stale.
     function commit(bytes32 commitment) external {
         uint256 prev = commitments[commitment];
-        if (prev != 0 && block.number <= prev + MAX_COMMIT_AGE) revert CommitmentPending();
+        if (prev != 0 && block.timestamp <= _commitTime(prev) + MAX_COMMIT_AGE) {
+            revert CommitmentPending();
+        }
 
-        commitments[commitment] = block.number;
+        commitments[commitment] = block.number | (block.timestamp << 128);
         emit Committed(commitment, block.number);
     }
+
+    /// @dev A commitment records both the block it was made in and the moment, packed into one
+    ///      slot so the two-transaction flow still costs one SSTORE. Both are needed because
+    ///      the two ages measure different things — see MAX_COMMIT_AGE.
+    function _commitBlock(uint256 v) private pure returns (uint256) { return v & type(uint128).max; }
+    function _commitTime(uint256 v)  private pure returns (uint256) { return v >> 128; }
 
     /// @notice The commitment for a registration. Derive it here rather than reimplementing
     ///         the encoding, so a caller cannot commit to something they cannot reveal.
@@ -269,9 +284,9 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
             aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, msg.sender, salt
         );
         uint256 madeAt = commitments[c];
-        if (madeAt == 0)                             revert NoCommitment();
-        if (block.number < madeAt + MIN_COMMIT_AGE)  revert CommitTooNew();
-        if (block.number > madeAt + MAX_COMMIT_AGE)  revert CommitExpired();
+        if (madeAt == 0)                                            revert NoCommitment();
+        if (block.number    < _commitBlock(madeAt) + MIN_COMMIT_AGE) revert CommitTooNew();
+        if (block.timestamp > _commitTime(madeAt)  + MAX_COMMIT_AGE) revert CommitExpired();
         // One-shot: consumed here so a commitment cannot be replayed, and the refund makes
         // the two-transaction flow cheaper than it looks.
         delete commitments[c];
@@ -422,7 +437,7 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
         address to,
         uint256 deadline,
         bytes calldata signature
-    ) external {
+    ) external nonReentrant {
         if (to == address(0)) revert InvalidOwner();
         address owner = _authorizeOwner(aliasHash, keccak256(abi.encode(
             OFFER_ALIAS_TYPEHASH, aliasHash, to, aliasNonce[aliasHash], deadline
@@ -436,7 +451,7 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
         bytes32 aliasHash,
         uint256 deadline,
         bytes calldata signature
-    ) external {
+    ) external nonReentrant {
         _authorizeOwner(aliasHash, keccak256(abi.encode(
             CANCEL_OFFER_TYPEHASH, aliasHash, aliasNonce[aliasHash], deadline
         )), deadline, signature);

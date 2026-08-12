@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { registerAlias, acceptAliasAs, signOwnerAction } from "./helpers/register";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
 import { aliasHashToKey } from "./helpers/smt";
 
 // The SMT leaf a registration inserts: Poseidon(aliasKey, Poseidon(pk, nkh, dataHash), 1).
@@ -612,8 +613,9 @@ describe("HaliasDomain", function () {
       const c = await domain.registrationCommitment(h, PK, NKH, ENC, user.address, salt);
 
       await (await domain.connect(user).commit(c)).wait();
-      const maxAge = Number(await domain.MAX_COMMIT_AGE());
-      await ethers.provider.send("hardhat_mine", ["0x" + (maxAge + 1).toString(16)]);
+      // Seconds, not blocks — MAX_COMMIT_AGE bounds a duration, so advance time rather than
+      // mining 86,401 blocks to reach it sideways.
+      await time.increase(Number(await domain.MAX_COMMIT_AGE()) + 1);
 
       await expect(domain.connect(user).commit(c)).to.not.be.reverted;
     });
@@ -625,8 +627,7 @@ describe("HaliasDomain", function () {
       const c = await domain.registrationCommitment(h, PK, NKH, ENC, user.address, salt);
 
       await (await domain.connect(user).commit(c)).wait();
-      const maxAge = Number(await domain.MAX_COMMIT_AGE());
-      await ethers.provider.send("hardhat_mine", ["0x" + (maxAge + 2).toString(16)]);
+      await time.increase(Number(await domain.MAX_COMMIT_AGE()) + 1);
 
       await expect(domain.connect(user).register(h, PK, NKH, ENC, "", salt, { value: FEE }))
         .to.be.revertedWithCustomError(domain, "CommitExpired");

@@ -154,7 +154,21 @@ export async function quoteRelay(
   try {
     if (stale) throw new Error("stale");
     // `from` matters: the estimate must reflect the account that will actually send.
-    gasEstimate = await contract[method].estimateGas(...args, { from: submitter });
+    // Estimated straight off the node, not through ethers' view of the chain.
+    //
+    // ethers resolves reads against a block number it updates by polling, and `tx.wait()`
+    // does not advance it — measured one block behind on a local node. A quote taken just
+    // after someone else's submission landed therefore estimates against a state where the
+    // nullifier is still unspent and reports "would succeed", which is precisely the answer
+    // quoting exists to prevent: the relayer pays gas to discover a dead blob.
+    const req = await contract[method].populateTransaction(...args);
+    const raw = (provider as { send?: (m: string, p: unknown[]) => Promise<string> }).send;
+    gasEstimate = raw
+      ? BigInt(await raw.call(provider, "eth_estimateGas",
+          [{ ...req, from: submitter, value: "0x0" }, "latest"]))
+      // Not every Provider exposes a raw channel (a browser wallet's, for instance). Fall
+      // back to ethers' own path, which is correct but may lag by a block.
+      : await contract[method].estimateGas(...args, { from: submitter });
   } catch (e: any) {
     if (!stale) {
       valid = false;

@@ -44,6 +44,19 @@ function check(label: string, ok: boolean, detail = "") {
   else    { failed++; console.log(`  FAIL  ${label}${detail ? "  " + detail : ""}`); }
 }
 
+/// Balance read straight off the node, bypassing ethers' view of the chain.
+///
+/// `provider.getBalance` resolves "latest" against a block number the provider updates by
+/// polling — and `tx.wait()` returning does NOT advance it. Measured: the provider reported
+/// block 622 while the node was on 623, so a balance read right after a receipt returned the
+/// pre-transaction state and three assertions here failed against a chain that was correct.
+///
+/// A real hazard for any client that reads state immediately after sending, not just for this
+/// script. The raw call takes no block number from ethers at all.
+async function balanceOf(provider: ethers.JsonRpcProvider, addr: string): Promise<bigint> {
+  return BigInt(await provider.send("eth_getBalance", [addr, "latest"]));
+}
+
 function eq(label: string, got: unknown, want: unknown) {
   check(label, String(got) === String(want), `got ${got}, want ${want}`);
 }
@@ -70,6 +83,18 @@ async function main() {
   const conn = new ethers.FetchRequest(rpc);
   conn.setHeader("Connection", "close");
   const provider = new ethers.JsonRpcProvider(conn, undefined, { staticNetwork: true });
+  // Poll fast so the provider's view of the chain does not lag behind sends.
+  //
+  // Related and unexplained: `getTransactionCount(_, "pending")` has been observed returning
+  // one LESS than `"latest"`, both read after a receipt — so ethers signs with a nonce that is
+  // already spent and the send is rejected as "nonce too low". Disabling ethers' response
+  // cache does not fix it, so the cause is not client-side memoisation as first assumed;
+  // most likely Hardhat's pending-block accounting under automining, but that is a guess.
+  //
+  // The SDK does not rely on it: sweepAndOffer chains its nonce from the sweep it just mined,
+  // the same fix register() uses for commit-then-reveal. Left here because a fast poll is
+  // right for a local node regardless.
+  provider.pollingInterval = 100;
   const chainId  = Number((await provider.getNetwork()).chainId);
   const key      = process.env[KEY_VAR] ?? (chainId === 31337 ? LOCAL_KEY : undefined);
   if (!key) throw new Error(`chain ${chainId} is not local — set ${KEY_VAR}`);
@@ -81,13 +106,13 @@ async function main() {
   console.log(`  registry ${cfg.registry}`);
   console.log(`  domain   ${cfg.domain}\n`);
 
-  const mk = (s: ethers.Wallet) => new Halias({
+  const mk = (s: ethers.Wallet, aliasIndex = 0) => new Halias({
     provider, signer: s as any, chainId,
     poolAddress: cfg.pool, registryAddress: cfg.registry, domainAddress: cfg.domain,
     artifacts: ARTIFACTS,
     startBlock: cfg.startBlock ?? 0,
     rpcChunkSize: 2000,
-    cache: new FileCache(path.join("/tmp", `halias-e2e-${Date.now()}-${s.address}`)),
+    cache: new FileCache(path.join("/tmp", `halias-e2e-${Date.now()}-${s.address}-${aliasIndex}`)),
   });
 
   // Two independent clients, each deriving its own keys from its own signature — the same
@@ -173,13 +198,13 @@ async function main() {
 
   // ── send ──────────────────────────────────────────────────────────────────
   console.log(`\nsend  0.4 ETH -> ${bobName}.hls  (publicAmount 0, nothing leaves the pool)`);
-  const poolBefore    = await provider.getBalance(cfg.pool);
+  const poolBefore    = await balanceOf(provider, cfg.pool);
   const bobBeforeSend   = (await bob.balance()).total;
   const aliceBeforeSend = (await alice.balance()).total;
   await alice.send(`${bobName}.hls`, "0.4");
 
   eq("pool balance unchanged by a private transfer",
-     await provider.getBalance(cfg.pool), poolBefore);
+     await balanceOf(provider, cfg.pool), poolBefore);
 
   await alice.refresh();
   await bob.refresh();
@@ -200,12 +225,12 @@ async function main() {
   // withdrawal leaves no change and would never have caught it.
   console.log(`\nwithdraw  0.25 ETH (partial — leaves change)`);
   const dest = ethers.Wallet.createRandom().address;
-  const destBefore = await provider.getBalance(dest);
+  const destBefore = await balanceOf(provider, dest);
   await alice.withdraw(dest, "0.25");
   await alice.refresh();
 
   eq("recipient received the partial withdrawal",
-     ethers.formatEther((await provider.getBalance(dest)) - destBefore), "0.25");
+     ethers.formatEther((await balanceOf(provider, dest)) - destBefore), "0.25");
   const aliceAfterPartial = (await alice.balance()).total;
   eq("the change from a partial withdrawal is recoverable",
      ethers.formatEther(aliceBeforeSend - ethers.parseEther("0.4") - aliceAfterPartial), "0.25");
@@ -222,7 +247,7 @@ async function main() {
   await alice.withdraw(dest, "0.35");
 
   eq("recipient received the withdrawal",
-     ethers.formatEther((await provider.getBalance(dest)) - destBefore), "0.6");
+     ethers.formatEther((await balanceOf(provider, dest)) - destBefore), "0.6");
 
   await alice.refresh();
   await bob.refresh();
@@ -254,16 +279,16 @@ async function main() {
   await alice.deposit("0.5");
   await alice.refresh();
 
-  const relBefore  = await provider.getBalance(relayerAddr);
-  const destBefore2 = await provider.getBalance(feeDest);
+  const relBefore  = await balanceOf(provider, relayerAddr);
+  const destBefore2 = await balanceOf(provider, feeDest);
   const relayerCut = ethers.parseEther("0.02");
   await alice.withdraw(feeDest, "0.5", undefined, undefined, { relayerFee: relayerCut, relayer: relayerAddr });
 
   eq("the relayer is paid its fee by the pool directly",
-     ethers.formatEther((await provider.getBalance(relayerAddr)) - relBefore),
+     ethers.formatEther((await balanceOf(provider, relayerAddr)) - relBefore),
      ethers.formatEther(relayerCut));
   eq("the recipient receives the withdrawal minus the fee",
-     ethers.formatEther((await provider.getBalance(feeDest)) - destBefore2),
+     ethers.formatEther((await balanceOf(provider, feeDest)) - destBefore2),
      ethers.formatEther(ethers.parseEther("0.5") - relayerCut));
 
   let feeTooBig = false;
@@ -304,7 +329,7 @@ async function main() {
   const onward = ethers.Wallet.createRandom().address;
   await bob.withdraw(onward, "0.75");
   eq("bob withdraws the stranger's deposit",
-     ethers.formatEther(await provider.getBalance(onward)), "0.75");
+     ethers.formatEther(await balanceOf(provider, onward)), "0.75");
 
   // ── relayed withdrawal, prepared and handed over ──────────────────────────
   // The flow the fee mechanism exists for: someone holding notes but no ETH cannot
@@ -336,17 +361,17 @@ async function main() {
   check("the quote prices gas and shows a profit", quote.profit > 0n,
         `fee ${ethers.formatEther(quote.fee)} - gas ${ethers.formatEther(quote.gasCost)}`);
 
-  const relayerBefore = await provider.getBalance(relayWallet.address);
-  const payToBefore = await provider.getBalance(payTo);
+  const relayerBefore = await balanceOf(provider, relayWallet.address);
+  const payToBefore = await balanceOf(provider, payTo);
   await submitRelay(relayWallet as any, payload);
 
   eq("the recipient is paid the withdrawal minus the fee",
-     ethers.formatEther((await provider.getBalance(payTo)) - payToBefore),
+     ethers.formatEther((await balanceOf(provider, payTo)) - payToBefore),
      ethers.formatEther(ethers.parseEther("0.4") - relayFee));
   // Net of the gas they just spent, the relayer is up.
   check("the relayer comes out ahead",
-        (await provider.getBalance(relayWallet.address)) > relayerBefore,
-        `+${ethers.formatEther((await provider.getBalance(relayWallet.address)) - relayerBefore)} ETH`);
+        (await balanceOf(provider, relayWallet.address)) > relayerBefore,
+        `+${ethers.formatEther((await balanceOf(provider, relayWallet.address)) - relayerBefore)} ETH`);
 
   // Spent once. A second submission must be refused before it costs anyone gas.
   const second = await quoteRelay(provider, payload, relayWallet.address);
@@ -378,7 +403,7 @@ async function main() {
   check("the relayer still profits", xferQuote.profit > 0n,
         `fee ${ethers.formatEther(xferQuote.fee)} - gas ${ethers.formatEther(xferQuote.gasCost)}`);
 
-  const relayerPreXfer = await provider.getBalance(relayWallet.address);
+  const relayerPreXfer = await balanceOf(provider, relayWallet.address);
   const alicePreXfer   = (await alice.balance()).total;
   await submitRelay(relayWallet as any, xferPayload);
   await bob.refresh();
@@ -388,7 +413,7 @@ async function main() {
      ethers.formatEther((await bob.balance()).total - bobBefore),
      ethers.formatEther(ethers.parseEther("0.2")));
   check("the relayer is paid for a transfer it cannot read",
-        (await provider.getBalance(relayWallet.address)) > relayerPreXfer);
+        (await balanceOf(provider, relayWallet.address)) > relayerPreXfer);
   // The fee is the only thing that left the pool, and alice paid it out of her own notes —
   // so she is down the transfer *and* the fee, while bob is up the full amount.
   eq("only the fee leaves the pool",
@@ -408,7 +433,7 @@ async function main() {
   // Not funded. Not one wei. This is the case the whole flow is for.
   const pauperWallet = new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider);
   eq("the claimer holds nothing at all",
-     (await provider.getBalance(pauperWallet.address)).toString(), "0");
+     (await balanceOf(provider, pauperWallet.address)).toString(), "0");
   const pauper = mk(pauperWallet as any);
   await pauper.init();
 
@@ -437,7 +462,7 @@ async function main() {
   eq("the alias belongs to the claimer, not the submitter",
      await domainContract.ownerOf(BigInt(giftHash)), pauperWallet.address);
   eq("who still holds no ETH",
-     (await provider.getBalance(pauperWallet.address)).toString(), "0");
+     (await balanceOf(provider, pauperWallet.address)).toString(), "0");
 
   await pauper.refresh();
   eq("and receives the invite less the registration and relay fees",
@@ -636,11 +661,44 @@ async function main() {
   const aliceKey  = ethers.keccak256(ethers.toUtf8Bytes(`${aliceName}.hls`));
   const slotBefore = await registryContract.aliasSlot(aliceKey);
   const rootBefore = await registryContract.getRegistryRoot();
-  // (viewing private key, encryption public key as bytes) — the SDK derives the
-  // nullifier key hash from the first and hexlifies the second.
-  await alice.updateKeys(aliceName, 424242n, ethers.randomBytes(32));
+
+  // Key rotation is a handover to yourself. There is no updateKeys: it wrote the nullifier
+  // and encryption keys but never the spending pubkey, so the one compromise that loses funds
+  // was the one it could not answer. Fresh keys mean a client at a different derivation index,
+  // and offer/accept replaces all three.
+  // A second derivation index on the same wallet: fresh keys, same owner. One signature
+  // produces every index, so this costs the user nothing extra.
+  const rotated = mk(aliceWallet as any, 1);
+  await rotated.init(1);
+  await alice.offerAlias(aliceName, aliceWallet.address);
+
+  // Signed AFTER the offer, not before: every authorised action on an alias bumps its nonce,
+  // so a signature produced first is already stale by the time it is submitted. The contract
+  // rejects it with NotOfferedToSigner, which reads like a wrong-recipient bug and is not.
+  const rotateAccept = await rotated.acceptAlias(aliceName, { prepare: true });
+
+  // Submitted by the relayer, not by the owner. That is the point of removing updateKeys:
+  // the moment you most need to re-key is after a compromise, which is also when you are
+  // least able to pay for a transaction.
+  const rotateAsRelayer = new ethers.Contract(cfg.domain, [
+    "function acceptAlias(bytes32,bytes32,bytes32,bytes32,uint256,bytes) external",
+  ], relayWallet);
+  const rotatedKeys = (rotated as any).keys;
+  await (await rotateAsRelayer.acceptAlias(
+    aliceKey,
+    ethers.toBeHex(rotatedKeys.spendingPubkey, 32),
+    ethers.toBeHex((rotated as any).myNullifierKeyHash(), 32),
+    ethers.hexlify(rotatedKeys.encryption.publicKey),
+    rotateAccept.deadline, rotateAccept.signature,
+  )).wait();
+
   const rootAfterRotate = await registryContract.getRegistryRoot();
-  check("updateKeys moves the registry root", rootBefore !== rootAfterRotate);
+  check("rotating through offer-to-self moves the registry root", rootBefore !== rootAfterRotate);
+  eq("the spending pubkey actually changed — what updateKeys could not do",
+     (await registryContract.aliases(aliceKey)).spendingPubkey,
+     ethers.toBeHex((rotated as any).keys.spendingPubkey, 32));
+  eq("the alias is still owned by the same address",
+     await domainContract.ownerOf(BigInt(aliceKey)), aliceWallet.address);
   // In-place update is the whole reason this is an SMT: the alias must keep its slot, or
   // every sender holding a proof against its position breaks.
   eq("rotation keeps the alias in its slot",
@@ -694,7 +752,14 @@ async function main() {
      (await registryContract.aliases(aliceAliasHash)).spendingPubkey,
      ethers.toBeHex(heirKeys.spendingPubkey, 32));
 
-  check("the previous owner can no longer act on it", strangerRejected);
+  // The handover is complete only if the seller loses the alias, not merely if the buyer
+  // gains it. Asserted rather than assumed, because an owner check that reads a stale field
+  // would leave both parties able to act.
+  let formerOwnerRejected = false;
+  try {
+    await alice.updateAliasData(aliceName, 1n);
+  } catch { formerOwnerRejected = true; }
+  check("the previous owner can no longer act on it", formerOwnerRejected);
 
   // ── invite flow ───────────────────────────────────────────────────────────
   // The only path that touches all three contracts: the domain writes the registry, calls
@@ -749,14 +814,14 @@ async function main() {
   console.log(`\nsweep and transfer`);
   const sweepDest = ethers.Wallet.createRandom();
   const sweepHeir = ethers.Wallet.createRandom();
-  const sweepBefore = await provider.getBalance(sweepDest.address);
+  const sweepBefore = await balanceOf(provider, sweepDest.address);
   const bobBalPreSweep = (await bob.balance()).total;
 
   const sweep = await bob.sweepAndOffer(bobName, sweepDest.address, sweepHeir.address);
   check("sweepAndOffer produced at least one sweep tx", sweep.sweepTxHashes.length > 0,
         `${sweep.sweepTxHashes.length} sweeps`);
   eq("the swept funds reached the destination",
-     ethers.formatEther((await provider.getBalance(sweepDest.address)) - sweepBefore),
+     ethers.formatEther((await balanceOf(provider, sweepDest.address)) - sweepBefore),
      ethers.formatEther(bobBalPreSweep));
 
   await bob.refresh();
