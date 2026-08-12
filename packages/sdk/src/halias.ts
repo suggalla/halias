@@ -10,7 +10,7 @@ import {
   Signer,
 } from "./crypto";
 import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS } from "./entry";
-import { MerkleTree } from "./merkle";
+import { MerkleTree, PoolTrees } from "./merkle";
 import { SMT, aliasHashToSmtKey } from "./smt";
 import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
 import { scanEvents, findMyOutputs, Output, RegistryEntry } from "./events";
@@ -646,13 +646,13 @@ export class Halias extends HaliasCore {
   /// for them. Only the recipient can say which keys are theirs.
   async offerAlias(alias: string, to: string): Promise<{ txHash: string }> {
     this.ensureInit();
-    const tx = await contractOfferAlias(this.domain, this.aliasHashOf(alias), to);
+    const tx = await contractOfferAlias(this.domain, this.aliasHashOf(alias), to, await this.nextNonce());
     return { txHash: await this.settle(tx) };
   }
 
   async cancelOffer(alias: string): Promise<{ txHash: string }> {
     this.ensureInit();
-    const tx = await contractCancelOffer(this.domain, this.aliasHashOf(alias));
+    const tx = await contractCancelOffer(this.domain, this.aliasHashOf(alias), await this.nextNonce());
     return { txHash: await this.settle(tx) };
   }
 
@@ -851,7 +851,7 @@ export class Halias extends HaliasCore {
       throw new Error("relayerFee requires a relayer address");
 
     const temp = deriveInviteKeys(secret);
-    const note = this.findInviteNote(temp);
+    const note = await this.findInviteNote(temp);
     if (!note) throw new Error("No unspent invite note found for this secret");
 
     const cleanAlias = normalizeAlias(alias);
@@ -1000,7 +1000,22 @@ export class Halias extends HaliasCore {
   // Locate the unspent pool note belonging to an invite's temp keypair. The note is a
   // perfectly ordinary output encrypted to the temp encryption key, so the normal
   // decrypt-and-match path finds it — no special-case scanning.
-  private findInviteNote(temp: InviteKeys): OwnedEntry | null {
+  private async findInviteNote(temp: InviteKeys): Promise<OwnedEntry | null> {
+    // The one place ciphertext is needed after the fact. The cache drops it — it is the bulk
+    // of the bytes and its only use is trial decryption, which has already happened for every
+    // output the client itself owns. An invite is decrypted with a *different* key, so a warm
+    // client has to fetch the blobs again before it can look.
+    if (this.allOutputs.some((o) => o.encryptedBlob === "")) {
+      this.lastBlock = 0;
+      this.allOutputs = [];
+      this.myEntries = [];
+      this.poolTrees = new PoolTrees();
+      this.smt = new SMT();
+      this.registryEntries = [];
+      this.aliasHashByPubkey = new Map();
+      this.spentNullifiers = new Set();
+      await this.refresh();
+    }
     const owned = findMyOutputs(
       this.allOutputs, temp.spendingPubkey, temp.nullifierKey, temp.encryption.privateKey,
     );

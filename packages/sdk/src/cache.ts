@@ -1,7 +1,8 @@
 import { ethers } from "ethers";
 import { MerkleTree, PoolTrees } from "./merkle";
 import { SMT } from "./smt";
-import type { RegistryEntry } from "./events";
+import type { RegistryEntry, Output } from "./events";
+import type { OwnedEntry } from "./entry";
 
 export interface CacheStore {
   load(key: string): Promise<string | null>;
@@ -13,8 +14,23 @@ export interface CacheData {
   smt: SMT;
   registryEntries: RegistryEntry[];
   aliasHashByPubkey: Map<bigint, bigint>;
+  keyActiveFrom: Map<bigint, number>;
   spentNullifiers: Set<bigint>;
   lastBlock: number;
+  /// This client's own notes, already decrypted.
+  ///
+  /// Persisted because finding them is the expensive half of a scan — one X25519 shared
+  /// secret per output — and a resumed scan only looks at blocks it has not seen. Without
+  /// these a warm client would report a balance drawn from the new range alone.
+  myEntries: OwnedEntry[];
+  /// Every commitment seen, minus its ciphertext.
+  ///
+  /// history() and privacyContext() read this, so dropping it would make both report on the
+  /// current session only. The `encryptedBlob` is deliberately not kept: its sole use is
+  /// trial decryption, which has already happened for these, and it is the bulk of the bytes.
+  /// {Halias-findInviteNote} is the one caller that needs ciphertext back and it forces a
+  /// full rescan when it finds none.
+  outputs: Output[];
 }
 
 interface SerializedCache {
@@ -28,6 +44,9 @@ interface SerializedCache {
   spentNullifiers: string[];
   registryEntries: Array<{
     aliasHash: string;
+    registrySlot: number;
+    txHash: string;
+    blockNumber: number;
     spendingPubkey: string;
     nullifierKeyHash: string;
     leafHash: string;
@@ -35,6 +54,18 @@ interface SerializedCache {
     dataHash: string;
   }>;
   aliasHashByPubkey: Record<string, string>;
+  keyActiveFrom?: Record<string, number>;
+  // Typed rather than Record<string, unknown>: the shapes below are written and read here
+  // and nowhere else, so declaring them removes the casts on the way back in.
+  myEntries?: Array<{
+    blinding: string; amount: string; tokenAddress: string; commitment: string;
+    treeNumber: number; leafIndex: number;
+  }>;
+  outputs?: Array<{
+    commitment: string; treeNumber: number; leafIndex: number; tokenAddress: string;
+    publicAmount: string; spentNullifiers: string[]; blockNumber: number;
+    transactionIndex: number; logIndex: number; txHash: string;
+  }>;
 }
 
 export function serializeCache(d: CacheData): string {
@@ -49,12 +80,42 @@ export function serializeCache(d: CacheData): string {
     spentNullifiers: [...d.spentNullifiers].map(n => "0x" + n.toString(16)),
     registryEntries: d.registryEntries.map(e => ({
       aliasHash:        e.aliasHash,
+      // The slot is the alias's position in the SMT and the tree is rebuilt from it. It was
+      // omitted here and defaulted to 0 on the way back in, which a full rescan silently
+      // corrected on every refresh. A resumed scan does not rescan, so an omitted slot stays
+      // 0 — putting every alias at slot 0 and producing a registry root matching nothing.
+      registrySlot:     e.registrySlot,
+      txHash:           e.txHash,
+      blockNumber:      e.blockNumber,
       spendingPubkey:   "0x" + e.spendingPubkey.toString(16),
       nullifierKeyHash: "0x" + e.nullifierKeyHash.toString(16),
       leafHash:         "0x" + e.leafHash.toString(16),
       encryptionPubkey: ethers.hexlify(e.encryptionPubkey),
       dataHash:         "0x" + e.dataHash.toString(16),
     })),
+    myEntries: d.myEntries.map(e => ({
+      blinding:         "0x" + e.blinding.toString(16),
+      amount:           "0x" + e.amount.toString(16),
+      tokenAddress:     "0x" + e.tokenAddress.toString(16),
+      commitment:       "0x" + e.commitment.toString(16),
+      treeNumber:       e.treeNumber,
+      leafIndex:        e.leafIndex,
+    })),
+    outputs: d.outputs.map(o => ({
+      commitment:      "0x" + o.commitment.toString(16),
+      treeNumber:      o.treeNumber,
+      leafIndex:       o.leafIndex,
+      tokenAddress:    "0x" + o.tokenAddress.toString(16),
+      publicAmount:    "0x" + o.publicAmount.toString(16),
+      spentNullifiers: o.spentNullifiers.map(n => "0x" + n.toString(16)),
+      blockNumber:     o.blockNumber,
+      transactionIndex: o.transactionIndex,
+      logIndex:        o.logIndex,
+      txHash:          o.txHash,
+    })),
+    keyActiveFrom: Object.fromEntries(
+      [...d.keyActiveFrom.entries()].map(([k, v]) => ["0x" + k.toString(16), v]),
+    ),
     aliasHashByPubkey: Object.fromEntries(
       [...d.aliasHashByPubkey.entries()].map(([k, v]) => [
         "0x" + k.toString(16),
@@ -78,8 +139,6 @@ export function deserializeCache(raw: string): CacheData {
 
   const registryEntries: RegistryEntry[] = d.registryEntries.map(e => ({
     aliasHash:        e.aliasHash,
-    // Defaulted: a cache written before these fields existed is still usable, it just
-    // cannot show where the registration happened until the next full scan.
     txHash:           String((e as any).txHash ?? ""),
     blockNumber:      Number((e as any).blockNumber ?? 0),
     registrySlot:     Number((e as any).registrySlot ?? 0),
@@ -94,9 +153,54 @@ export function deserializeCache(raw: string): CacheData {
     Object.entries(d.aliasHashByPubkey).map(([k, v]) => [BigInt(k), BigInt(v)])
   );
 
+  const keyActiveFrom = new Map<bigint, number>(
+    Object.entries(d.keyActiveFrom ?? {}).map(([k, v]) => [BigInt(k), v]),
+  );
+
   const spentNullifiers = new Set<bigint>(d.spentNullifiers.map(BigInt));
 
-  return { poolTrees, smt, registryEntries, aliasHashByPubkey, spentNullifiers, lastBlock: d.lastBlock };
+  // A cache written before these existed carries a lastBlock but none of the notes found
+  // below it. Resuming from that point would lose every one of them silently — the balance
+  // would be whatever the new range happened to contain. Reporting lastBlock 0 turns it into
+  // a full rescan, which is slow exactly once.
+  // Every field a resumed scan relies on must be present. A cache missing any of them was
+  // written by a build that expected the next full rescan to fill the gaps, and resuming
+  // from it would carry the gaps forward instead.
+  const warm =
+    d.myEntries !== undefined &&
+    d.outputs !== undefined &&
+    d.registryEntries.every((e) => e.registrySlot !== undefined);
+
+  const myEntries: OwnedEntry[] = (d.myEntries ?? []).map(e => ({
+    blinding:     BigInt(e.blinding),
+    amount:       BigInt(e.amount),
+    tokenAddress: BigInt(e.tokenAddress),
+    commitment:   BigInt(e.commitment),
+    treeNumber:   e.treeNumber,
+    leafIndex:    e.leafIndex,
+  }));
+
+  const outputs: Output[] = (d.outputs ?? []).map(o => ({
+    commitment:       BigInt(o.commitment),
+    treeNumber:       o.treeNumber,
+    leafIndex:        o.leafIndex,
+    // Not persisted: see CacheData.outputs. findInviteNote is the only reader that needs it
+    // and it rescans when it sees this empty.
+    encryptedBlob:    "",
+    tokenAddress:     BigInt(o.tokenAddress),
+    publicAmount:     BigInt(o.publicAmount),
+    spentNullifiers:  o.spentNullifiers.map(BigInt) as [bigint, bigint],
+    blockNumber:      o.blockNumber,
+    transactionIndex: o.transactionIndex,
+    logIndex:         o.logIndex,
+    txHash:           o.txHash,
+  }));
+
+  return {
+    poolTrees, smt, registryEntries, aliasHashByPubkey, keyActiveFrom, spentNullifiers,
+    lastBlock: warm ? d.lastBlock : 0,
+    myEntries, outputs,
+  };
 }
 
 // Required lazily inside the methods, not at module scope. BrowserCache lives in this

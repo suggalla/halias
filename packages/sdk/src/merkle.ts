@@ -29,6 +29,16 @@ export class PoolTrees {
     t.insert(leaf);
   }
 
+  /// How many leaves a tree already holds, without creating it.
+  ///
+  /// This is also a membership test. Trees fill sequentially and {insert} refuses a gap, so
+  /// every index below the count is present and every index at or above it is not — which is
+  /// what lets a resumed scan discard what it has already seen without keeping a separate
+  /// record of it.
+  leafCount(treeNumber: number): number {
+    return this.trees.get(treeNumber)?.leaves.length ?? 0;
+  }
+
   /// The newest tree — where a new note will land, and the anchor a dummy input uses.
   /// Zero when nothing has been scanned yet, which is correct: tree 0's empty root is
   /// published by the pool's constructor.

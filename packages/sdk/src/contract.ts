@@ -399,8 +399,12 @@ export async function signOfferAlias(
 export async function cancelOffer(
   domain: ethers.Contract,
   aliasHash: bigint,
+  /// Same reason as {offerAlias}: an awaited receipt does not guarantee the node's pending
+  /// nonce has caught up, and offering then cancelling is the natural back-to-back pair.
+  nonce?: number,
 ): Promise<ethers.ContractTransactionResponse> {
-  return domain.cancelOffer(h32(aliasHash), 0n, NO_SIGNATURE);
+  return domain.cancelOffer(h32(aliasHash), 0n, NO_SIGNATURE,
+                            nonce === undefined ? {} : { nonce });
 }
 
 export async function signCancelOffer(
