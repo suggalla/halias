@@ -40,13 +40,14 @@
 	let revealed = $state(false);
 	let confirmedWritten = $state(false);
 
-	// Pre-filled rather than required.
+	// Pre-filled rather than required, and doubles as the account name a password manager
+	// saves against.
 	//
-	// One wallet needs no name — "Wallet 1" says everything true about it, and demanding a
-	// name there is a field to fill in for nothing. Several wallets need one badly, and that
-	// is not an edge case here: the whole point of holding a second is that it is not linkable
-	// to the first, which "Wallet 2" describes about as well as "the other one". So it is
-	// offered with a default already in it and can be skipped by ignoring it.
+	// One wallet needs no name — "Halias Wallet 1" says everything true about it, and
+	// demanding one there is a field filled in for nothing. Several wallets need a name badly,
+	// and that is not an edge case here: the point of holding a second is that it is not
+	// linkable to the first, which "Halias Wallet 2" describes about as well as "the other
+	// one". So it arrives with a default in it and is skipped by ignoring it.
 	let label = $state('');
 	let password = $state('');
 	let password2 = $state('');
@@ -202,19 +203,33 @@
 						<p class="or">or</p>
 					{/if}
 
-					<label>
-						<span>Password</span>
-						<input
-							type="password"
-							bind:value={password}
-							autocomplete="current-password"
-							disabled={busy}
-							onkeydown={(e) => e.key === 'Enter' && unlockPassword(selected!)}
-						/>
-					</label>
-					<button class="ghost" disabled={busy || !password} onclick={() => unlockPassword(selected!)}>
-						Unlock with password
-					</button>
+					<!-- A real form with an account-name field, so a password manager can keep one
+					     password per wallet instead of offering the same one for all of them. A saved
+					     credential is keyed on that field; with only a password there is nothing to key
+					     on, and the second wallet silently overwrites the first's entry.
+					     Readonly and visible rather than hidden — hidden ones are widely ignored, and
+					     it doubles as saying which wallet is about to open.
+					     `autocomplete="username"` is the spec's token for this field and has to stay
+					     that literal string; only what the reader sees is an account name. -->
+					<form onsubmit={(e) => { e.preventDefault(); unlockPassword(selected!); }}>
+						<label>
+							<span>Account name</span>
+							<input value={selected.label} readonly autocomplete="username" name="username" />
+						</label>
+						<label>
+							<span>Password</span>
+							<input
+								type="password"
+								bind:value={password}
+								autocomplete="current-password"
+								name="password"
+								disabled={busy}
+							/>
+						</label>
+						<button class="ghost" type="submit" disabled={busy || !password}>
+							Unlock with password
+						</button>
+					</form>
 
 					{#if error}<p class="err">{error}</p>{/if}
 
@@ -232,52 +247,57 @@
 						Choose a password. It encrypts <strong>this browser's copy</strong> — it is not
 						your recovery phrase, and it cannot recover the wallet anywhere else.
 					</p>
-					<label>
-						<span>Name this wallet</span>
-						<input
-							bind:value={label}
-							maxlength="40"
-							disabled={busy}
-							placeholder={nextLabel(entries)}
-						/>
-					</label>
-					<p class="note">
-						Only a label for telling wallets apart on this device, and in your passkey list.
-						It is not a secret and not part of any key.
-					</p>
-					<label>
-						<span>Password</span>
-						<input type="password" bind:value={password} autocomplete="new-password" disabled={busy} />
-					</label>
-					<label>
-						<span>Confirm password</span>
-						<input
-							type="password"
-							bind:value={password2}
-							autocomplete="new-password"
-							disabled={busy}
-							onkeydown={(e) => e.key === 'Enter' && saveAndUnlock()}
-						/>
-					</label>
-
-					{#if canPasskey}
-						<label class="check">
-							<input type="checkbox" bind:checked={wantPasskey} disabled={busy} />
-							<span>
-								Also add a passkey
-								<em>Unlock with your fingerprint or face next time. The password keeps
-									working — some devices cannot use a passkey.</em>
-							</span>
+					<!-- The account name is what a password manager saves this password against, which
+					     is what lets it hold one password per wallet rather than offering the first
+					     wallet's for all of them. -->
+					<form onsubmit={(e) => { e.preventDefault(); saveAndUnlock(); }}>
+						<label>
+							<span>Account name</span>
+							<input
+								bind:value={label}
+								maxlength="40"
+								autocomplete="username"
+								name="username"
+								disabled={busy}
+								placeholder={nextLabel(entries)}
+							/>
 						</label>
-					{/if}
+						<p class="note">
+							Tells wallets apart on this device, in your passkey list, and in your password
+							manager. Not a secret, and not part of any key.
+						</p>
+						<label>
+							<span>Password</span>
+							<input type="password" bind:value={password} autocomplete="new-password"
+								name="new-password" disabled={busy} />
+						</label>
+						<label>
+							<span>Confirm password</span>
+							<input type="password" bind:value={password2} autocomplete="new-password"
+								disabled={busy} />
+						</label>
 
-					{#if error}<p class="err">{error}</p>{/if}
-					<div class="row">
-						<button class="ghost" disabled={busy} onclick={() => (stage = 'phrase')}>Back</button>
-						<button class="primary" disabled={busy} onclick={saveAndUnlock}>
-							{busy ? 'Encrypting…' : 'Save and continue'}
-						</button>
-					</div>
+						{#if canPasskey}
+							<label class="check">
+								<input type="checkbox" bind:checked={wantPasskey} disabled={busy} />
+								<span>
+									Also add a passkey
+									<em>Unlock with your fingerprint or face next time. The password keeps
+										working — some devices cannot use a passkey.</em>
+								</span>
+							</label>
+						{/if}
+
+						{#if error}<p class="err">{error}</p>{/if}
+						<div class="row">
+							<button class="ghost" type="button" disabled={busy} onclick={() => (stage = 'phrase')}>
+								Back
+							</button>
+							<button class="primary" type="submit" disabled={busy}>
+								{busy ? 'Encrypting…' : 'Save and continue'}
+							</button>
+						</div>
+					</form>
 
 				{:else}
 					<!-- choose / phrase -->
@@ -392,7 +412,10 @@
 	.sum { margin: 0; }
 	.say strong { color: var(--accent-bright); font-weight: 700; }
 
+	/* The forms wrap what .body used to lay out directly, so they carry the same column. */
+	form { display: flex; flex-direction: column; gap: 0.55rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; }
+	input[readonly] { cursor: default; }
 	label > span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
 		color: var(--text-dim); }
 	.check { flex-direction: row; align-items: flex-start; gap: 0.5rem; cursor: pointer; }

@@ -306,7 +306,22 @@ export async function deleteVault(id: string): Promise<void> {
 	await tx('readwrite', (s) => s.delete(id));
 }
 
-/// "Wallet 1", "Wallet 2", … — enough to tell several apart until they can be named properly.
+const LABEL_PREFIX = 'Halias Wallet';
+
+/// "Halias Wallet 1", "Halias Wallet 2", … — a default, not a requirement.
+///
+/// Counted from the numbers already in use rather than from how many entries there are.
+/// Those differ the moment one is removed: with 1 and 2 stored, deleting the first leaves a
+/// count of one, and a count-based name would hand out "2" a second time. Names are not keys
+/// — entries are addressed by uuid — so a collision would not corrupt anything, it would just
+/// leave two identical rows in the picker that exists to tell them apart.
+///
+/// Only auto-generated names are counted. Someone who calls a wallet "DeFi" has not used up
+/// a number, and the next default is unaffected.
 export function nextLabel(existing: VaultEntry[]): string {
-	return `Wallet ${existing.length + 1}`;
+	const used = existing
+		.map((e) => new RegExp(`^${LABEL_PREFIX} (\\d+)$`).exec(e.label.trim()))
+		.filter((m): m is RegExpExecArray => m !== null)
+		.map((m) => parseInt(m[1], 10));
+	return `${LABEL_PREFIX} ${used.length === 0 ? 1 : Math.max(...used) + 1}`;
 }
