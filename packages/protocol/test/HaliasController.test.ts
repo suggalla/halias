@@ -643,7 +643,7 @@ describe("HaliasController", function () {
 
     it("lets an expired commitment be replaced", async function () {
       const [, user] = await ethers.getSigners();
-      const { name: hName, h } = freshName();
+      const { name: hName } = freshName();
       const salt = rand32();
       const c = await domain.registrationCommitment(hName, PK, NKH, ENC, user.address, salt);
 
@@ -657,7 +657,7 @@ describe("HaliasController", function () {
 
     it("refuses a reveal whose commitment has expired", async function () {
       const [, user] = await ethers.getSigners();
-      const { name: hName, h } = freshName();
+      const { name: hName } = freshName();
       const salt = rand32();
       const c = await domain.registrationCommitment(hName, PK, NKH, ENC, user.address, salt);
 
@@ -701,7 +701,7 @@ describe("HaliasController", function () {
       // _record makes msg.sender the owner. Without the sender in the commitment, copying a
       // reveal verbatim would take the alias while the victim kept the keys.
       const [, victim, attacker] = await ethers.getSigners();
-      const { name: hName, h } = freshName();
+      const { name: hName } = freshName();
       const salt = rand32();
       const c = await domain.registrationCommitment(hName, PK, NKH, ENC, victim.address, salt);
       await (await domain.connect(victim).commitRegistration(c)).wait();

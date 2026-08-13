@@ -186,7 +186,7 @@ describe("Root history", function () {
 describe("Pairwise insertion equivalence", function () {
   this.timeout(300000);
 
-  let pool: any, registry: any, domain: any, seq: any;
+  let pool: any, registry: any, seq: any;
 
   const rand = () => ethers.keccak256(ethers.randomBytes(32));
   const proof = ethers.AbiCoder.defaultAbiCoder().encode(

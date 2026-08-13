@@ -6,7 +6,9 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "halias": "node packages/sdk/dist/cli.js"
+    "halias": "node packages/sdk/dist/cli.js",
+    "check": "npm run typecheck --workspaces --if-present && npm run lint",
+    "lint": "solhint \"packages/protocol/contracts/**/*.sol\" && eslint packages/sdk/src packages/protocol/scripts packages/protocol/test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

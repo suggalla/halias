@@ -236,7 +236,7 @@ describe("Circuit/contract alignment", function () {
 
     it("circuit rejects a deposit of 2^248 (one past its range check)", async function () {
       const kp = generateKeypair();
-      const { key } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
       const amount = 1n << 248n;
       const nkHash = toNullifierKeyHash(kp.nullifierKey);
       await expect(prove(buildInput({
@@ -245,7 +245,7 @@ describe("Circuit/contract alignment", function () {
         inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs: [
           { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
-            blinding: 1n, amount, registrySiblings: registrySMT.getSiblings(key) },
+            blinding: 1n, amount, registrySiblings: registrySMT.getSiblings(slot) },
           dummyOutput(),
         ],
         inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
@@ -265,7 +265,7 @@ describe("Circuit/contract alignment", function () {
     // unspendable rather than dangerous. Cheap, and it stops the two layers disagreeing about
     // what a token *is*.
     const kp = generateKeypair();
-    const { key } = await registerLocal(kp.pubkey, kp.nullifierKey);
+    const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
     const token = 1n << 160n;
     const nkHash = toNullifierKeyHash(kp.nullifierKey);
     await expect(prove(buildInput({
@@ -274,7 +274,7 @@ describe("Circuit/contract alignment", function () {
       inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
       outputs: [
         { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
-          blinding: 1n, amount: 100n, registrySiblings: registrySMT.getSiblings(key) },
+          blinding: 1n, amount: 100n, registrySiblings: registrySMT.getSiblings(slot) },
         dummyOutput(),
       ],
       inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
@@ -291,7 +291,7 @@ describe("Circuit/contract alignment", function () {
       // verify with an unregistered pubkey and nonsense siblings — that is what lets a
       // transaction have fewer than two real recipients.
       const kp = generateKeypair();
-      const { key } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
       const nkHash = toNullifierKeyHash(kp.nullifierKey);
       const junk = { ...dummyOutput(), aliasHash: 12345n, nullifierKeyHash: 999n,
         registrySiblings: new Array(REGISTRY_LEVELS).fill(7n) };
@@ -303,7 +303,7 @@ describe("Circuit/contract alignment", function () {
         inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs: [
           { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
-            blinding: 1n, amount: 50n, registrySiblings: registrySMT.getSiblings(key) },
+            blinding: 1n, amount: 50n, registrySiblings: registrySMT.getSiblings(slot) },
           junk,
         ],
         inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
@@ -315,7 +315,7 @@ describe("Circuit/contract alignment", function () {
 
     it("a zero-amount input skips the pool proof, so an unknown note still proves", async function () {
       const kp = generateKeypair();
-      const { key } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
       const nkHash = toNullifierKeyHash(kp.nullifierKey);
       // Both inputs are dummies against an empty tree; only their nullifiers are constrained.
       const { publicSignals } = await prove(buildInput({
@@ -324,7 +324,7 @@ describe("Circuit/contract alignment", function () {
         inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs: [
           { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
-            blinding: 3n, amount: 10n, registrySiblings: registrySMT.getSiblings(key) },
+            blinding: 3n, amount: 10n, registrySiblings: registrySMT.getSiblings(slot) },
           dummyOutput(),
         ],
         inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
@@ -338,7 +338,7 @@ describe("Circuit/contract alignment", function () {
       // The pool proof is skipped but inNullifier === inputNullifier is not, so a prover
       // cannot burn an arbitrary nullifier to grief someone else's future note.
       const kp = generateKeypair();
-      const { key } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
       const nkHash = toNullifierKeyHash(kp.nullifierKey);
       await expect(prove(buildInput({
         poolRoot: poolTree.getRoot(), registryRoot: registrySMT.root,
@@ -346,7 +346,7 @@ describe("Circuit/contract alignment", function () {
         inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs: [
           { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
-            blinding: 3n, amount: 10n, registrySiblings: registrySMT.getSiblings(key) },
+            blinding: 3n, amount: 10n, registrySiblings: registrySMT.getSiblings(slot) },
           dummyOutput(),
         ],
         // Claim an arbitrary nullifier rather than the one the keys derive.
@@ -494,7 +494,7 @@ describe("Circuit/contract alignment", function () {
 
   it("publicSignals order matches the contract's pubSignals array", async function () {
     const kp = generateKeypair();
-    const { key } = await registerLocal(kp.pubkey, kp.nullifierKey);
+    const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
     const nkHash = toNullifierKeyHash(kp.nullifierKey);
     const amount = 77n, blinding = 5n, paramsHash = 424242n;
     const comm = createCommitment(kp.pubkey, nkHash, blinding, amount);
@@ -506,7 +506,7 @@ describe("Circuit/contract alignment", function () {
       inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
       outputs: [
         { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
-          blinding, amount, registrySiblings: registrySMT.getSiblings(key) },
+          blinding, amount, registrySiblings: registrySMT.getSiblings(slot) },
         dummyOutput(),
       ],
       inputNullifiers: [n0, n1],

@@ -24,7 +24,7 @@ const FIELD_PRIME = 218882428718392752222464057452572750885483644004160343436982
 describe("SDK preimage agreement", function () {
   this.timeout(120000);
 
-  let pool: any, registry: any, domain: any, poolAddr: string;
+  let pool: any, registry: any, poolAddr: string;
   let chainId: bigint;
   let signer: any, other: any;
 
@@ -43,7 +43,6 @@ describe("SDK preimage agreement", function () {
 
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
-    domain   = await ethers.getContractAt("HaliasController",   await deployer.controller());
     poolAddr = await pool.getAddress();
     chainId  = (await ethers.provider.getNetwork()).chainId;
   });

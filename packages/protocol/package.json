@@ -18,7 +18,8 @@
     "analyze:ecne": "./scripts/analyze.sh ecne",
     "analyze:slither": "./scripts/analyze.sh slither",
     "analyze:aderyn": "./scripts/analyze.sh aderyn",
-    "analyze:picus": "./scripts/analyze.sh picus"
+    "analyze:picus": "./scripts/analyze.sh picus",
+    "typecheck": "cross-env TS_NODE_PROJECT=tsconfig.hardhat.json npx tsc --noEmit -p tsconfig.hardhat.json"
   },
   "keywords": [],
   "author": "",
