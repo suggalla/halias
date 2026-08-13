@@ -101,7 +101,7 @@
 		busy = true;
 		error = null;
 		try {
-			await setSeedPhrase(await unlockWithPasskey(entry.id));
+			await setSeedPhrase(await unlockWithPasskey(entry.id), entry.label);
 			stage = 'wallet';
 		} catch (e: any) {
 			error = e?.message?.includes('dismissed')
@@ -115,7 +115,7 @@
 		busy = true;
 		error = null;
 		try {
-			await setSeedPhrase(await unlockWithPassword(entry.id, password));
+			await setSeedPhrase(await unlockWithPassword(entry.id, password), entry.label);
 			password = '';
 			stage = 'wallet';
 		} catch {
@@ -166,7 +166,8 @@
 		busy = true;
 		error = null;
 		try {
-			const id = await createVault(phrase, password, label.trim() || nextLabel(entries));
+			const chosen = label.trim() || nextLabel(entries);
+			const id = await createVault(phrase, password, chosen);
 			if (wantPasskey && canPasskey) {
 				try {
 					await addPasskey(id, password);
@@ -176,7 +177,7 @@
 					notice = `Saved, but the passkey could not be added: ${e?.message ?? 'dismissed'}. You can still unlock with your password.`;
 				}
 			}
-			await setSeedPhrase(phrase);
+			await setSeedPhrase(phrase, chosen);
 			await refreshEntries();
 			phrase = '';
 			password = '';

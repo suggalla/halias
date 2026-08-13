@@ -69,6 +69,9 @@ export interface AliasSummary {
 
 export interface ClientState {
 	status: Status;
+	/// The unlocked vault entry's label. Which wallet you are in is not derivable from the
+	/// address — several can share one — so it has to be carried and shown.
+	accountName: string | null;
 	address: string | null;
 	chainId: number | null;
 	error: string | null;
@@ -88,6 +91,7 @@ export interface ClientState {
 
 const EMPTY: ClientState = {
 	status: 'idle',
+	accountName: null,
 	address: null,
 	chainId: null,
 	error: null,
@@ -124,9 +128,13 @@ let seedSource: any = null;
 
 /// Accept a recovery phrase for this session. Throws on a phrase that fails BIP-39's
 /// checksum, so a typo is caught while the user is still looking at it.
-export async function setSeedPhrase(phrase: string): Promise<void> {
+///
+/// `label` is the vault entry this came from, carried through only so the UI can say which
+/// wallet is open. It is not a secret and takes no part in any key.
+export async function setSeedPhrase(phrase: string, label?: string): Promise<void> {
   const { MnemonicSource } = await import('halias-sdk');
   seedSource = new MnemonicSource(phrase);
+  if (label) clientState.update((s) => ({ ...s, accountName: label }));
 }
 
 /// A fresh phrase, for someone who has none. It is the wallet: nothing else recovers it.

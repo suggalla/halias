@@ -63,9 +63,16 @@
 			{#if step === 1}
 				<span class="now">Connect</span>
 			{:else}
+				<!-- Named, not just "Wallet". Which of several stored wallets is open is not
+				     derivable from anything else on screen — they can share an address, and the
+				     alias list below is exactly what differs between them — so an unlabelled crumb
+				     leaves the one question this level answers unanswered. -->
 				<button class="crumb" class:now={step === 2 && panel === 'none'}
 					disabled={step === 2 && panel === 'none'}
-					onclick={() => { panel = 'none'; deselectAlias(); }}>Wallet</button>
+					title={$clientState.accountName ? 'Back to this wallet' : undefined}
+					onclick={() => { panel = 'none'; deselectAlias(); }}>
+					{$clientState.accountName ?? 'Wallet'}
+				</button>
 				{#if alias}
 					<span class="sep">/</span>
 					<button class="crumb" class:now={panel === 'none'} disabled={panel === 'none'}
@@ -186,7 +193,9 @@
 	/* --border is a boundary colour and vanished as text. */
 	.crumbs .sep { color: var(--text-dim); opacity: 0.7; }
 	.crumb { color: var(--text-dim); white-space: nowrap; padding: 0.25rem 0.5rem;
-		border: 1px solid transparent; border-radius: 6px; font-size: 0.8rem; }
+		border: 1px solid transparent; border-radius: 6px; font-size: 0.8rem;
+		/* A wallet name is user-supplied and up to 40 characters; the bar has to survive one. */
+		max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
 	.crumb:hover:not(:disabled) { color: var(--accent); border-color: var(--border);
 		background: var(--bg-window); }
 	.crumb.now { color: var(--text-bright); }
