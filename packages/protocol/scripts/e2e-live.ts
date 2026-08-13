@@ -823,6 +823,28 @@ async function main() {
   } catch { formerOwnerRejected = true; }
   check("the previous owner can no longer act on it", formerOwnerRejected);
 
+  // And cannot spend what it still holds, which is the sharper consequence and the reason
+  // the client empties an alias before handing it over.
+  //
+  // The notes are still alice's — her nullifier key opens them — but every spend that needs a
+  // change output proves the *sender's* spending key is the one registered under this alias,
+  // and the handover replaced it with the heir's. So value left behind is not merely
+  // forgotten, it is stranded. This asserts the protocol behaviour that a UI rule depends on;
+  // without it that rule is a claim about code nobody checked.
+  await alice.refresh();
+  const strandedBalance = (await alice.balance()).total;
+  if (strandedBalance > 0n) {
+    let strandedSpendRejected = false;
+    let why = "";
+    try {
+      await alice.withdraw(aliceWallet.address, ethers.formatEther(strandedBalance / 2n));
+    } catch (e: any) { strandedSpendRejected = true; why = e.message; }
+    check("notes left in a handed-over alias can no longer be spent", strandedSpendRejected,
+          strandedSpendRejected ? why.slice(0, 46) : "the spend succeeded");
+  } else {
+    check("notes left in a handed-over alias can no longer be spent", true, "nothing left to strand");
+  }
+
   // ── invite flow ───────────────────────────────────────────────────────────
   // The only path that touches all three contracts: the domain writes the registry, calls
   // the pool, and is paid by it. It is also the one whose authorisation binding stops a

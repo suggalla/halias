@@ -459,6 +459,42 @@ describe("HaliasController", function () {
         .to.be.revertedWithCustomError(domain, "NotAliasOwner");
     });
 
+    it("a second offer replaces the first, which can no longer be taken", async function () {
+      // The UI warns about this, so it had better be true. There is one pending owner, not a
+      // queue: offering again overwrites, and the earlier recipient is left holding an offer
+      // that names them and no longer exists.
+      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
+      await (await domain.connect(user).offerAlias(h, claimer.address, 0n, "0x")).wait();
+      expect(await domain.pendingAliasOwner(h)).to.equal(claimer.address);
+
+      await expect(acceptAliasAs(domain, other, h, PK, NKH, ENC))
+        .to.be.revertedWithCustomError(domain, "NotOfferedToSigner");
+      // And the one it was replaced by still works.
+      await (await acceptAliasAs(domain, claimer, h, PK, NKH, ENC)).wait();
+      expect(await domain.ownerOf(BigInt(h))).to.equal(claimer.address);
+    });
+
+    it("cannot be accepted by anyone but the address it was offered to", async function () {
+      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
+      await expect(acceptAliasAs(domain, claimer, h, PK, NKH, ENC))
+        .to.be.revertedWithCustomError(domain, "NotOfferedToSigner");
+      expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
+    });
+
+    it("cannot be accepted when nothing was offered", async function () {
+      await expect(acceptAliasAs(domain, other, h, PK, NKH, ENC))
+        .to.be.revertedWithCustomError(domain, "NoOffer");
+    });
+
+    it("an accepted offer cannot be accepted twice", async function () {
+      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
+      await (await acceptAliasAs(domain, other, h, PK, NKH, ENC)).wait();
+      // The offer is consumed, not merely satisfied — otherwise a second acceptance would
+      // reinstall keys on an alias its new owner now controls.
+      await expect(acceptAliasAs(domain, other, h, PK, NKH, ENC))
+        .to.be.revertedWithCustomError(domain, "NoOffer");
+    });
+
     it("keeps the alias in its slot across every mutation", async function () {
       const slot = await registry.aliasSlot(h);
       await (await domain.connect(user).updateAliasData(h, randField(), 0n, "0x")).wait();
