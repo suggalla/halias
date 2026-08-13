@@ -150,11 +150,25 @@ retained fallback is exactly that. Nothing had launched, so there was nothing to
 ## Phasing
 
 1. ~~The seam, and the mnemonic behind it.~~ **Done.** `SeedSource` in `sdk/src/seed.ts`;
-   `personal_sign` derivation removed; CLI takes `HALIAS_MNEMONIC` and has `keys new`; the
-   browser accepts a phrase per session, in memory only.
-2. CLI keystore — no browser, and it settles the encrypted-at-rest format.
-3. Browser: the wizard above, password wrapping, IndexedDB. Replaces the interim
-   type-it-every-time prompt, which stores nothing rather than storing it badly.
-4. PRF wrapping as the everyday unlock.
+   `personal_sign` derivation removed; CLI takes `HALIAS_MNEMONIC` and has `keys new`.
+2. ~~Browser: the wizard above, password wrapping, IndexedDB.~~ **Done** — `app/src/lib/sdk/vault.ts`.
+3. ~~PRF wrapping as the everyday unlock.~~ **Done**, in the same place. Both wrappings are
+   written at setup; the passkey is offered as a checkbox and its failure is non-fatal,
+   because the wallet is already openable by password before it is attempted.
+4. CLI keystore — the CLI still takes `HALIAS_MNEMONIC` from the environment, which is
+   plaintext at rest. The browser format above is the one to reuse.
 5. View-only export — the viewing half alone, for auditors. Already implied by the key
    structure; it needs a format and a client that runs without a spending key.
+
+### What the browser implementation deviates on
+
+- **PBKDF2-SHA256 at 600,000 iterations, not scrypt.** WebCrypto has no scrypt, and shipping
+  a JS implementation to get a memory-hard KDF would be slower and easier to get wrong than
+  the native primitive. Measured ~90ms outside the browser.
+- **Passkeys are unavailable on an IP-address origin**, because a relying-party id must be a
+  domain. `localhost` works, `127.0.0.1` does not — which only affects local development, but
+  silently, so the client reports passkeys as unsupported there rather than failing at the
+  prompt.
+- **The PRF output is read from a follow-up assertion, not from creation.** Several platforms
+  report `prf.enabled` at creation while returning values only on a later `get()`, so trusting
+  creation alone writes a keystore nothing can open.

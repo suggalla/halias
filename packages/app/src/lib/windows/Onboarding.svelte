@@ -1,59 +1,263 @@
 <script lang="ts">
-	import { clientState, connect, setSeedPhrase, newSeedPhrase, hasSeed } from '../sdk/client.js';
+	import { clientState, connect, setSeedPhrase, newSeedPhrase } from '../sdk/client.js';
 	import { wallets, legacyWallet } from '../sdk/wallets.js';
+	import {
+		listVault,
+		createVault,
+		addPasskey,
+		unlockWithPassword,
+		unlockWithPasskey,
+		deleteVault,
+		passkeySupported,
+		nextLabel,
+		type VaultEntry
+	} from '../sdk/vault.js';
+	import { isValidMnemonic } from 'halias-sdk';
 
-	// Getting in takes two separate things, and conflating them is the whole reason this
-	// screen exists rather than a single Connect button.
+	// Getting in takes two separate things, and conflating them is why this screen exists
+	// rather than a single Connect button.
 	//
 	//   the phrase  — holds the note keys. Never signs. Never leaves this browser.
 	//   the wallet  — broadcasts and pays gas. Never sees the phrase.
 	//
-	// They used to be one secret: the keys were derived from a signature, so any site that
-	// got you to sign one fixed string owned everything. Splitting them is what removed that,
-	// and a user who does not understand the split will back up the wrong thing — so the two
-	// steps are numbered and named rather than merged into one flow.
+	// They used to be one secret: the keys came from a signature, so any site that got you to
+	// sign one fixed string owned everything. A user who does not understand the split will
+	// back up the wrong thing, so the two steps stay numbered and named.
+	//
+	// The phrase is now stored encrypted rather than retyped each session — see vault.ts. The
+	// password protects *this browser's copy*; the phrase is what recovers the wallet
+	// anywhere, and the wording below has to keep those apart.
 
-	let step = $state<1 | 2>(hasSeed() ? 2 : 1);
+	type Stage = 'choose' | 'unlock' | 'phrase' | 'protect' | 'wallet';
+
+	let entries = $state<VaultEntry[]>([]);
+	let ready = $state(false);
+	let stage = $state<Stage>('choose');
+	let selected = $state<VaultEntry | null>(null);
+
 	let phrase = $state('');
 	let generated = $state(false);
-	let error = $state<string | null>(null);
 	let revealed = $state(false);
+	let confirmedWritten = $state(false);
+
+	let password = $state('');
+	let password2 = $state('');
+	let wantPasskey = $state(passkeySupported());
+	let busy = $state(false);
+	let error = $state<string | null>(null);
+	let notice = $state<string | null>(null);
 
 	const connecting = $derived($clientState.status === 'connecting');
-	// A wallet from before EIP-6963 announces nothing, so it is offered only when nothing
-	// announced — never beside a named wallet, where it would duplicate one of them.
 	const legacyOnly = $derived($wallets.length === 0 && !!legacyWallet());
+	const canPasskey = passkeySupported();
+
+	$effect(() => {
+		listVault().then((e) => {
+			entries = e;
+			ready = true;
+			if (e.length > 0 && stage === 'choose') {
+				selected = e[0];
+				stage = 'unlock';
+			}
+		});
+	});
+
+	async function refreshEntries() {
+		entries = await listVault();
+	}
+
+	// ── unlock an existing wallet ──────────────────────────────────────────────
+
+	async function unlockPasskey(entry: VaultEntry) {
+		busy = true;
+		error = null;
+		try {
+			await setSeedPhrase(await unlockWithPasskey(entry.id));
+			stage = 'wallet';
+		} catch (e: any) {
+			error = e?.message?.includes('dismissed')
+				? 'Passkey prompt was dismissed.'
+				: 'That passkey could not unlock this wallet — use your password instead.';
+		}
+		busy = false;
+	}
+
+	async function unlockPassword(entry: VaultEntry) {
+		busy = true;
+		error = null;
+		try {
+			await setSeedPhrase(await unlockWithPassword(entry.id, password));
+			password = '';
+			stage = 'wallet';
+		} catch {
+			error = 'Wrong password.';
+		}
+		busy = false;
+	}
+
+	async function forget(entry: VaultEntry) {
+		if (!confirm(`Remove ${entry.label} from this browser? Only your recovery phrase can bring it back.`))
+			return;
+		await deleteVault(entry.id);
+		await refreshEntries();
+		selected = entries[0] ?? null;
+		if (!selected) stage = 'choose';
+	}
+
+	// ── add a new one ──────────────────────────────────────────────────────────
 
 	async function generate() {
 		phrase = await newSeedPhrase();
 		generated = true;
 		revealed = true;
+		confirmedWritten = false;
 		error = null;
 	}
 
-	async function useSeed() {
-		try {
-			await setSeedPhrase(phrase);
-			error = null;
-			phrase = '';
-			generated = false;
-			revealed = false;
-			step = 2;
-		} catch {
+	function toProtect() {
+		if (!isValidMnemonic(phrase)) {
 			error = 'That is not a valid recovery phrase — check for typos or missing words.';
+			return;
 		}
+		if (generated && !confirmedWritten) {
+			error = 'Confirm you have written the phrase down first.';
+			return;
+		}
+		error = null;
+		stage = 'protect';
+	}
+
+	async function saveAndUnlock() {
+		if (password.length < 8) return (error = 'Use at least 8 characters.');
+		if (password !== password2) return (error = 'The two passwords do not match.');
+		busy = true;
+		error = null;
+		try {
+			const id = await createVault(phrase, password, nextLabel(entries));
+			if (wantPasskey && canPasskey) {
+				try {
+					await addPasskey(id, password);
+				} catch (e: any) {
+					// The wallet is already saved and openable by password; a passkey that could
+					// not be created is a missing convenience, not a failure worth discarding it.
+					notice = `Saved, but the passkey could not be added: ${e?.message ?? 'dismissed'}. You can still unlock with your password.`;
+				}
+			}
+			await setSeedPhrase(phrase);
+			await refreshEntries();
+			phrase = '';
+			password = '';
+			password2 = '';
+			generated = false;
+			stage = 'wallet';
+		} catch (e: any) {
+			error = e?.message ?? 'Could not save this wallet.';
+		}
+		busy = false;
 	}
 </script>
 
 <div class="onboard">
 	<ol class="steps">
-		<li class:on={step === 1} class:done={step === 2}>
-			<span class="num">{step === 2 ? '✓' : '1'}</span>
+		<li class:on={stage !== 'wallet'} class:done={stage === 'wallet'}>
+			<span class="num">{stage === 'wallet' ? '✓' : '1'}</span>
 			<div class="body">
 				<h2>Your recovery phrase</h2>
-				{#if step === 2}
-					<p class="sum">Loaded for this session.</p>
+
+				{#if !ready}
+					<p class="say pending">Checking this browser…</p>
+
+				{:else if stage === 'wallet'}
+					<p class="sum">Unlocked.</p>
+
+				{:else if stage === 'unlock' && selected}
+					<p class="say">
+						Stored on this browser, encrypted. Unlock it to continue.
+					</p>
+
+					{#if entries.length > 1}
+						<div class="tabs" role="tablist">
+							{#each entries as e (e.id)}
+								<button role="tab" aria-selected={selected?.id === e.id}
+									class:active={selected?.id === e.id}
+									onclick={() => { selected = e; error = null; password = ''; }}>{e.label}</button>
+							{/each}
+						</div>
+					{/if}
+
+					{#if selected.hasPasskey}
+						<button class="primary" disabled={busy} onclick={() => unlockPasskey(selected!)}>
+							{busy ? 'Waiting…' : 'Unlock with passkey'}
+						</button>
+						<p class="or">or</p>
+					{/if}
+
+					<label>
+						<span>Password</span>
+						<input
+							type="password"
+							bind:value={password}
+							autocomplete="current-password"
+							disabled={busy}
+							onkeydown={(e) => e.key === 'Enter' && unlockPassword(selected!)}
+						/>
+					</label>
+					<button class="ghost" disabled={busy || !password} onclick={() => unlockPassword(selected!)}>
+						Unlock with password
+					</button>
+
+					{#if error}<p class="err">{error}</p>{/if}
+
+					<div class="alt">
+						<button class="link" onclick={() => { stage = 'phrase'; error = null; phrase = ''; }}>
+							Use a different phrase
+						</button>
+						<button class="link danger" onclick={() => forget(selected!)}>
+							Remove from this browser
+						</button>
+					</div>
+
+				{:else if stage === 'protect'}
+					<p class="say">
+						Choose a password. It encrypts <strong>this browser's copy</strong> — it is not
+						your recovery phrase, and it cannot recover the wallet anywhere else.
+					</p>
+					<label>
+						<span>Password</span>
+						<input type="password" bind:value={password} autocomplete="new-password" disabled={busy} />
+					</label>
+					<label>
+						<span>Confirm password</span>
+						<input
+							type="password"
+							bind:value={password2}
+							autocomplete="new-password"
+							disabled={busy}
+							onkeydown={(e) => e.key === 'Enter' && saveAndUnlock()}
+						/>
+					</label>
+
+					{#if canPasskey}
+						<label class="check">
+							<input type="checkbox" bind:checked={wantPasskey} disabled={busy} />
+							<span>
+								Also add a passkey
+								<em>Unlock with your fingerprint or face next time. The password keeps
+									working — some devices cannot use a passkey.</em>
+							</span>
+						</label>
+					{/if}
+
+					{#if error}<p class="err">{error}</p>{/if}
+					<div class="row">
+						<button class="ghost" disabled={busy} onclick={() => (stage = 'phrase')}>Back</button>
+						<button class="primary" disabled={busy} onclick={saveAndUnlock}>
+							{busy ? 'Encrypting…' : 'Save and continue'}
+						</button>
+					</div>
+
 				{:else}
+					<!-- choose / phrase -->
 					<p class="say">
 						This holds your note keys — your balance and your history. It is
 						<strong>not</strong> your Ethereum wallet, and no wallet can recreate it.
@@ -73,27 +277,38 @@
 							Write this down offline <em>now</em>. Nothing else can recover it, and anyone
 							who has it can spend every note you hold.
 						</p>
+						<label class="check">
+							<input type="checkbox" bind:checked={confirmedWritten} />
+							<span>I have written it down</span>
+						</label>
+						<button class="link" onclick={() => (revealed = !revealed)}>
+							{revealed ? 'Hide' : 'Show'} phrase
+						</button>
 					{/if}
+
 					{#if error}<p class="err">{error}</p>{/if}
 
 					<div class="row">
-						<button class="primary" disabled={!phrase.trim()} onclick={useSeed}>Continue</button>
+						<button class="primary" disabled={!phrase.trim()} onclick={toProtect}>Continue</button>
 						<button class="ghost" onclick={generate}>Generate new</button>
 					</div>
 
-					<p class="note">
-						Typed each time for now — encrypted local storage, unlocked by passkey or
-						password, is coming.
-					</p>
+					{#if entries.length > 0}
+						<button class="link" onclick={() => { stage = 'unlock'; error = null; }}>
+							← Back to saved wallets
+						</button>
+					{/if}
 				{/if}
+
+				{#if notice}<p class="warn">{notice}</p>{/if}
 			</div>
 		</li>
 
-		<li class:on={step === 2} class:pending={step === 1}>
+		<li class:on={stage === 'wallet'} class:pending={stage !== 'wallet'}>
 			<span class="num">2</span>
 			<div class="body">
 				<h2>Your wallet</h2>
-				{#if step === 1}
+				{#if stage !== 'wallet'}
 					<p class="say pending">Broadcasts your transactions and pays gas.</p>
 				{:else}
 					<p class="say">
@@ -119,12 +334,9 @@
 						</button>
 					{:else}
 						<p class="err">
-							No wallet detected. Install MetaMask, Rabby, or another EVM wallet, then
-							reload.
+							No wallet detected. Install MetaMask, Rabby, or another EVM wallet, then reload.
 						</p>
 					{/if}
-
-					<button class="back" onclick={() => (step = 1)}>← Use a different phrase</button>
 				{/if}
 			</div>
 		</li>
@@ -142,7 +354,6 @@
 	.steps > li.pending { opacity: 0.55; }
 	.steps > li.done { opacity: 0.8; }
 
-	/* The step number carries the state, so the card does not need a second signal. */
 	.num { flex: none; width: 1.6rem; height: 1.6rem; border-radius: 50%;
 		display: grid; place-items: center; font-size: 0.8rem; font-weight: 700;
 		border: 1px solid var(--border); color: var(--text-dim); }
@@ -158,6 +369,16 @@
 	.sum { margin: 0; }
 	.say strong { color: var(--accent-bright); font-weight: 700; }
 
+	label { display: flex; flex-direction: column; gap: 0.25rem; }
+	label > span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+		color: var(--text-dim); }
+	.check { flex-direction: row; align-items: flex-start; gap: 0.5rem; cursor: pointer; }
+	.check input { margin-top: 0.2rem; width: auto; }
+	.check > span { text-transform: none; letter-spacing: 0; font-size: 0.82rem;
+		color: var(--text); }
+	.check em { display: block; font-style: normal; font-size: 0.76rem; color: var(--text-dim);
+		margin-top: 0.15rem; }
+
 	textarea { font-family: ui-monospace, monospace; font-size: 0.82rem; line-height: 1.6;
 		resize: vertical; }
 	/* A freshly generated phrase should not sit legible on screen while someone finds a pen. */
@@ -166,11 +387,16 @@
 	.warn { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--accent-bright);
 		border-left: 2px solid var(--accent); padding-left: 0.6rem; }
 	.warn em { font-style: normal; text-decoration: underline; }
-	.note { margin: 0; font-size: 0.75rem; color: var(--text-dim); }
 	.err { margin: 0; font-size: 0.8rem; color: #ff8a80; }
+	.or { margin: 0; text-align: center; font-size: 0.72rem; color: var(--text-dim);
+		text-transform: uppercase; letter-spacing: 0.1em; }
 
 	.row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 	.row .primary { flex: 1; min-width: 8rem; padding: 0.55rem 1rem; }
+	.alt { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.15rem; }
+	.link { font-size: 0.78rem; color: var(--text-dim); padding: 0; align-self: flex-start; }
+	.link:hover { color: var(--accent); }
+	.link.danger:hover { color: #ff8a80; }
 
 	.wlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.4rem; }
@@ -181,7 +407,4 @@
 	.w img { border-radius: 5px; flex: none; }
 	.w .go { margin-left: auto; color: var(--text-dim); }
 	.w:hover:not(:disabled) .go { color: var(--accent); }
-
-	.back { align-self: flex-start; font-size: 0.78rem; color: var(--text-dim); padding: 0; }
-	.back:hover { color: var(--accent); }
 </style>
