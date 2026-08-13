@@ -104,10 +104,37 @@ export const clientState = writable<ClientState>({ ...EMPTY });
 const clients = new Map<number, any>();
 let client: any = null;          // the selected alias's client
 let baseConfig: any = null;      // enough to build another one on demand
-// The wallet-level secret every alias derives from. Held so switching or enumerating
-// aliases costs no further signatures — without it each new client prompts, which turned
-// registering into a wall of signature requests.
+// The secret every alias derives from. Held so switching or enumerating aliases does not
+// re-stretch the phrase through PBKDF2 on every client.
+//
+// It no longer comes from a signature. `personal_sign` derivation meant any site that got a
+// user to sign one fixed string owned every key they had — silently, totally, and with no
+// way to remediate notes already on chain. See packages/protocol/docs/key-management.md.
 let root: bigint | null = null;
+
+// The phrase behind that root, held in memory only for this session.
+//
+// Interim: the wizard in key-management.md replaces this with a keystore in IndexedDB,
+// wrapped by a password and a passkey. Until that exists the phrase is entered every time,
+// which is inconvenient but honest — nothing here pretends to store it safely.
+let seedSource: any = null;
+
+/// Accept a recovery phrase for this session. Throws on a phrase that fails BIP-39's
+/// checksum, so a typo is caught while the user is still looking at it.
+export async function setSeedPhrase(phrase: string): Promise<void> {
+  const { MnemonicSource } = await import('halias-sdk');
+  seedSource = new MnemonicSource(phrase);
+}
+
+/// A fresh phrase, for someone who has none. It is the wallet: nothing else recovers it.
+export async function newSeedPhrase(): Promise<string> {
+  const { generateMnemonic } = await import('halias-sdk');
+  return generateMnemonic();
+}
+
+export function hasSeed(): boolean {
+  return seedSource !== null;
+}
 
 // aliasHash -> the name it was registered under. Local only, because the contract stores
 // a keccak and cannot give the name back. Losing this loses the label, not the alias.
@@ -309,6 +336,14 @@ export async function connect(): Promise<void> {
 		clientState.update((s) => ({ ...s, status: 'error', error: 'No wallet detected' }));
 		return;
 	}
+	if (!seedSource) {
+		clientState.update((s) => ({
+			...s,
+			status: 'error',
+			error: 'Enter your recovery phrase before connecting'
+		}));
+		return;
+	}
 	watchWallet(ethereum);
 
 	clientState.update((s) => ({ ...s, status: 'connecting', error: null }));
@@ -364,10 +399,11 @@ export async function connect(): Promise<void> {
 				);
 		}
 
-		const { BrowserCache, deriveRoot } = await import('halias-sdk');
+		const { BrowserCache } = await import('halias-sdk');
 		baseConfig = {
 			provider,
 			signer,
+			seed: seedSource,
 			chainId,
 			poolAddress: net.poolAddress,
 			registryAddress: net.registryAddress,
@@ -383,10 +419,10 @@ export async function connect(): Promise<void> {
 		const address = await signer.getAddress();
 		clientState.update((s) => ({ ...s, status: 'syncing', address, chainId }));
 
-		// The one and only signature. Taken here, explicitly, rather than as a side effect of
-		// whichever code path happens to build a client first — that left it uncached for a
-		// wallet with no aliases yet, and every later call prompted again.
-		root = await deriveRoot(signer as any);
+		// Derived here, explicitly, rather than as a side effect of whichever code path happens
+		// to build a client first — that left it uncached for a wallet with no aliases yet, so
+		// every later call re-derived.
+		root = await seedSource.root();
 
 		// Connecting lands you at the wallet, not inside an alias.
 		await loadAliases();
@@ -405,6 +441,7 @@ export function disconnect() {
 	client = null;
 	baseConfig = null;
 	root = null;
+	seedSource = null;
 	clients.clear();
 	clientState.set({ ...EMPTY });
 }

@@ -4,12 +4,13 @@ import nacl from "tweetnacl";
 import {
   init,
   poseidonHash,
-  deriveKeysFromWallet,
+  deriveKeysFromRoot,
   encryptOutput,
   decryptOutput,
   encodeOutputBlob,
   decodeOutputBlob,
 } from "../src/crypto";
+import { generateMnemonic, rootFromMnemonic } from "../src/seed";
 import { MerkleTree } from "../src/merkle";
 import { buildEntry, computeNullifier, NULLIFIER_DOMAIN, POOL_LEVELS, ETH_TOKEN_ADDRESS } from "../src/entry";
 import { findMyOutputs, Output } from "../src/events";
@@ -42,9 +43,8 @@ describe("crypto", () => {
     expect(h > 0n).to.be.true;
   });
 
-  it("deriveKeysFromWallet returns all expected fields", async () => {
-    const wallet = ethers.Wallet.createRandom();
-    const keys = await deriveKeysFromWallet(wallet);
+  it("deriveKeysFromRoot returns all expected fields", () => {
+    const keys = deriveKeysFromRoot(rootFromMnemonic(generateMnemonic()));
     expect(keys.spendingPrivKey).to.be.a("bigint");
     expect(keys.spendingPubkey).to.equal(poseidonHash([keys.spendingPrivKey]));
     expect(keys.nullifierKey).to.equal(poseidonHash([keys.viewingPrivKey]));
@@ -54,19 +54,19 @@ describe("crypto", () => {
     expect(keys.encryption.publicKey).to.have.lengthOf(32);
   });
 
-  it("deriveKeysFromWallet is deterministic", async () => {
-    const wallet = ethers.Wallet.createRandom();
-    const a = await deriveKeysFromWallet(wallet);
-    const b = await deriveKeysFromWallet(wallet);
+  it("is deterministic — the same phrase always rebuilds the same keys", () => {
+    const phrase = generateMnemonic();
+    const a = deriveKeysFromRoot(rootFromMnemonic(phrase));
+    const b = deriveKeysFromRoot(rootFromMnemonic(phrase));
     expect(a.spendingPrivKey).to.equal(b.spendingPrivKey);
     expect(a.viewingPrivKey).to.equal(b.viewingPrivKey);
     expect(Buffer.from(a.encryption.privateKey).toString("hex"))
       .to.equal(Buffer.from(b.encryption.privateKey).toString("hex"));
   });
 
-  it("deriveKeysFromWallet differs per wallet", async () => {
-    const a = await deriveKeysFromWallet(ethers.Wallet.createRandom());
-    const b = await deriveKeysFromWallet(ethers.Wallet.createRandom());
+  it("differs per phrase", () => {
+    const a = deriveKeysFromRoot(rootFromMnemonic(generateMnemonic()));
+    const b = deriveKeysFromRoot(rootFromMnemonic(generateMnemonic()));
     expect(a.spendingPrivKey).to.not.equal(b.spendingPrivKey);
   });
 });

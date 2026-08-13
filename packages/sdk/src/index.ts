@@ -1,6 +1,9 @@
-export { init, poseidonHash, deriveKeysFromWallet, deriveRoot, deriveKeysFromRoot } from "./crypto";
+export { init, poseidonHash, deriveKeysFromRoot } from "./crypto";
 export { encryptOutput, decryptOutput, encodeOutputBlob, decodeOutputBlob } from "./crypto";
-export type { NaclKeypair, HaliasKeys, Signer, EncryptedOutput } from "./crypto";
+export type { NaclKeypair, HaliasKeys, EncryptedOutput } from "./crypto";
+
+export { generateMnemonic, isValidMnemonic, rootFromMnemonic, MnemonicSource, RootSource } from "./seed";
+export type { SeedSource } from "./seed";
 
 export { MerkleTree } from "./merkle";
 

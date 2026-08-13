@@ -22,13 +22,6 @@ export interface HaliasKeys {
   encryption: NaclKeypair;  // X25519 keypair for NaCl box output encryption
 }
 
-export interface Signer {
-  signMessage(message: string): Promise<string>;
-}
-
-const DERIVATION_MESSAGE =
-  "halias key derivation v1\n\nSign this message to derive your halias keys.\nThis does NOT authorize any transaction.";
-
 // Domain tag for per-alias seeds. Three inputs, so it cannot collide with the two-input
 // hashes below: `Poseidon(seed, 0)` and `Poseidon(seed, 1)` are already the spending and
 // viewing private keys, and reusing that shape would make alias 0's seed *be* your
@@ -59,17 +52,9 @@ export function poseidonHash(inputs: bigint[]): bigint {
 /// the same EOA for each. Separating those requires holding them from different addresses;
 /// see multi-alias-flow.md. What it does fix is note separation: distinct balances,
 /// distinct decryption, and no shared key in the registry.
-/// The one secret behind every alias this wallet holds. Costs a signature.
 ///
-/// Separated from key derivation so callers can sign once and derive many. Enumerating
-/// aliases means trying dozens of indices, and asking the wallet to sign for each one is
-/// both unusable and pointless — the signature is identical every time.
-export async function deriveRoot(signer: Signer): Promise<bigint> {
-  const signature = await signer.signMessage(DERIVATION_MESSAGE);
-  return BigInt(ethers.hexlify(ethers.getBytes(ethers.keccak256(ethers.getBytes(signature)))));
-}
-
-/// Derive one alias's keys from an already-obtained root. Pure — no wallet interaction.
+/// The root comes from a {SeedSource} — see seed.ts. It is deliberately unrelated to the
+/// wallet that broadcasts, so no signature can reproduce it.
 export function deriveKeysFromRoot(root: bigint, aliasIndex: number = 0): HaliasKeys {
   // One seed per alias, hashed apart from the root before any key is taken from it.
   const seed = poseidonHash([root, BigInt(aliasIndex), ALIAS_DOMAIN]);
@@ -91,12 +76,6 @@ export function deriveKeysFromRoot(root: bigint, aliasIndex: number = 0): Halias
     nullifierKey:   poseidonHash([viewingPrivKey]),
     encryption:     { privateKey: encPriv, publicKey: encKeypair.publicKey },
   };
-}
-
-/// Convenience for a single alias: sign, then derive. Anything deriving more than one index
-/// should call {deriveRoot} once and {deriveKeysFromRoot} per index instead.
-export async function deriveKeysFromWallet(signer: Signer, aliasIndex: number = 0): Promise<HaliasKeys> {
-  return deriveKeysFromRoot(await deriveRoot(signer), aliasIndex);
 }
 
 // ── NaCl box output encryption ────────────────────────────────

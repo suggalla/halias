@@ -1,11 +1,13 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "noEmit": true,
     "rootDir": ".",
-    "noEmit": true
+    // Mocha loads the tests as ES modules, so they legitimately use import.meta. The build
+    // config stays commonjs — dist/ is what node runs as the CLI — which is why this is a
+    // separate config rather than a change to the one above.
+    "module": "esnext",
+    "moduleResolution": "node"
   },
-  "include": ["src", "test"],
-  "ts-node": {
-    "project": "./tsconfig.test.json"
-  }
+  "include": ["src", "test"]
 }

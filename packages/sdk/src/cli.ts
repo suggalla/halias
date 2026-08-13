@@ -101,6 +101,9 @@ COMMANDS
   invite   create <amount>               Create a funded invite link for a new user
   invite   claim <code> <alias>          Claim an invite and register your alias
 
+  keys                                   Show this alias's public keys
+  keys     new                           Generate a note-key recovery phrase
+
   aliases                                List the aliases this wallet owns
   history                                Transactions involving this alias
   privacy                                What a withdrawal now would reveal
@@ -120,7 +123,8 @@ FLAGS
   --json               Output JSON
 
 ENVIRONMENT
-  PRIVATE_KEY          Wallet private key (required)
+  PRIVATE_KEY          Wallet private key — broadcasts and pays gas (required)
+  HALIAS_MNEMONIC      Note-key recovery phrase — never signs (required)
   RPC_URL              RPC endpoint
   CHAIN_ID             Chain ID (default: 11155111 / Sepolia)
 `);
@@ -135,9 +139,29 @@ async function bootstrap(aliasIndex = 0) {
   const { getNetwork, getPoolAddress, getRegistryAddress, getControllerAddress, getStartBlock } =
     await import("halias-deployments");
 
+  const { MnemonicSource } = await import("./seed");
+
+  // Two secrets, two jobs. PRIVATE_KEY broadcasts and pays gas; HALIAS_MNEMONIC holds the
+  // note keys and never signs anything. They are deliberately unrelated — see seed.ts.
   const PRIVATE_KEY = process.env.PRIVATE_KEY;
   if (!PRIVATE_KEY) {
     process.stderr.write("Error: PRIVATE_KEY environment variable required\n");
+    process.exit(1);
+  }
+
+  const MNEMONIC = process.env.HALIAS_MNEMONIC;
+  if (!MNEMONIC) {
+    process.stderr.write(
+      "Error: HALIAS_MNEMONIC environment variable required\n" +
+      "       Run `halias keys new` to generate one.\n");
+    process.exit(1);
+  }
+
+  let seed;
+  try {
+    seed = new MnemonicSource(MNEMONIC);
+  } catch {
+    process.stderr.write("Error: HALIAS_MNEMONIC is not a valid BIP-39 phrase\n");
     process.exit(1);
   }
 
@@ -156,6 +180,7 @@ async function bootstrap(aliasIndex = 0) {
   const halias = new Halias({
     provider,
     signer,
+    seed,
     chainId: CHAIN_ID,
     poolAddress:     getPoolAddress(CHAIN_ID),
     registryAddress: getRegistryAddress(CHAIN_ID),
@@ -184,6 +209,20 @@ async function main() {
 
   if (!command || command === "help" || command === "--help" || flags["help"]) {
     usage();
+    return;
+  }
+
+  // Ahead of bootstrap, because generating a phrase is what you do when you do not have one
+  // yet — requiring HALIAS_MNEMONIC to produce a HALIAS_MNEMONIC is a locked door.
+  if (command === "keys" && sub === "new") {
+    const { generateMnemonic } = await import("./seed");
+    const phrase = generateMnemonic();
+    if (jsonMode) { outputJson({ mnemonic: phrase }); return; }
+    process.stdout.write(`${phrase}\n\n`);
+    process.stderr.write(
+      "This phrase is the wallet. Write it down offline.\n" +
+      "Anyone who has it can spend every note; nobody who loses it can recover them.\n" +
+      "Set it as HALIAS_MNEMONIC to use it.\n");
     return;
   }
 

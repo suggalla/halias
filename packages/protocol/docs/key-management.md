@@ -5,9 +5,9 @@ recovery means. Supersedes the `personal_sign` derivation described in earlier n
 
 ## The problem this replaces
 
-Today `deriveRoot()` is `keccak(personal_sign("halias key derivation v1…"))`. Signatures are
-deterministic, so **any site that persuades a user to sign that exact string derives every
-key for every alias index**, and can spend everything.
+`deriveRoot()` was `keccak(personal_sign("halias key derivation v1…"))`. Signatures are
+deterministic, so **any site that persuaded a user to sign that exact string derived every
+key for every alias index**, and could spend everything.
 
 Three properties make it worse than ordinary signature phishing:
 
@@ -139,15 +139,22 @@ interface SeedSource {
 }
 ```
 
-Implementations: `MnemonicSource` (keystore-backed, all platforms), `KeyfileSource` (CLI),
-and later `SnapSource`. The existing `personal_sign` path becomes `SignatureSource`, retained
-only for the optional viewing-key split.
+Implementations today are `MnemonicSource` (a phrase, validated when accepted) and
+`RootSource` (a root already in hand — restored from a keystore, or shared between clients so
+switching alias does not re-run PBKDF2). `SnapSource` and a view-only source come later.
+
+The `personal_sign` path is **deleted, not deprecated**. Keeping it as an option would keep
+the vulnerability: an attacker only needs the derivation a victim's client will accept, and a
+retained fallback is exactly that. Nothing had launched, so there was nothing to migrate.
 
 ## Phasing
 
-1. The seam, with `SignatureSource` behind it. No behaviour change.
+1. ~~The seam, and the mnemonic behind it.~~ **Done.** `SeedSource` in `sdk/src/seed.ts`;
+   `personal_sign` derivation removed; CLI takes `HALIAS_MNEMONIC` and has `keys new`; the
+   browser accepts a phrase per session, in memory only.
 2. CLI keystore — no browser, and it settles the encrypted-at-rest format.
-3. Browser: mnemonic creation/import, password wrapping, IndexedDB.
+3. Browser: the wizard above, password wrapping, IndexedDB. Replaces the interim
+   type-it-every-time prompt, which stores nothing rather than storing it badly.
 4. PRF wrapping as the everyday unlock.
 5. View-only export — the viewing half alone, for auditors. Already implied by the key
    structure; it needs a format and a client that runs without a spending key.
