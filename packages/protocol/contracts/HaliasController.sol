@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "./HaliasRegistry.sol";
-import "./interfaces/IHaliasPool.sol";
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import { HaliasRegistry } from "./HaliasRegistry.sol";
+import { IHaliasPool, TransactParams } from "./interfaces/IHaliasPool.sol";
+import { ERC721 } from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { Address } from "@openzeppelin/contracts/utils/Address.sol";
+import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import { SignatureChecker } from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 // ── Custom errors ─────────────────────────────────────────────────────────────
 
@@ -563,23 +563,6 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         registry.reassign(aliasHash, newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey);
     }
 
-    /// @notice The digest a recipient signs to accept `aliasHash`.
-    /// @dev    Exposed so clients sign what this contract will verify rather than
-    ///         reconstructing the encoding.
-    function acceptAliasDigest(
-        bytes32 aliasHash,
-        bytes32 newSpendingPubkey,
-        bytes32 newNullifierKeyHash,
-        bytes32 newEncryptionPubkey,
-        address to,
-        uint256 deadline
-    ) external view returns (bytes32) {
-        return _hashTypedDataV4(keccak256(abi.encode(
-            ACCEPT_ALIAS_TYPEHASH, aliasHash,
-            newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey,
-            to, aliasNonce[aliasHash], deadline
-        )));
-    }
 
     // ── Admin ──────────────────────────────────────────────────────────────────
     //

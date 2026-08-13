@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "../base/TreeZeros.sol";
+import { TreeZeros } from "../base/TreeZeros.sol";
 
 /// Exposes the internal table so TreeZeros.test.ts can pin every entry against a recomputed
 /// Poseidon chain. The library is `internal`, so it is inlined and has no address of its own.

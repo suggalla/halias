@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "./HaliasRegistry.sol";
-import "./HaliasPool.sol";
-import "./HaliasController.sol";
+import { HaliasRegistry } from "./HaliasRegistry.sol";
+import { HaliasPool } from "./HaliasPool.sol";
+import { HaliasController } from "./HaliasController.sol";
 
 error PredictionMismatch(address predicted, address actual);
 

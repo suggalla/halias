@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "../HaliasPool.sol";
+import { HaliasPool } from "../HaliasPool.sol";
 
 /// @notice A pool whose trees roll over after four leaves instead of 65,536.
 /// @dev    Everything else is the real HaliasPool: real depth, real Poseidon, real root
