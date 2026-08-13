@@ -14,6 +14,7 @@
 		newSeedPhrase,
 		hasSeed
 	} from '../sdk/client.js';
+	import { wallets, legacyWallet } from '../sdk/wallets.js';
 
 	// The wallet is a list of identities, not a balance.
 	//
@@ -141,11 +142,17 @@
 			phraseError = null;
 			phrase = '';
 			generated = false;
-			await connect();
+			// Only auto-connect when there is no choice to make. With several wallets installed
+			// the picker below is the point.
+			if ($wallets.length <= 1) await connect();
 		} catch {
 			phraseError = 'That is not a valid recovery phrase — check for typos.';
 		}
 	}
+
+	// A wallet that predates EIP-6963 injects itself and announces nothing, so it is offered
+	// only when no wallet announced — never alongside, where it would duplicate one of them.
+	const legacyOnly = $derived($wallets.length === 0 && !!legacyWallet());
 </script>
 
 <div class="wallet">
@@ -177,7 +184,27 @@
 			</div>
 		</div>
 	{:else if $clientState.status === 'idle'}
-		<button class="primary" onclick={connect}>Connect wallet</button>
+		{#if $wallets.length > 0}
+			<div class="pick">
+				<span class="label">Connect with</span>
+				<ul class="wlist">
+					{#each $wallets as w (w.info.uuid)}
+						<li>
+							<button class="w" onclick={() => connect(w.info.rdns)}>
+								<img src={w.info.icon} alt="" width="20" height="20" />
+								<span>{w.info.name}</span>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{:else if legacyOnly}
+			<button class="primary" onclick={() => connect()}>Connect wallet</button>
+		{:else}
+			<p class="hint">
+				No wallet detected. Install MetaMask, Rabby, or another EVM wallet to continue.
+			</p>
+		{/if}
 	{:else}
 		<header>
 			<div>
@@ -329,6 +356,14 @@
 	.seed-warn { font-size: 0.78rem; color: var(--text-bright); margin: 0; }
 	.seed-err { color: #ff8a80; font-size: 0.8rem; margin: 0; }
 	.seed-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+	.pick { display: flex; flex-direction: column; gap: 0.5rem; }
+	.wlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+		gap: 0.4rem; }
+	.w { width: 100%; display: flex; align-items: center; gap: 0.6rem;
+		padding: 0.6rem 0.7rem; background: var(--bg-input); border: 1px solid var(--border);
+		border-radius: 6px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+	.w:hover { border-color: var(--accent); }
+	.w img { border-radius: 4px; flex: none; }
 	.steps { margin: 0.5rem 0 0; padding-left: 1.2rem; display: flex; flex-direction: column;
 		gap: 0.35rem; font-size: 0.8rem; color: var(--text-dim); }
 	.steps li.now { color: var(--text-bright); }

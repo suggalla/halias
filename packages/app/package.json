@@ -12,7 +12,8 @@
   "dependencies": {
     "ethers": "^6.16.0",
     "halias-deployments": "*",
-    "halias-sdk": "*"
+    "halias-sdk": "*",
+    "mipd": "^0.0.7"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.8",
