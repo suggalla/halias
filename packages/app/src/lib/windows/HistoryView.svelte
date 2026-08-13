@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { formatEther } from 'ethers';
-	import { clientState, getClient, run } from '../sdk/client.js';
+	import { clientState, getClient, run, rescan } from '../sdk/client.js';
 
 	// What this alias has done, reconstructed from chain rather than recorded.
 	//
@@ -83,6 +83,28 @@
 		return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 	}
 
+	// Scanning is incremental: each refresh decrypts only what arrived since the last cursor,
+	// which is what makes reopening the app quick. That is the wrong tool for a cache that is
+	// already wrong — one written before a format change, or truncated when the browser
+	// reclaimed storage. This throws the cursor away and reads every note again.
+	//
+	// Manual and clearly labelled because it is slow, and because needing it means something
+	// went wrong rather than something being missing.
+	let rescanning = $state(false);
+	let rescanned = $state(false);
+
+	async function fullRescan() {
+		rescanning = true;
+		rescanned = false;
+		await rescan();
+		const r = await run(() => getClient().history());
+		if (r) entries = r as Entry[];
+		loaded = true;
+		rescanning = false;
+		rescanned = true;
+		setTimeout(() => (rescanned = false), 4000);
+	}
+
 	let copied = $state<string | null>(null);
 	async function copyTx(hash: string) {
 		try {
@@ -96,6 +118,20 @@
 </script>
 
 <div class="history">
+	{#if alias}
+		<div class="bar">
+			<span class="count">
+				{loaded ? `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}` : 'Reading…'}
+			</span>
+			<button class="ghost" disabled={busy || rescanning} onclick={fullRescan}>
+				{rescanning ? 'Rescanning…' : 'Rescan from scratch'}
+			</button>
+		</div>
+		{#if rescanned}
+			<p class="ok">Rescanned — this list is rebuilt from the chain.</p>
+		{/if}
+	{/if}
+
 	{#if !alias}
 		<p class="empty">Choose an alias to see its history.</p>
 	{:else if !loaded && busy}
@@ -167,4 +203,12 @@
 	.tx:hover { opacity: 0.9; }
 	.dim { color: var(--text-dim); }
 	.empty, .note { font-size: 0.8rem; color: var(--text-dim); margin: 0; }
+	.bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+		padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+	.count { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.09em;
+		color: var(--text-dim); }
+	.bar .ghost { margin-left: auto; padding: 0.35rem 0.7rem; font-size: 0.78rem;
+		border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); }
+	.bar .ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+	.ok { color: var(--accent); font-size: 0.8rem; margin: 0; }
 </style>

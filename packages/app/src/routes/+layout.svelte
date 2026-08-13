@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import type { Snippet } from 'svelte';
-	import { clientState, connect, disconnect, deselectAlias } from '$lib/sdk/client.js';
+	import { clientState, disconnect, deselectAlias } from '$lib/sdk/client.js';
 	import { getNetwork } from '$lib/sdk/config.js';
 	import WalletWindow from '$lib/windows/WalletWindow.svelte';
 	import TransactWindow from '$lib/windows/TransactWindow.svelte';
@@ -10,6 +10,7 @@
 	import RelayWindow from '$lib/windows/RelayWindow.svelte';
 	import DepositWindow from '$lib/windows/DepositWindow.svelte';
 	import ClaimWindow from '$lib/windows/ClaimWindow.svelte';
+	import Onboarding from '$lib/windows/Onboarding.svelte';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -115,7 +116,7 @@
 					Register a name, send and receive ETH. Every transfer provably goes between
 					registered identities — but which identities stay hidden.
 				</p>
-				<button class="primary big" onclick={connect}>Connect wallet</button>
+				<Onboarding />
 				{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
 			</section>
 		{:else if step === 2}
@@ -215,14 +216,8 @@
 		margin-top: 3rem; }
 	h1 { margin: 0; font-size: 1.6rem; line-height: 1.2; text-wrap: balance; }
 	.lede { margin: 0; opacity: 0.85; max-width: 30rem; line-height: 1.5; }
-	.tabs { display: flex; gap: 0.25rem; margin-bottom: 1rem; }
-	.tabs button { flex: 1; padding: 0.45rem; background: var(--bg-input);
-		border: 1px solid var(--border); border-radius: 6px; color: inherit;
-		font: inherit; cursor: pointer; }
-	/* A border colour alone was not enough of a difference to read as "selected". */
-	.tabs button.active { border-color: var(--accent); color: var(--accent-bright);
-		background: var(--bg-titlebar); font-weight: 700; }
-	.big { padding: 0.7rem 1.4rem; font-size: 0.95rem; }
+	/* Look lives in app.css — this only places it. */
+	.tabs { margin-bottom: 1rem; }
 	.err { color: #ff8a80; font-size: 0.85rem; }
 
 	.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); border: none;

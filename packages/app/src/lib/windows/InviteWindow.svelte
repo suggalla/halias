@@ -138,9 +138,6 @@
 	code { font-family: ui-monospace, monospace; }
 	.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 	.actions .primary { flex: 1; min-width: 8rem; }
-	.ghost { padding: 0.55rem 1rem; background: none; color: inherit;
-		border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font: inherit; }
-	.ghost:hover { border-color: var(--accent); }
 	.primary { padding: 0.55rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
 	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; line-height: 1.5; }

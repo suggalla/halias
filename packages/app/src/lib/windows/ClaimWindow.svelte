@@ -249,10 +249,7 @@
 	.est { display: flex; gap: 0.6rem; align-items: flex-start; flex-wrap: wrap; }
 	.actions { display: flex; gap: 0.5rem; }
 	.actions .primary { flex: 1; }
-	.ghost { padding: 0.55rem 1rem; background: none; color: inherit;
-		border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font: inherit; }
 	.ghost.sm { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
-	.ghost:hover { border-color: var(--accent); }
 	.note { font-size: 0.78rem; line-height: 1.5; padding: 0.7rem 0.8rem;
 		border: 1px solid var(--border); border-left-width: 3px;
 		border-left-color: var(--accent); border-radius: 4px; }

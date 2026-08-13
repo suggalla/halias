@@ -1,5 +1,5 @@
 import { get, writable } from 'svelte/store';
-import { BrowserProvider, Interface, isAddress, keccak256, toUtf8Bytes } from 'ethers';
+import { BrowserProvider, Contract, Interface, ZeroAddress, isAddress, keccak256, toUtf8Bytes } from 'ethers';
 import { POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI } from 'halias-sdk';
 import { findWallet, soleWallet, legacyWallet } from './wallets.js';
 
@@ -547,6 +547,43 @@ export async function refresh(): Promise<void> {
 				: null,
 			aliases: s.aliases.map((a) => (a.index === client.index ? { ...a, balance } : a))
 		};
+	});
+}
+
+/// Throw away what has been scanned and read the chain again from the alias's first block.
+///
+/// `refresh()` is incremental: it decrypts only what arrived since the last cursor, which is
+/// what makes reopening the app fast. That is the right default and the wrong recovery — a
+/// cache written by an older note format, or one truncated by a browser reclaiming storage,
+/// stays wrong no matter how many times it is refreshed. This is the way out, and it is
+/// manual because it is slow: every note in the pool, trial-decrypted again.
+export async function rescan(): Promise<void> {
+	if (!client) return;
+	await client.rescan();
+	await refresh();
+}
+
+/// Who this alias is currently offered to, or null if it is not on offer.
+export async function pendingOwnerOf(aliasHash: string): Promise<string | null> {
+	if (!baseConfig) return null;
+	const controller = new Contract(baseConfig.controllerAddress, CONTROLLER_ABI, baseConfig.provider);
+	const pending: string = await controller.pendingAliasOwner(aliasHash);
+	return pending === ZeroAddress ? null : pending;
+}
+
+/// Accept an alias someone has offered to this wallet.
+///
+/// The keys installed are this wallet's, derived at `index` — the recipient chooses them and
+/// nobody else can. That is why accepting is a separate step from offering rather than the
+/// sender simply transferring: a seller who picked the new keys could hand over the name and
+/// keep receiving everything paid to it.
+export async function acceptAliasAt(index: number, name: string): Promise<{ txHash: string } | null> {
+	const c = await clientFor(index);
+	return run(async () => {
+		const r = await c.acceptAlias(name);
+		rememberName(keccak256(toUtf8Bytes(name)), name.replace(/\.hls$/i, ''));
+		await loadAliases();
+		return r;
 	});
 }
 

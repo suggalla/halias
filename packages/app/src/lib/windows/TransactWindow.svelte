@@ -4,6 +4,7 @@
 	import PrivacyNote from './PrivacyNote.svelte';
 	import InviteWindow from './InviteWindow.svelte';
 	import ReviewStep from './ReviewStep.svelte';
+	import OwnershipView from './OwnershipView.svelte';
 
 	// Everything here acts as one alias.
 	//
@@ -17,7 +18,7 @@
 	// value moves or who receives it, because on chain that is precisely what is hidden.
 	// Signing without a summary means confirming something nobody has shown you.
 
-	type Mode = 'transfer' | 'withdraw' | 'invite';
+	type Mode = 'transfer' | 'withdraw' | 'invite' | 'ownership';
 	type Phase = 'form' | 'review' | 'handoff';
 
 	let mode = $state<Mode>('transfer');
@@ -166,11 +167,12 @@
 		</header>
 
 		{#if phase === 'form'}
-			<!-- Three things this alias can do with its notes. Inviting spends one exactly as the
-			     other two do, which is why it belongs here rather than in a global panel —
-			     redeeming, which needs no alias at all, stays in the top bar. -->
+			<!-- What this alias can do. Inviting spends a note exactly as transfer and withdraw
+			     do, which is why it belongs here rather than in a global panel — redeeming, which
+			     needs no alias at all, stays in the top bar. Ownership moves the name rather than
+			     any value, and sits here because only this alias's owner can offer it. -->
 			<div class="tabs" role="tablist">
-				{#each ['transfer', 'withdraw', 'invite'] as const as m}
+				{#each ['transfer', 'withdraw', 'invite', 'ownership'] as const as m}
 					<button role="tab" aria-selected={mode === m} class:active={mode === m}
 						onclick={() => setMode(m)}>{m}</button>
 				{/each}
@@ -178,6 +180,8 @@
 
 			{#if mode === 'invite'}
 				<InviteWindow />
+			{:else if mode === 'ownership'}
+				<OwnershipView />
 			{:else}
 			<div class="form">
 				<label>
@@ -276,12 +280,6 @@
 		flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 	.nm { font-family: ui-monospace, monospace; overflow-wrap: anywhere; font-size: 0.8rem; }
 	.bal { font-variant-numeric: tabular-nums; opacity: 0.9; }
-	.tabs { display: flex; gap: 0.25rem; }
-	.tabs button { flex: 1; padding: 0.45rem; text-transform: capitalize;
-		background: var(--bg-input); border: 1px solid var(--border);
-		border-radius: 6px; color: inherit; font: inherit; cursor: pointer; }
-	.tabs button.active { border-color: var(--accent); color: var(--accent-bright);
-		background: var(--bg-titlebar); font-weight: 700; }
 	.form { display: flex; flex-direction: column; gap: 0.6rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; }
 	label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
@@ -295,10 +293,6 @@
 		word-break: break-all; }
 	.actions { display: flex; gap: 0.5rem; }
 	.actions .primary { flex: 1; }
-	.ghost { padding: 0.55rem 1rem; background: none; color: inherit;
-		border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
-		font: inherit; }
-	.ghost:hover { border-color: var(--accent); }
 	.primary { padding: 0.55rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
 	.mono { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }

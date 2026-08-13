@@ -5,16 +5,12 @@
 		clientState,
 		run,
 		rememberName,
-		connect,
 		selectAlias,
 		clientFor,
 		loadAliases,
 		nextFreeIndex,
-		setSeedPhrase,
-		newSeedPhrase,
-		hasSeed
+		acceptAliasAt
 	} from '../sdk/client.js';
-	import { wallets, legacyWallet } from '../sdk/wallets.js';
 
 	// The wallet is a list of identities, not a balance.
 	//
@@ -119,195 +115,165 @@
 		loadAliases();
 	}
 
-	// Recovery phrase, entered per session.
+	// Accepting an alias someone offered to this wallet.
 	//
-	// Interim: key-management.md specifies a wizard that keeps this in an encrypted keystore
-	// unlocked by passkey or password. Until that exists it is typed each time and held only
-	// in memory — the one thing worse than asking again would be storing it in the clear.
-	let phrase = $state('');
-	let generated = $state(false);
-	let phraseError = $state<string | null>(null);
-	let unlocked = $state(hasSeed());
+	// It lives here rather than with the alias's own actions because you do not own it yet —
+	// there is nothing to select. Accepting installs *this* wallet's keys, derived at a free
+	// index, which is why only the recipient can complete a handover.
+	let acceptName = $state('');
+	let acceptMsg = $state<string | null>(null);
+	let acceptErr = $state<string | null>(null);
+	let accepting = $state(false);
 
-	async function generate() {
-		phrase = await newSeedPhrase();
-		generated = true;
-		phraseError = null;
-	}
+	const freeIndex = $derived(nextFreeIndex($clientState.aliases));
 
-	async function useSeed() {
-		try {
-			await setSeedPhrase(phrase);
-			unlocked = true;
-			phraseError = null;
-			phrase = '';
-			generated = false;
-			// Only auto-connect when there is no choice to make. With several wallets installed
-			// the picker below is the point.
-			if ($wallets.length <= 1) await connect();
-		} catch {
-			phraseError = 'That is not a valid recovery phrase — check for typos.';
+	async function doAccept() {
+		const name = normalizeAlias(acceptName.trim());
+		acceptMsg = null;
+		acceptErr = null;
+		if (!/^[a-z0-9]+$/.test(name)) {
+			acceptErr = 'Enter the alias name you were offered, e.g. bob.hls';
+			return;
+		}
+		accepting = true;
+		const r = await acceptAliasAt(freeIndex, `${name}.hls`);
+		accepting = false;
+		if (r) {
+			acceptMsg = `${name}.hls is yours — it now uses your keys.`;
+			acceptName = '';
+		} else {
+			acceptErr = 'Could not accept it. Check the name, and that it was offered to this address.';
 		}
 	}
-
-	// A wallet that predates EIP-6963 injects itself and announces nothing, so it is offered
-	// only when no wallet announced — never alongside, where it would duplicate one of them.
-	const legacyOnly = $derived($wallets.length === 0 && !!legacyWallet());
 </script>
 
 <div class="wallet">
-	{#if $clientState.status === 'idle' && !unlocked}
-		<div class="seed">
-			<p class="seed-intro">
-				Your recovery phrase holds your note keys. It is separate from your wallet, which
-				only broadcasts and pays gas.
-			</p>
-			<textarea
-				bind:value={phrase}
-				rows="3"
-				spellcheck="false"
-				autocomplete="off"
-				placeholder="Enter your 24-word recovery phrase, or generate a new one"
-			></textarea>
-			{#if generated}
-				<p class="seed-warn">
-					Write this down offline before continuing. It cannot be recovered, and anyone
-					who has it can spend every note.
-				</p>
-			{/if}
-			{#if phraseError}<p class="seed-err">{phraseError}</p>{/if}
-			<div class="seed-actions">
-				<button class="primary" onclick={useSeed} disabled={!phrase.trim()}>
-					Unlock and connect
-				</button>
-				<button onclick={generate}>Generate new</button>
+	<header>
+		<div>
+			<span class="label">Wallet</span>
+			<button class="addr" title="Click to copy"
+				onclick={() => $clientState.address && copy($clientState.address)}>
+				{copied === $clientState.address ? 'copied' : $clientState.address}
+			</button>
+		</div>
+		<!-- Two balances, because they are two different things and conflating them is
+		     how the header read "0.0 ETH" to someone holding 100. -->
+		<div class="balances">
+			<div class="b">
+				<span class="k">In wallet</span>
+				<span class="v">{formatEther($clientState.walletBalance)} ETH</span>
+			</div>
+			<div class="b">
+				<span class="k">Shielded</span>
+				<span class="v accent">{formatEther(total)} ETH</span>
 			</div>
 		</div>
-	{:else if $clientState.status === 'idle'}
-		{#if $wallets.length > 0}
-			<div class="pick">
-				<span class="label">Connect with</span>
-				<ul class="wlist">
-					{#each $wallets as w (w.info.uuid)}
-						<li>
-							<button class="w" onclick={() => connect(w.info.rdns)}>
-								<img src={w.info.icon} alt="" width="20" height="20" />
-								<span>{w.info.name}</span>
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</div>
-		{:else if legacyOnly}
-			<button class="primary" onclick={() => connect()}>Connect wallet</button>
+	</header>
+
+	<section>
+		<h3>Aliases</h3>
+		{#if $clientState.aliases.length === 0}
+			<p class="empty">None yet — register one below to start receiving.</p>
+		{:else}
+			<ul class="aliases">
+				{#each $clientState.aliases as a}
+					<li>
+						<button
+							class="alias"
+							disabled={busy || a.index === null}
+							onclick={() => a.index !== null && selectAlias(a.index)}
+						>
+							<span class="nm">{a.name ? `${a.name}.hls` : a.aliasHash}</span>
+							<span class="bal">{formatEther(a.balance)} ETH</span>
+						</button>
+						{#if a.index === null}
+							<!-- Owned, but no derivation index within range reproduces its published
+							     key — so this wallet can see it and cannot spend from it. -->
+							<p class="warn">Keys not derivable from this wallet — view only</p>
+						{:else if !a.name}
+							<input
+								class="label-in"
+								placeholder="Know the name? Type it to label locally"
+								onchange={(e) => labelAlias(a.aliasHash, e.currentTarget.value)}
+							/>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+
+	<section>
+		<h3>Register another</h3>
+		<div class="row">
+			<input bind:value={name} placeholder="alice" disabled={busy} aria-invalid={!!nameError} />
+			<span class="suffix">.hls</span>
+			<button class="primary" disabled={busy || !ready || !!nameError || !name.trim()}
+				onclick={handleRegister}>
+				{step === 'commit' ? 'Reserving…' : step === 'register' ? 'Registering…' : 'Register'}
+			</button>
+		</div>
+
+		<!-- Said before the wallet opens, not after. Two prompts with no warning reads as a
+		     failed first attempt, and the natural reaction is to reject the second. -->
+		{#if step}
+			<ol class="steps">
+				<li class:now={step === 'commit'} class:done={step === 'register'}>
+					Reserve the name
+					<em>Approve in your wallet — this publishes only a hash.</em>
+				</li>
+				<li class:now={step === 'register'}>
+					Register it
+					<em>A second approval, one block later.</em>
+				</li>
+			</ol>
 		{:else}
 			<p class="hint">
-				No wallet detected. Install MetaMask, Rabby, or another EVM wallet to continue.
+				Registering takes <strong>two confirmations</strong>. The first reserves the name
+				without revealing it, so nobody watching can take it before you do; the second
+				claims it a block later.
 			</p>
 		{/if}
-	{:else}
-		<header>
-			<div>
-				<span class="label">Wallet</span>
-				<button class="addr" title="Click to copy"
-					onclick={() => $clientState.address && copy($clientState.address)}>
-					{copied === $clientState.address ? 'copied' : $clientState.address}
-				</button>
-			</div>
-			<!-- Two balances, because they are two different things and conflating them is
-			     how the header read "0.0 ETH" to someone holding 100. -->
-			<div class="balances">
-				<div class="b">
-					<span class="k">In wallet</span>
-					<span class="v">{formatEther($clientState.walletBalance)} ETH</span>
-				</div>
-				<div class="b">
-					<span class="k">Shielded</span>
-					<span class="v accent">{formatEther(total)} ETH</span>
-				</div>
-			</div>
-		</header>
+		{#if nameError}
+			<p class="err">{nameError}</p>
+		{:else if preview && preview !== `${name.trim().toLowerCase()}.hls`}
+			<!-- Shows what will actually be registered when the input was not already
+			     canonical, so "Alice.HLS" or "alice.hls.hls" is not a surprise. -->
+			<p class="hint">Registers as <code>{preview}</code></p>
+		{/if}
+		<p class="hint">
+			Each alias gets its own keys, so its balance and history stay separate from your others.
+		</p>
+	</section>
 
-		<section>
-			<h3>Aliases</h3>
-			{#if $clientState.aliases.length === 0}
-				<p class="empty">None yet — register one below to start receiving.</p>
-			{:else}
-				<ul class="aliases">
-					{#each $clientState.aliases as a}
-						<li>
-							<button
-								class="alias"
-								disabled={busy || a.index === null}
-								onclick={() => a.index !== null && selectAlias(a.index)}
-							>
-								<span class="nm">{a.name ? `${a.name}.hls` : a.aliasHash}</span>
-								<span class="bal">{formatEther(a.balance)} ETH</span>
-							</button>
-							{#if a.index === null}
-								<!-- Owned, but no derivation index within range reproduces its published
-								     key — so this wallet can see it and cannot spend from it. -->
-								<p class="warn">Keys not derivable from this wallet — view only</p>
-							{:else if !a.name}
-								<input
-									class="label-in"
-									placeholder="Know the name? Type it to label locally"
-									onchange={(e) => labelAlias(a.aliasHash, e.currentTarget.value)}
-								/>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
+	<!-- The receiving half of a handover. It belongs to the wallet, not to an alias, because
+	     until this succeeds the alias is not yours and there is nothing to select. -->
+	<section>
+		<h3>Accept an alias</h3>
+		<div class="row">
+			<input
+				bind:value={acceptName}
+				placeholder="bob"
+				disabled={busy || accepting}
+				onkeydown={(e) => e.key === 'Enter' && doAccept()}
+			/>
+			<span class="suffix">.hls</span>
+			<button class="primary" disabled={busy || accepting || !acceptName.trim()} onclick={doAccept}>
+				{accepting ? 'Accepting…' : 'Accept'}
+			</button>
+		</div>
+		<p class="hint">
+			If someone has offered you an alias, this completes the handover. It installs
+			<strong>your</strong> keys — the previous owner cannot choose them, and cannot read
+			anything paid to it afterwards. It arrives at index {freeIndex} with its own balance.
+		</p>
+		{#if acceptErr}<p class="err">{acceptErr}</p>{/if}
+		{#if acceptMsg}<p class="ok">{acceptMsg}</p>{/if}
+	</section>
 
-		<section>
-			<h3>Register another</h3>
-			<div class="row">
-				<input bind:value={name} placeholder="alice" disabled={busy} aria-invalid={!!nameError} />
-				<span class="suffix">.hls</span>
-				<button class="primary" disabled={busy || !ready || !!nameError || !name.trim()}
-					onclick={handleRegister}>
-					{step === 'commit' ? 'Reserving…' : step === 'register' ? 'Registering…' : 'Register'}
-				</button>
-			</div>
-
-			<!-- Said before the wallet opens, not after. Two prompts with no warning reads as a
-			     failed first attempt, and the natural reaction is to reject the second. -->
-			{#if step}
-				<ol class="steps">
-					<li class:now={step === 'commit'} class:done={step === 'register'}>
-						Reserve the name
-						<em>Approve in your wallet — this publishes only a hash.</em>
-					</li>
-					<li class:now={step === 'register'}>
-						Register it
-						<em>A second approval, one block later.</em>
-					</li>
-				</ol>
-			{:else}
-				<p class="hint">
-					Registering takes <strong>two confirmations</strong>. The first reserves the name
-					without revealing it, so nobody watching can take it before you do; the second
-					claims it a block later.
-				</p>
-			{/if}
-			{#if nameError}
-				<p class="err">{nameError}</p>
-			{:else if preview && preview !== `${name.trim().toLowerCase()}.hls`}
-				<!-- Shows what will actually be registered when the input was not already
-				     canonical, so "Alice.HLS" or "alice.hls.hls" is not a surprise. -->
-				<p class="hint">Registers as <code>{preview}</code></p>
-			{/if}
-			<p class="hint">
-				Each alias gets its own keys, so its balance and history stay separate from your others.
-			</p>
-		</section>
-
-		{#if msg}<p class="ok">{msg}</p>{/if}
-		{#if labelError}<p class="err">{labelError}</p>{/if}
-		{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
-	{/if}
+	{#if msg}<p class="ok">{msg}</p>{/if}
+	{#if labelError}<p class="err">{labelError}</p>{/if}
+	{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
 </div>
 
 <style>
@@ -346,24 +312,6 @@
 	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
 	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }
 	.primary { padding: 0.5rem 0.9rem; }
-	.seed { display: flex; flex-direction: column; gap: 0.6rem; }
-	.seed textarea { width: 100%; resize: vertical; font-family: ui-monospace, monospace;
-		font-size: 0.8rem; line-height: 1.5; padding: 0.5rem 0.6rem;
-		background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
-		color: inherit; }
-	.seed textarea:focus { outline: none; border-color: var(--accent); }
-	.seed-intro { font-size: 0.8rem; color: var(--text-dim); margin: 0; }
-	.seed-warn { font-size: 0.78rem; color: var(--text-bright); margin: 0; }
-	.seed-err { color: #ff8a80; font-size: 0.8rem; margin: 0; }
-	.seed-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-	.pick { display: flex; flex-direction: column; gap: 0.5rem; }
-	.wlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
-		gap: 0.4rem; }
-	.w { width: 100%; display: flex; align-items: center; gap: 0.6rem;
-		padding: 0.6rem 0.7rem; background: var(--bg-input); border: 1px solid var(--border);
-		border-radius: 6px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-	.w:hover { border-color: var(--accent); }
-	.w img { border-radius: 4px; flex: none; }
 	.steps { margin: 0.5rem 0 0; padding-left: 1.2rem; display: flex; flex-direction: column;
 		gap: 0.35rem; font-size: 0.8rem; color: var(--text-dim); }
 	.steps li.now { color: var(--text-bright); }
