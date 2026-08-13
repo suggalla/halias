@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { normalizeAlias } from "./alias";
+import { normalizeAlias, AliasTakenError } from "./alias";
 import { deriveKeysFromRoot, poseidonHash } from "./crypto";
 import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS } from "./entry";
 import { PoolTrees } from "./merkle";
@@ -104,6 +104,8 @@ export class Halias extends HaliasCore {
   /// The index is not stored on chain — it does not need to be. Recovery rederives indices
   /// and matches them against the spending pubkeys the registry publishes; see
   /// {aliasIndexOf}.
+  ///
+  /// Throws {AliasTakenError} without sending anything if the name is already registered.
   async register(
     alias: string,
     onStep?: (step: "commit" | "register") => void,
@@ -115,13 +117,25 @@ export class Halias extends HaliasCore {
     this.ensureInit();
     const cleanAlias = normalizeAlias(alias);
 
+    // Ask before paying. Registration is commit-then-reveal, and a taken name only fails at
+    // the reveal — so without this the commit is mined and paid for, and the second
+    // transaction reverts with AliasTaken. The user is charged for learning something a free
+    // call could have told them.
+    //
+    // Not a substitute for the contract's own check, and not meant to be: a name can be taken
+    // between this read and the transaction. That race ends in exactly the revert this avoids
+    // in the ordinary case, which is the right place for it to be handled.
+    if (await this.isAliasTaken(cleanAlias)) {
+      throw new AliasTakenError(`${cleanAlias}.hls is already registered`);
+    }
+
     const spendingBytes32 = this.keys!.spendingPubkey;
     const encBytes32      = BigInt(ethers.hexlify(this.keys!.encryption.publicKey));
 
     // The commit-reveal secret, derived rather than random, so nothing has to survive
     // between the two transactions. A random salt lives only in the memory of the session
     // that committed: lose it — a refresh, a crash, a different device — and the commitment
-    // is unspendable and has to be remade. This one is recomputed from the wallet signature.
+    // is unspendable and has to be remade. This one is recomputed from the root.
     //
     // Derived from the ROOT, not from the keys. The keys are already in the commitment, so a
     // salt derived from them would add no entropy — anyone able to guess them could compute
@@ -143,6 +157,14 @@ export class Halias extends HaliasCore {
     return { txHash: await this.settle(tx) };
   }
 
+  /// Is this name already registered? A free read, and the same question {register} asks
+  /// before it spends anything.
+  async isAliasTaken(alias: string): Promise<boolean> {
+    this.ensureInit();
+    return await this.registry.isRegistered(
+      ethers.toBeHex(this.aliasHashOf(alias), 32),
+    ) as boolean;
+  }
 
   async deposit(amountEth: string, tokenAddress: bigint = ETH_TOKEN_ADDRESS): Promise<DepositResult> {
     this.ensureInit();
@@ -591,7 +613,7 @@ export class Halias extends HaliasCore {
     config: HaliasConfig,
     maxIndex: number = 32,
     root?: bigint,
-  ): Promise<{ aliasHash: string; slot: number; index: number | null; root: bigint }[]> {
+  ): Promise<{ aliasHash: string; slot: number; name: string | null; index: number | null; root: bigint }[]> {
     // Pass `root` on any call after the first. Without it every enumeration signs again,
     // and enumeration happens after each registration.
     const probe = new Halias(config);

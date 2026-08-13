@@ -21,6 +21,10 @@ const MAX_LENGTH = 63;   // one DNS label, so a name is never awkward to display
 
 export class InvalidAliasError extends Error {}
 
+/// The name is well-formed but already registered. Distinct from {InvalidAliasError} because
+/// the answers differ: one means fix the name, the other means pick a different one.
+export class AliasTakenError extends Error {}
+
 /// Normalise user input to the bare label — no suffix, lowercase, trimmed.
 ///
 /// Accepts `alice`, `alice.hls`, `ALICE.hls`, and ` alice.hls.hls ` alike, because people

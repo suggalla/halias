@@ -30,6 +30,13 @@
 
 	type Stage = 'choose' | 'unlock' | 'phrase' | 'protect' | 'wallet';
 
+	// Which path is being walked, which decides how many steps there are.
+	//
+	// Unlocking a stored wallet is one step before connecting; adding one is two, because the
+	// phrase and the password are different things protecting different things. Numbering
+	// them together is what made a single step appear to change identity halfway through.
+	let mode = $state<'unlock' | 'create'>('create');
+
 	let entries = $state<VaultEntry[]>([]);
 	let ready = $state(false);
 	let stage = $state<Stage>('choose');
@@ -64,12 +71,25 @@
 		listVault().then((e) => {
 			entries = e;
 			ready = true;
-			if (e.length > 0 && stage === 'choose') {
+			if (stage !== 'choose') return;
+			if (e.length > 0) {
+				mode = 'unlock';
 				selected = e[0];
 				stage = 'unlock';
+			} else {
+				stage = 'phrase';
 			}
 		});
 	});
+
+	/// Leave the saved wallets and add another phrase.
+	function startCreate() {
+		mode = 'create';
+		stage = 'phrase';
+		error = null;
+		phrase = '';
+		label = '';
+	}
 
 	async function refreshEntries() {
 		entries = await listVault();
@@ -110,7 +130,10 @@
 		await deleteVault(entry.id);
 		await refreshEntries();
 		selected = entries[0] ?? null;
-		if (!selected) stage = 'choose';
+		// Removing the last one leaves nothing to unlock. The effect that chose this path has
+		// already run and will not run again, so without this the screen sits on an unlock step
+		// with no wallet in it — a dead end reachable by a button we put there.
+		if (!selected) startCreate();
 	}
 
 	// ── add a new one ──────────────────────────────────────────────────────────
@@ -166,197 +189,212 @@
 		busy = false;
 	}
 </script>
-
 <div class="onboard">
 	<ol class="steps">
-		<li class:on={stage !== 'wallet'} class:done={stage === 'wallet'}>
-			<span class="num">{stage === 'wallet' ? '✓' : '1'}</span>
-			<div class="body">
-				<h2>Your recovery phrase</h2>
+		{#if !ready}
+			<li class="on">
+				<span class="num">1</span>
+				<div class="body"><p class="say pending">Checking this browser…</p></div>
+			</li>
 
-				{#if !ready}
-					<p class="say pending">Checking this browser…</p>
+		{:else if mode === 'unlock'}
+			<!-- Unlocking is one step, not two. There is nothing to protect that is not already
+			     protected, so numbering a second step here would count an action nobody takes. -->
+			<li class:on={stage === 'unlock'} class:done={stage === 'wallet'}>
+				<span class="num">{stage === 'wallet' ? '✓' : '1'}</span>
+				<div class="body">
+					<h2>Unlock your wallet</h2>
 
-				{:else if stage === 'wallet'}
-					<p class="sum">Unlocked.</p>
+					{#if stage === 'wallet'}
+						<p class="sum">Unlocked.</p>
+					{:else if selected}
+						<p class="say">
+							<strong>{selected.label}</strong> is stored on this browser, encrypted. Unlock it
+							to continue.
+						</p>
 
-				{:else if stage === 'unlock' && selected}
-					<p class="say">
-						<strong>{selected.label}</strong> is stored on this browser, encrypted. Unlock it
-						to continue.
-					</p>
+						{#if entries.length > 1}
+							<div class="tabs" role="tablist">
+								{#each entries as e (e.id)}
+									<button role="tab" aria-selected={selected?.id === e.id}
+										class:active={selected?.id === e.id}
+										onclick={() => { selected = e; error = null; password = ''; }}>{e.label}</button>
+								{/each}
+							</div>
+						{/if}
 
-					{#if entries.length > 1}
-						<div class="tabs" role="tablist">
-							{#each entries as e (e.id)}
-								<button role="tab" aria-selected={selected?.id === e.id}
-									class:active={selected?.id === e.id}
-									onclick={() => { selected = e; error = null; password = ''; }}>{e.label}</button>
-							{/each}
+						{#if selected.hasPasskey}
+							<button class="primary" disabled={busy} onclick={() => unlockPasskey(selected!)}>
+								{busy ? 'Waiting…' : 'Unlock with passkey'}
+							</button>
+							<p class="or">or</p>
+						{/if}
+
+						<!-- A real form with an account-name field, so a password manager can keep one
+						     password per wallet instead of offering the same one for all of them. A saved
+						     credential is keyed on that field; with only a password there is nothing to
+						     key on, and the second wallet silently overwrites the first's entry.
+						     Readonly and visible rather than hidden — hidden ones are widely ignored, and
+						     it doubles as saying which wallet is about to open.
+						     `autocomplete="username"` is the spec's token for this field and has to stay
+						     that literal string; only what the reader sees is an account name. -->
+						<form onsubmit={(e) => { e.preventDefault(); unlockPassword(selected!); }}>
+							<label>
+								<span>Account name</span>
+								<input value={selected.label} readonly autocomplete="username" name="username" />
+							</label>
+							<label>
+								<span>Password</span>
+								<input type="password" bind:value={password} autocomplete="current-password"
+									name="password" disabled={busy} />
+							</label>
+							<button class="ghost" type="submit" disabled={busy || !password}>
+								Unlock with password
+							</button>
+						</form>
+
+						{#if error}<p class="err">{error}</p>{/if}
+
+						<div class="alt">
+							<button class="link" onclick={startCreate}>Use a different phrase</button>
+							<button class="link danger" onclick={() => forget(selected!)}>
+								Remove from this browser
+							</button>
 						</div>
 					{/if}
+				</div>
+			</li>
 
-					{#if selected.hasPasskey}
-						<button class="primary" disabled={busy} onclick={() => unlockPasskey(selected!)}>
-							{busy ? 'Waiting…' : 'Unlock with passkey'}
-						</button>
-						<p class="or">or</p>
-					{/if}
+		{:else}
+			<!-- Creating is two: the phrase is the wallet and exists whatever this device does
+			     with it; the password only protects the copy kept here. Collapsing them into one
+			     step is what made the form appear to change identity halfway through. -->
+			<li class:on={stage === 'phrase'} class:done={stage !== 'phrase'}>
+				<span class="num">{stage === 'phrase' ? '1' : '✓'}</span>
+				<div class="body">
+					<h2>Your recovery phrase</h2>
 
-					<!-- A real form with an account-name field, so a password manager can keep one
-					     password per wallet instead of offering the same one for all of them. A saved
-					     credential is keyed on that field; with only a password there is nothing to key
-					     on, and the second wallet silently overwrites the first's entry.
-					     Readonly and visible rather than hidden — hidden ones are widely ignored, and
-					     it doubles as saying which wallet is about to open.
-					     `autocomplete="username"` is the spec's token for this field and has to stay
-					     that literal string; only what the reader sees is an account name. -->
-					<form onsubmit={(e) => { e.preventDefault(); unlockPassword(selected!); }}>
-						<label>
-							<span>Account name</span>
-							<input value={selected.label} readonly autocomplete="username" name="username" />
-						</label>
-						<label>
-							<span>Password</span>
-							<input
-								type="password"
-								bind:value={password}
-								autocomplete="current-password"
-								name="password"
-								disabled={busy}
-							/>
-						</label>
-						<button class="ghost" type="submit" disabled={busy || !password}>
-							Unlock with password
-						</button>
-					</form>
-
-					{#if error}<p class="err">{error}</p>{/if}
-
-					<div class="alt">
-						<button class="link" onclick={() => { stage = 'phrase'; error = null; phrase = ''; }}>
-							Use a different phrase
-						</button>
-						<button class="link danger" onclick={() => forget(selected!)}>
-							Remove from this browser
-						</button>
-					</div>
-
-				{:else if stage === 'protect'}
-					<p class="say">
-						Choose a password. It encrypts <strong>this browser's copy</strong> — it is not
-						your recovery phrase, and it cannot recover the wallet anywhere else.
-					</p>
-					<!-- The account name is what a password manager saves this password against, which
-					     is what lets it hold one password per wallet rather than offering the first
-					     wallet's for all of them. -->
-					<form onsubmit={(e) => { e.preventDefault(); saveAndUnlock(); }}>
-						<label>
-							<span>Account name</span>
-							<input
-								bind:value={label}
-								maxlength="40"
-								autocomplete="username"
-								name="username"
-								disabled={busy}
-								placeholder={nextLabel(entries)}
-							/>
-						</label>
-						<p class="note">
-							Tells wallets apart on this device, in your passkey list, and in your password
-							manager. Not a secret, and not part of any key.
+					{#if stage !== 'phrase'}
+						<p class="sum">Held for this session.</p>
+					{:else}
+						<p class="say">
+							This holds your note keys — your balance and your history. It is
+							<strong>not</strong> your Ethereum wallet, and no wallet can recreate it.
 						</p>
-						<label>
-							<span>Password</span>
-							<input type="password" bind:value={password} autocomplete="new-password"
-								name="new-password" disabled={busy} />
-						</label>
-						<label>
-							<span>Confirm password</span>
-							<input type="password" bind:value={password2} autocomplete="new-password"
-								disabled={busy} />
-						</label>
 
-						{#if canPasskey}
+						<textarea
+							bind:value={phrase}
+							rows="3"
+							spellcheck="false"
+							autocomplete="off"
+							class:masked={generated && !revealed}
+							placeholder="Enter your 24-word phrase, or generate a new one"
+						></textarea>
+
+						{#if generated}
+							<p class="warn">
+								Write this down offline <em>now</em>. Nothing else can recover it, and anyone
+								who has it can spend every note you hold.
+							</p>
 							<label class="check">
-								<input type="checkbox" bind:checked={wantPasskey} disabled={busy} />
-								<span>
-									Also add a passkey
-									<em>Unlock with your fingerprint or face next time. The password keeps
-										working — some devices cannot use a passkey.</em>
-								</span>
+								<input type="checkbox" bind:checked={confirmedWritten} />
+								<span>I have written it down</span>
 							</label>
+							<button class="link" onclick={() => (revealed = !revealed)}>
+								{revealed ? 'Hide' : 'Show'} phrase
+							</button>
 						{/if}
 
 						{#if error}<p class="err">{error}</p>{/if}
+
 						<div class="row">
-							<button class="ghost" type="button" disabled={busy} onclick={() => (stage = 'phrase')}>
-								Back
-							</button>
-							<button class="primary" type="submit" disabled={busy}>
-								{busy ? 'Encrypting…' : 'Save and continue'}
-							</button>
+							<button class="primary" disabled={!phrase.trim()} onclick={toProtect}>Continue</button>
+							<button class="ghost" onclick={generate}>Generate new</button>
 						</div>
-					</form>
 
-				{:else}
-					<!-- choose / phrase -->
-					<p class="say">
-						This holds your note keys — your balance and your history. It is
-						<strong>not</strong> your Ethereum wallet, and no wallet can recreate it.
-					</p>
+						{#if entries.length > 0}
+							<button class="link" onclick={() => { mode = 'unlock'; stage = 'unlock'; error = null; }}>
+								← Back to saved wallets
+							</button>
+						{/if}
+					{/if}
+				</div>
+			</li>
 
-					<textarea
-						bind:value={phrase}
-						rows="3"
-						spellcheck="false"
-						autocomplete="off"
-						class:masked={generated && !revealed}
-						placeholder="Enter your 24-word phrase, or generate a new one"
-					></textarea>
+			<li class:on={stage === 'protect'} class:done={stage === 'wallet'}
+				class:pending={stage === 'phrase'}>
+				<span class="num">{stage === 'wallet' ? '✓' : '2'}</span>
+				<div class="body">
+					<h2>Protect it on this device</h2>
 
-					{#if generated}
-						<p class="warn">
-							Write this down offline <em>now</em>. Nothing else can recover it, and anyone
-							who has it can spend every note you hold.
+					{#if stage === 'phrase'}
+						<p class="say pending">A password, so you do not retype the phrase every time.</p>
+					{:else if stage === 'wallet'}
+						<p class="sum">Saved and encrypted.</p>
+					{:else}
+						<p class="say">
+							Choose a password. It encrypts <strong>this browser's copy</strong> — it is not
+							your recovery phrase, and it cannot recover the wallet anywhere else.
 						</p>
-						<label class="check">
-							<input type="checkbox" bind:checked={confirmedWritten} />
-							<span>I have written it down</span>
-						</label>
-						<button class="link" onclick={() => (revealed = !revealed)}>
-							{revealed ? 'Hide' : 'Show'} phrase
-						</button>
+						<!-- The account name is what a password manager saves this password against,
+						     which lets it hold one password per wallet rather than offering the first
+						     wallet's for all of them. -->
+						<form onsubmit={(e) => { e.preventDefault(); saveAndUnlock(); }}>
+							<label>
+								<span>Account name</span>
+								<input bind:value={label} maxlength="40" autocomplete="username" name="username"
+									disabled={busy} placeholder={nextLabel(entries)} />
+							</label>
+							<p class="note">
+								Tells wallets apart on this device, in your passkey list, and in your password
+								manager. Not a secret, and not part of any key.
+							</p>
+							<label>
+								<span>Password</span>
+								<input type="password" bind:value={password} autocomplete="new-password"
+									name="new-password" disabled={busy} />
+							</label>
+							<label>
+								<span>Confirm password</span>
+								<input type="password" bind:value={password2} autocomplete="new-password"
+									disabled={busy} />
+							</label>
+
+							{#if canPasskey}
+								<label class="check">
+									<input type="checkbox" bind:checked={wantPasskey} disabled={busy} />
+									<span>
+										Also add a passkey
+										<em>Unlock with your fingerprint or face next time. The password keeps
+											working — some devices cannot use a passkey.</em>
+									</span>
+								</label>
+							{/if}
+
+							{#if error}<p class="err">{error}</p>{/if}
+							<div class="row">
+								<button class="ghost" type="button" disabled={busy}
+									onclick={() => (stage = 'phrase')}>Back</button>
+								<button class="primary" type="submit" disabled={busy}>
+									{busy ? 'Encrypting…' : 'Save and continue'}
+								</button>
+							</div>
+						</form>
 					{/if}
-
-					{#if error}<p class="err">{error}</p>{/if}
-
-					<div class="row">
-						<button class="primary" disabled={!phrase.trim()} onclick={toProtect}>Continue</button>
-						<button class="ghost" onclick={generate}>Generate new</button>
-					</div>
-
-					{#if entries.length > 0}
-						<button class="link" onclick={() => { stage = 'unlock'; error = null; }}>
-							← Back to saved wallets
-						</button>
-					{/if}
-				{/if}
-
-				{#if notice}<p class="warn">{notice}</p>{/if}
-			</div>
-		</li>
+				</div>
+			</li>
+		{/if}
 
 		<li class:on={stage === 'wallet'} class:pending={stage !== 'wallet'}>
-			<span class="num">2</span>
+			<span class="num">{mode === 'unlock' ? '2' : '3'}</span>
 			<div class="body">
 				<h2>Your wallet</h2>
 				{#if stage !== 'wallet'}
 					<p class="say pending">Broadcasts your transactions and pays gas.</p>
 				{:else}
 					<p class="say">
-						Only broadcasts and pays gas. It never sees the phrase above and cannot spend
-						your notes.
+						Only broadcasts and pays gas. It never sees your phrase and cannot spend your
+						notes.
 					</p>
 
 					{#if $wallets.length > 0}
@@ -384,6 +422,8 @@
 			</div>
 		</li>
 	</ol>
+
+	{#if notice}<p class="warn notice">{notice}</p>{/if}
 </div>
 
 <style>
@@ -410,6 +450,8 @@
 	.say { margin: 0; font-size: 0.85rem; line-height: 1.55; color: var(--text); }
 	.say.pending, .sum { color: var(--text-dim); font-size: 0.8rem; }
 	.sum { margin: 0; }
+	/* Sits under the list rather than inside a step, since it reports on the whole setup. */
+	.notice { margin-top: 0.6rem; }
 	.say strong { color: var(--accent-bright); font-weight: 700; }
 
 	/* The forms wrap what .body used to lay out directly, so they carry the same column. */

@@ -23,6 +23,10 @@
 
 	let name = $state('');
 	let msg = $state<string | null>(null);
+	// Availability, which only the chain can answer — separate from nameError, which is a
+	// shape rule this browser can check on its own. Cleared as soon as the name changes, so
+	// it never outlives the name it was about.
+	let takenError = $state<string | null>(null);
 	let labelError = $state<string | null>(null);
 
 	// Validate as it is typed. The same rule runs in the SDK before the transaction, but a
@@ -67,6 +71,7 @@
 
 	async function handleRegister() {
 		step = null;
+		takenError = null;
 		if (nameError) return;
 		let clean: string;
 		try {
@@ -83,14 +88,22 @@
 		// screen, which unmounts this form while it is still submitting.
 		const index = nextFreeIndex($clientState.aliases);
 		const c = await clientFor(index);
+
+		// Asked before the wallet opens. The SDK refuses a taken name too, but reaching it
+		// through run() means the wallet has already prompted — and registration prompts
+		// twice, so the answer arrives after the reservation is mined and paid for.
+		if (await c.isAliasTaken(clean)) {
+			takenError = `${clean}.hls is already taken — try another name.`;
+			return;
+		}
 		// Registration is the one action that asks for two signatures. Naming the step turns a
 		// second unexplained wallet prompt into an expected one — without it the natural read
 		// is that the first attempt failed.
 		if (await run(() => c.register(clean, (s: 'commit' | 'register') => (step = s)))) {
 			step = null;
-			// The hash is derived from the name, not read back from the client — the contract
-			// stores a keccak and cannot return the plaintext, which is the whole reason this
-			// map exists.
+			// Remembered locally so the name shows before the next scan picks up the
+			// NamePublished event the registration just emitted. The chain is the source of
+			// truth; this only covers the gap.
 			rememberName(keccak256(toUtf8Bytes(clean + '.hls')), clean);
 			msg = `Registered ${clean}.hls`;
 			name = '';
@@ -219,7 +232,13 @@
 	<section>
 		<h3>Register another</h3>
 		<div class="row">
-			<input bind:value={name} placeholder="alice" disabled={busy} aria-invalid={!!nameError} />
+			<input
+				bind:value={name}
+				placeholder="alice"
+				disabled={busy}
+				aria-invalid={!!nameError || !!takenError}
+				oninput={() => (takenError = null)}
+			/>
 			<span class="suffix">.hls</span>
 			<button class="primary" disabled={busy || !ready || !!nameError || !name.trim()}
 				onclick={handleRegister}>
@@ -249,6 +268,8 @@
 		{/if}
 		{#if nameError}
 			<p class="err">{nameError}</p>
+		{:else if takenError}
+			<p class="err">{takenError}</p>
 		{:else if preview && preview !== `${name.trim().toLowerCase()}.hls`}
 			<!-- Shows what will actually be registered when the input was not already
 			     canonical, so "Alice.HLS" or "alice.hls.hls" is not a surprise. -->
@@ -288,9 +309,8 @@
 			</p>
 			{#if offers.some((o) => !o.name)}
 				<p class="hint">
-					An alias shows as a hash when this browser has never seen its name. The chain
-					stores only the hash, so the name has to come from whoever offered it — you can
-					accept without knowing it, then label it above.
+					One of these has no published name, so only its hash can be shown. It can be
+					accepted regardless — the contract identifies an alias by hash, never by name.
 				</p>
 			{/if}
 			{#if acceptErr}<p class="err">{acceptErr}</p>{/if}
