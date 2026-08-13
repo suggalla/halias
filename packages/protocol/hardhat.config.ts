@@ -29,13 +29,6 @@ const config: HardhatUserConfig = {
     artifacts: "/tmp/halias-artifacts",
     cache:     "/tmp/halias-cache",
   },
-  // `npm run test:fast` skips the three suites that generate real Groth16 proofs or parse the
-  // 42MB proving key. They are ~85% of the suite's wall time for ~17% of its tests, so leaving
-  // them out gives a much tighter edit-run loop. They are not optional — `test:hardhat` still
-  // runs everything, and that is what has to pass before anything ships.
-  mocha: process.env.FAST
-    ? { grep: "E2E against the real verifier|Circuit/contract alignment|SDK preimage agreement", invert: true }
-    : {},
   networks: {
     hardhat: {
       allowUnlimitedContractSize: true,
