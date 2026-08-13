@@ -213,10 +213,10 @@
 
 	.mono { font-family: ui-monospace, monospace; font-size: 0.78rem; overflow-wrap: anywhere; }
 	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
-	.warn { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--accent-bright);
-		border-left: 2px solid var(--accent); padding-left: 0.6rem; }
-	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }
-	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
+	.warn { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--caution);
+		border-left: 2px solid var(--caution); padding-left: 0.6rem; }
+	.err { color: var(--bad); font-size: 0.85rem; margin: 0; }
+	.ok { color: var(--good); font-size: 0.85rem; margin: 0; }
 
 	.actions { display: flex; gap: 0.5rem; }
 	.actions .primary { flex: 1; }

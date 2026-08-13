@@ -366,8 +366,8 @@
 	.from { font-size: 0.7rem; color: var(--text-dim); font-family: ui-monospace, monospace;
 		overflow-wrap: anywhere; }
 	.offers .primary { padding: 0.4rem 0.9rem; }
-	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
-	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }
+	.ok { color: var(--good); font-size: 0.85rem; margin: 0; }
+	.err { color: var(--bad); font-size: 0.85rem; margin: 0; }
 	.primary { padding: 0.5rem 0.9rem; }
 	.steps { margin: 0.5rem 0 0; padding-left: 1.2rem; display: flex; flex-direction: column;
 		gap: 0.35rem; font-size: 0.8rem; color: var(--text-dim); }

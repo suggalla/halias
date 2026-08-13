@@ -92,7 +92,7 @@
 		opacity: 0.9;
 	}
 	.note.good { border-left-color: var(--accent); }
-	.note.warn { border-left-color: #ffb27a; }
+	.note.warn { border-left-color: var(--caution); }
 	strong { font-weight: 600; }
 	ul { list-style: none; margin: 0.6rem 0 0; padding: 0; display: flex;
 		flex-direction: column; gap: 0.2rem; }

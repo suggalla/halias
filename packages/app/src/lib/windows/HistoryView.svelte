@@ -187,18 +187,18 @@
 		align-items: baseline; padding: 0.55rem 0.7rem; background: var(--bg-input);
 		border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; }
 	.kind { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.88; }
-	.kind.deposit, .kind.receive { color: var(--accent); }
-	.kind.send, .kind.withdraw { color: #ffb27a; }
-	.kind.register { color: #8fb8ff; }
+	.kind.deposit, .kind.receive { color: var(--good); }
+	.kind.send, .kind.withdraw { color: var(--caution); }
+	.kind.register { color: var(--info); }
 	.amt { font-variant-numeric: tabular-nums; }
 	.blk { color: var(--text-dim); font-size: 0.75rem; }
 	.meta { grid-column: 1 / -1; font-size: 0.7rem; color: var(--text-dim);
 		font-variant-numeric: tabular-nums; }
 	.payer { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
-	.payer.other { opacity: 1; color: #8fb8ff; }
+	.payer.other { opacity: 1; color: var(--info); }
 	.tag { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.07em;
 		border: 1px solid currentColor; border-radius: 3px; padding: 0 0.25rem;
-		color: #8fb8ff; opacity: 0.9; }
+		color: var(--info); opacity: 0.9; }
 	/* Spans the row: a full hash does not fit beside the rest and is the thing you copy. */
 	.tx { grid-column: 1 / -1; color: var(--text-dim); font-size: 0.7rem;
 		font-family: ui-monospace, monospace; overflow-wrap: anywhere; text-align: left;
@@ -215,5 +215,5 @@
 	.bar .ghost { margin-left: auto; padding: 0.35rem 0.7rem; font-size: 0.78rem;
 		border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); }
 	.bar .ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-	.ok { color: var(--accent); font-size: 0.8rem; margin: 0; }
+	.ok { color: var(--good); font-size: 0.8rem; margin: 0; }
 </style>

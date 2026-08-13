@@ -257,6 +257,6 @@
 	code { font-family: ui-monospace, monospace; }
 	.primary { padding: 0.55rem; }
 	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
-	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; line-height: 1.5; }
-	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; line-height: 1.5; }
+	.ok { color: var(--good); font-size: 0.85rem; margin: 0; line-height: 1.5; }
+	.err { color: var(--bad); font-size: 0.85rem; margin: 0; line-height: 1.5; }
 </style>

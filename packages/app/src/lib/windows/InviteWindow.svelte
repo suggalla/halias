@@ -133,12 +133,12 @@
 		border-radius: 6px; padding: 0.55rem; }
 	.note { font-size: 0.78rem; line-height: 1.5; padding: 0.7rem 0.8rem;
 		border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; }
-	.note.warn { border-left-color: #ffb27a; }
+	.note.warn { border-left-color: var(--caution); }
 	strong { font-weight: 600; }
 	code { font-family: ui-monospace, monospace; }
 	.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 	.actions .primary { flex: 1; min-width: 8rem; }
 	.primary { padding: 0.55rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
-	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; line-height: 1.5; }
+	.err { color: var(--bad); font-size: 0.85rem; margin: 0; line-height: 1.5; }
 </style>

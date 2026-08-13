@@ -211,18 +211,18 @@
 	dl { margin: 0; display: grid; grid-template-columns: 8rem 1fr; gap: 0.4rem 1rem;
 		font-size: 0.85rem; padding: 0.8rem; border: 1px solid var(--border);
 		border-left-width: 3px; border-left-color: var(--accent); border-radius: 6px; }
-	dl.bad { border-left-color: #ff8a80; }
+	dl.bad { border-left-color: var(--bad); }
 	dt { color: var(--text-dim); }
 	dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 	.mono { font-family: ui-monospace, monospace; font-size: 0.78rem; }
 	dd em { display: block; font-style: normal; font-size: 0.75rem; color: var(--text-dim);
 		margin-top: 0.15rem; }
 	.good { color: var(--accent); }
-	.warn { color: #ffb27a; }
+	.warn { color: var(--caution); }
 	.primary { padding: 0.55rem; }
 	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; }
-	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
-	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; line-height: 1.5; }
+	.ok { color: var(--good); font-size: 0.85rem; margin: 0; }
+	.err { color: var(--bad); font-size: 0.85rem; margin: 0; line-height: 1.5; }
 	p.warn { font-size: 0.85rem; margin: 0; line-height: 1.5; }
 	@media (max-width: 30rem) {
 		dl { grid-template-columns: 1fr; gap: 0.1rem; }

@@ -140,8 +140,8 @@
 	p { margin: 0; font-size: 0.85rem; line-height: 1.55; opacity: 0.88; }
 	strong { opacity: 1; font-weight: 600; }
 	code { font-family: ui-monospace, monospace; opacity: 0.9; }
-	.caution { border-top-color: #ffb27a; }
-	.caution strong { color: #ffb27a; }
+	.caution { border-top-color: var(--caution); }
+	.caution strong { color: var(--caution); }
 	@media (max-width: 30rem) {
 		dl { grid-template-columns: 1fr; gap: 0.15rem; }
 		dt { margin-top: 0.5rem; }

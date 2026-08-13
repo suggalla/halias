@@ -608,10 +608,10 @@
 	/* A freshly generated phrase should not sit legible on screen while someone finds a pen. */
 	textarea.masked { -webkit-text-security: disc; }
 
-	.warn { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--accent-bright);
-		border-left: 2px solid var(--accent); padding-left: 0.6rem; }
+	.warn { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--caution);
+		border-left: 2px solid var(--caution); padding-left: 0.6rem; }
 	.warn em { font-style: normal; text-decoration: underline; }
-	.err { margin: 0; font-size: 0.8rem; color: #ff8a80; }
+	.err { margin: 0; font-size: 0.8rem; color: var(--bad); }
 	.or { margin: 0; text-align: center; font-size: 0.72rem; color: var(--text-dim);
 		text-transform: uppercase; letter-spacing: 0.1em; }
 
@@ -639,7 +639,7 @@
 	.alt { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.15rem; }
 	.link { font-size: 0.78rem; color: var(--text-dim); padding: 0; align-self: flex-start; }
 	.link:hover { color: var(--accent); }
-	.link.danger:hover { color: #ff8a80; }
+	.link.danger:hover { color: var(--bad); }
 
 	.wlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.4rem; }

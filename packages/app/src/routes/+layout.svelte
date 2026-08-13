@@ -222,7 +222,7 @@
 		border-radius: 999px; }
 	.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 	/* Local is not the network anyone should mistake for the real one. */
-	.dot.local { background: #ffb27a; }
+	.dot.local { background: var(--caution); }
 	.viewbar { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1rem;
 		padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 	.vtag { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em;
@@ -251,7 +251,7 @@
 	.lede { margin: 0; opacity: 0.85; max-width: 30rem; line-height: 1.5; }
 	/* Look lives in app.css — this only places it. */
 	.tabs { margin-bottom: 1rem; }
-	.err { color: #ff8a80; font-size: 0.85rem; }
+	.err { color: var(--bad); font-size: 0.85rem; }
 
 	.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); border: none;
 		padding: 0; z-index: 10; cursor: default; }
