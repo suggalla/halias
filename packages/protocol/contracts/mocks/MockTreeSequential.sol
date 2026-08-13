@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "poseidon-solidity/PoseidonT3.sol";
+import { PoseidonT3 } from "poseidon-solidity/PoseidonT3.sol";
 
 // The pre-optimisation insertion, kept only so a test can prove the pairwise version
 // produces a byte-identical tree. Never deployed outside tests.

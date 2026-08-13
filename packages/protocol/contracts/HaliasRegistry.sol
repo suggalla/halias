@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "./base/SMTRegistry.sol";
+import { SMTRegistry } from "./base/SMTRegistry.sol";
+// Direct rather than transitive: these arrived implicitly through SMTRegistry's own global
+// import, which meant nothing here said where they came from.
+import { PoseidonT4 } from "poseidon-solidity/PoseidonT4.sol";
+import { FIELD_PRIME } from "./base/Constants.sol";
 
 // ── Custom errors ─────────────────────────────────────────────────────────────
 

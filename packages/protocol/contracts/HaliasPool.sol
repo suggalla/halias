@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "./MerkleTreeWithHistory.sol";
-import "./base/Constants.sol";
-import "./interfaces/IHaliasPool.sol";
-import "./interfaces/IHaliasRegistry.sol";
-import "./interfaces/ITransactVerifier.sol";
+import { MerkleTreeWithHistory } from "./MerkleTreeWithHistory.sol";
+import { FIELD_PRIME, MAX_ABS_AMOUNT } from "./base/Constants.sol";
+import { TransactParams } from "./interfaces/IHaliasPool.sol";
+import { IHaliasRegistry } from "./interfaces/IHaliasRegistry.sol";
+import { ITransactVerifier } from "./interfaces/ITransactVerifier.sol";
 // SafeERC20 brings IERC20 with it; importing both only duplicates the symbol.
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
+import { SafeERC20, IERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { Address } from "@openzeppelin/contracts/utils/Address.sol";
 
 // ── Custom errors ─────────────────────────────────────────────────────────────
 
@@ -374,8 +374,8 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
         pubSignals[12] = uint256(p.outputCommitments[0]);
         pubSignals[13] = uint256(p.outputCommitments[1]);
 
-        (uint[2] memory pA, uint[2][2] memory pB, uint[2] memory pC) =
-            abi.decode(proof, (uint[2], uint[2][2], uint[2]));
+        (uint256[2] memory pA, uint256[2][2] memory pB, uint256[2] memory pC) =
+            abi.decode(proof, (uint256[2], uint256[2][2], uint256[2]));
 
         if (!transactVerifier.verifyProof(pA, pB, pC, pubSignals)) revert InvalidProof();
     }

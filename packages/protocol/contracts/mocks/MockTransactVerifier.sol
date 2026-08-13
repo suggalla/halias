@@ -5,10 +5,10 @@ pragma solidity 0.8.28;
 // Never use it for anything that must prove a real constraint holds — see Claim.test.ts.
 contract MockTransactVerifier {
     function verifyProof(
-        uint[2] calldata,
-        uint[2][2] calldata,
-        uint[2] calldata,
-        uint[14] calldata
+        uint256[2] calldata,
+        uint256[2][2] calldata,
+        uint256[2] calldata,
+        uint256[14] calldata
     ) external pure returns (bool) {
         return true;
     }

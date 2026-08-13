@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "poseidon-solidity/PoseidonT3.sol";
-import "poseidon-solidity/PoseidonT4.sol";
-import "./Constants.sol";
-import "./TreeZeros.sol";
+import { PoseidonT3 } from "poseidon-solidity/PoseidonT3.sol";
+import { PoseidonT4 } from "poseidon-solidity/PoseidonT4.sol";
+import { FIELD_PRIME } from "./Constants.sol";
+import { TreeZeros } from "./TreeZeros.sol";
 
 error RegistryFull();
 

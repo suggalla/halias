@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 // ERC-20 that silently takes a 10% fee on every non-mint/burn transfer.
 // Used to verify Halias rejects fee-on-transfer tokens.

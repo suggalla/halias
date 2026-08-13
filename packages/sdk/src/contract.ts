@@ -73,7 +73,6 @@ export const CONTROLLER_ABI = [
   "function offerAlias(bytes32 aliasHash, address to, uint256 deadline, bytes signature) external",
   "function cancelOffer(bytes32 aliasHash, uint256 deadline, bytes signature) external",
   "function acceptAlias(bytes32 aliasHash, bytes32 newSpendingPubkey, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey, uint256 deadline, bytes signature) external",
-  "function acceptAliasDigest(bytes32 aliasHash, bytes32 newSpendingPubkey, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey, address to, uint256 deadline) external view returns (bytes32)",
   "function pendingAliasOwner(bytes32) external view returns (address)",
   "function aliasNonce(bytes32) external view returns (uint256)",
   "event AliasOffered(bytes32 indexed aliasHash, address indexed from, address indexed to)",
