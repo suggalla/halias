@@ -7,7 +7,6 @@
     "export-verifier": "tsc && node dist/export-verifier.js",
     "compile": "cross-env TS_NODE_PROJECT=tsconfig.hardhat.json npx hardhat compile",
     "test:hardhat": "cross-env TS_NODE_PROJECT=tsconfig.hardhat.json npx hardhat test",
-    "test:fast": "cross-env FAST=1 TS_NODE_PROJECT=tsconfig.hardhat.json npx hardhat test",
     "circuits:compile": "mkdir -p circuits/out/transact && $HOME/.cargo/bin/circom circuits/transact.circom --r1cs --wasm --sym -o circuits/out/transact -l ../../node_modules/circomlib/circuits",
     "circuits:setup": "npm run ceremony -- -c transact -p 17 --dev && npm run export-verifier -- -c transact",
     "circuits:build": "npm run circuits:compile && npm run circuits:setup",
