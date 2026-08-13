@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { BrowserProvider, Interface, isAddress, keccak256, toUtf8Bytes } from 'ethers';
 import { POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI } from 'halias-sdk';
+import { findWallet, soleWallet, legacyWallet } from './wallets.js';
 
 // Errors the contracts can revert with that no ABI fragment above declares — the SDK's ABIs
 // list functions and events, not error types.
@@ -111,6 +112,10 @@ let baseConfig: any = null;      // enough to build another one on demand
 // user to sign one fixed string owned every key they had — silently, totally, and with no
 // way to remediate notes already on chain. See packages/protocol/docs/key-management.md.
 let root: bigint | null = null;
+
+// Which wallet the session is connected to, so a wallet event reconnects to that one rather
+// than re-running discovery and possibly landing on a different extension.
+let connectedRdns: string | null = null;
 
 // The phrase behind that root, held in memory only for this session.
 //
@@ -301,11 +306,14 @@ async function switchTo(ethereum: any, net: NetworkConfig): Promise<void> {
 
 // Registered once, never removed. Both handlers no-op when `baseConfig` is null, so an
 // explicit disconnect stays disconnected instead of being undone by the next wallet event.
-let watching = false;
+//
+// Keyed by wallet: connecting to a different wallet has to attach handlers to that wallet's
+// provider. A single flag would leave the second wallet's account switches unnoticed.
+const watched = new Set<any>();
 
 function watchWallet(ethereum: any): void {
-	if (watching) return;
-	watching = true;
+	if (watched.has(ethereum)) return;
+	watched.add(ethereum);
 
 	// Switching accounts changes who you are, not just who pays.
 	//
@@ -317,25 +325,39 @@ function watchWallet(ethereum: any): void {
 	ethereum.on('accountsChanged', async (accounts: string[]) => {
 		if (!baseConfig) return;
 		if (accounts.length === 0) return disconnect();
+		const same = connectedRdns;
 		disconnect();
-		await connect();
+		await connect(same ?? undefined);
 	});
 
 	// Same reasoning: a different chain is a different registry, a different pool, and
 	// aliases that do not exist there.
 	ethereum.on('chainChanged', async () => {
 		if (!baseConfig) return;
+		const same = connectedRdns;
 		disconnect();
-		await connect();
+		await connect(same ?? undefined);
 	});
 }
 
-export async function connect(): Promise<void> {
-	const ethereum = (globalThis as any).ethereum;
+/// Connect to a wallet.
+///
+/// `rdns` names which one (EIP-6963 reverse-DNS id). Omitted, it connects to the only wallet
+/// present, or to a pre-6963 wallet injected the old way — but never guesses between several,
+/// since guessing is the behaviour EIP-6963 exists to end.
+export async function connect(rdns?: string): Promise<void> {
+	const chosen = rdns ? findWallet(rdns) : soleWallet();
+	const ethereum = chosen?.provider ?? (rdns ? undefined : legacyWallet());
 	if (!ethereum) {
-		clientState.update((s) => ({ ...s, status: 'error', error: 'No wallet detected' }));
+		clientState.update((s) => ({
+			...s,
+			status: 'error',
+			error: rdns ? `${rdns} is not available` : 'No wallet detected'
+		}));
 		return;
 	}
+	// So a wallet event can reconnect to the same wallet rather than re-guessing.
+	connectedRdns = chosen?.info.rdns ?? null;
 	if (!seedSource) {
 		clientState.update((s) => ({
 			...s,
@@ -442,6 +464,7 @@ export function disconnect() {
 	baseConfig = null;
 	root = null;
 	seedSource = null;
+	connectedRdns = null;
 	clients.clear();
 	clientState.set({ ...EMPTY });
 }
