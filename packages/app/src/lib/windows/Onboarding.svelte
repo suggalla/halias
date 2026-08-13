@@ -307,10 +307,13 @@
 
 						{#if error}<p class="err">{error}</p>{/if}
 
+						<!-- The way to the mode picker for anyone who already has something stored.
+						     It used to read "Use a different phrase", which described half of what it
+						     now does and hid the other half entirely. -->
 						<div class="alt">
-							<button class="link" onclick={startCreate}>Use a different phrase</button>
+							<button class="link" onclick={startCreate}>+ Add a wallet or view-only key</button>
 							<button class="link danger" onclick={() => forget(selected!)}>
-								Remove from this browser
+								Remove {selected.label} from this browser
 							</button>
 						</div>
 					{/if}
