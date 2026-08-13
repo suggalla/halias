@@ -5,6 +5,7 @@
 	import InviteWindow from './InviteWindow.svelte';
 	import ReviewStep from './ReviewStep.svelte';
 	import OwnershipView from './OwnershipView.svelte';
+	import DepositWindow from './DepositWindow.svelte';
 
 	// Everything here acts as one alias.
 	//
@@ -18,10 +19,24 @@
 	// value moves or who receives it, because on chain that is precisely what is hidden.
 	// Signing without a summary means confirming something nobody has shown you.
 
-	type Mode = 'transfer' | 'withdraw' | 'invite' | 'ownership';
+	type Mode = 'transfer' | 'withdraw' | 'deposit' | 'invite' | 'ownership';
 	type Phase = 'form' | 'review' | 'handoff';
 
-	let mode = $state<Mode>('transfer');
+	// A list, not a tab strip. Five actions squeezed into one row lost the labels, and these
+	// are not views of one thing to flick between — they are separate operations, most of them
+	// irreversible. A list has room to say what each one does before it is chosen.
+	//
+	// null means the list itself, which is where the screen opens: landing pre-armed on
+	// "transfer" put the most destructive action under the cursor by default.
+	const ACTIONS: { id: Mode; label: string; blurb: string }[] = [
+		{ id: 'transfer',  label: 'Send',      blurb: 'Pay another alias from this one. Amounts stay hidden.' },
+		{ id: 'deposit',   label: 'Add funds', blurb: 'Move ETH from a wallet into this alias.' },
+		{ id: 'withdraw',  label: 'Withdraw',  blurb: 'Move ETH out to an ordinary address.' },
+		{ id: 'invite',    label: 'Invite',    blurb: 'Create a funded link for someone with no alias yet.' },
+		{ id: 'ownership', label: 'Ownership', blurb: 'Hand this alias to a new owner, or sell it.' },
+	];
+
+	let mode = $state<Mode | null>(null);
 	let phase = $state<Phase>('form');
 	let amount = $state('');
 	let target = $state('');
@@ -61,7 +76,7 @@
 		copied = null;
 	}
 
-	function setMode(m: Mode) {
+	function setMode(m: Mode | null) {
 		mode = m;
 		phase = 'form';
 		msg = null;
@@ -166,22 +181,34 @@
 			</div>
 		</header>
 
-		{#if phase === 'form'}
+		{#if phase === 'form' && mode === null}
 			<!-- What this alias can do. Inviting spends a note exactly as transfer and withdraw
 			     do, which is why it belongs here rather than in a global panel — redeeming, which
 			     needs no alias at all, stays in the top bar. Ownership moves the name rather than
-			     any value, and sits here because only this alias's owner can offer it. -->
-			<div class="tabs" role="tablist">
-				{#each ['transfer', 'withdraw', 'invite', 'ownership'] as const as m}
-					<button role="tab" aria-selected={mode === m} class:active={mode === m}
-						onclick={() => setMode(m)}>{m}</button>
+			     any value, and sits here because only this alias's owner can offer it. Adding
+			     funds is here too: anyone can pay any alias, but funding the one you are acting
+			     as is the common case and made you leave the screen to do it. -->
+			<ul class="actions">
+				{#each ACTIONS as a (a.id)}
+					<li>
+						<button class="action" disabled={busy} onclick={() => setMode(a.id)}>
+							<span class="an">{a.label}</span>
+							<span class="ab">{a.blurb}</span>
+							<span class="go">→</span>
+						</button>
+					</li>
 				{/each}
-			</div>
+			</ul>
+
+		{:else if phase === 'form'}
+			<button class="back sub" onclick={() => setMode(null)}>← Actions</button>
 
 			{#if mode === 'invite'}
 				<InviteWindow />
 			{:else if mode === 'ownership'}
 				<OwnershipView />
+			{:else if mode === 'deposit'}
+				<DepositWindow embedded initialTarget={alias?.name ? `${alias.name}.hls` : ''} />
 			{:else}
 			<div class="form">
 				<label>
@@ -204,11 +231,6 @@
 				</label>
 
 				<button class="primary" disabled={busy || !ready} onclick={toReview}>Review</button>
-
-				<p class="hint">
-					To add funds, use <strong>Deposit</strong> in the top bar — anyone can pay an
-					alias, so it is not tied to the one you are acting as.
-				</p>
 
 				<PrivacyNote mode={txMode} />
 			</div>
@@ -280,6 +302,20 @@
 		flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 	.nm { font-family: ui-monospace, monospace; overflow-wrap: anywhere; font-size: 0.8rem; }
 	.bal { font-variant-numeric: tabular-nums; opacity: 0.9; }
+	.actions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+		gap: 0.4rem; }
+	.action { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 0.1rem 0.75rem;
+		align-items: center; padding: 0.7rem 0.85rem; background: var(--bg-input);
+		border: 1px solid var(--border); border-radius: 8px; text-align: left;
+		transition: border-color 0.15s, background 0.15s; }
+	.action:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-titlebar); }
+	.an { font-size: 0.9rem; color: var(--text-bright); }
+	.ab { grid-column: 1; font-size: 0.76rem; color: var(--text-dim); line-height: 1.45; }
+	.action .go { grid-row: 1 / span 2; color: var(--text-dim); font-size: 1rem; }
+	.action:hover:not(:disabled) .go { color: var(--accent); }
+	/* Back to the action list, distinct from the header's back-to-wallet. */
+	.back.sub { align-self: flex-start; font-size: 0.8rem; color: var(--text-dim); }
+	.back.sub:hover { color: var(--accent); }
 	.form { display: flex; flex-direction: column; gap: 0.6rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; }
 	label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
