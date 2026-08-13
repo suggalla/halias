@@ -9,7 +9,9 @@
 		clientFor,
 		loadAliases,
 		nextFreeIndex,
-		acceptAliasAt
+		offersToMe,
+		acceptOfferAt,
+		type Offer
 	} from '../sdk/client.js';
 
 	// The wallet is a list of identities, not a balance.
@@ -120,29 +122,41 @@
 	// It lives here rather than with the alias's own actions because you do not own it yet —
 	// there is nothing to select. Accepting installs *this* wallet's keys, derived at a free
 	// index, which is why only the recipient can complete a handover.
-	let acceptName = $state('');
+	// Found rather than typed. AliasOffered indexes the recipient, so the node can answer
+	// "what have I been offered" directly — and the contract accepts by hash, so an offer can
+	// be taken without ever being told the name behind it.
+	let offers = $state<Offer[]>([]);
+	let offersLoaded = $state(false);
 	let acceptMsg = $state<string | null>(null);
 	let acceptErr = $state<string | null>(null);
-	let accepting = $state(false);
+	let acceptingHash = $state<string | null>(null);
 
 	const freeIndex = $derived(nextFreeIndex($clientState.aliases));
 
-	async function doAccept() {
-		const name = normalizeAlias(acceptName.trim());
+	async function loadOffers() {
+		try {
+			offers = await offersToMe();
+		} catch {
+			offers = [];   // an offer list failing should not take the wallet down with it
+		}
+		offersLoaded = true;
+	}
+
+	$effect(() => {
+		if ($clientState.address) loadOffers();
+	});
+
+	async function takeOffer(o: Offer) {
 		acceptMsg = null;
 		acceptErr = null;
-		if (!/^[a-z0-9]+$/.test(name)) {
-			acceptErr = 'Enter the alias name you were offered, e.g. bob.hls';
-			return;
-		}
-		accepting = true;
-		const r = await acceptAliasAt(freeIndex, `${name}.hls`);
-		accepting = false;
+		acceptingHash = o.aliasHash;
+		const r = await acceptOfferAt(freeIndex, o.aliasHash);
+		acceptingHash = null;
 		if (r) {
-			acceptMsg = `${name}.hls is yours — it now uses your keys.`;
-			acceptName = '';
+			acceptMsg = `${o.name ? `${o.name}.hls` : 'The alias'} is yours — it now uses your keys.`;
+			await loadOffers();
 		} else {
-			acceptErr = 'Could not accept it. Check the name, and that it was offered to this address.';
+			acceptErr = 'Could not accept it — the offer may have just been withdrawn.';
 		}
 	}
 </script>
@@ -248,28 +262,44 @@
 
 	<!-- The receiving half of a handover. It belongs to the wallet, not to an alias, because
 	     until this succeeds the alias is not yours and there is nothing to select. -->
-	<section>
-		<h3>Accept an alias</h3>
-		<div class="row">
-			<input
-				bind:value={acceptName}
-				placeholder="bob"
-				disabled={busy || accepting}
-				onkeydown={(e) => e.key === 'Enter' && doAccept()}
-			/>
-			<span class="suffix">.hls</span>
-			<button class="primary" disabled={busy || accepting || !acceptName.trim()} onclick={doAccept}>
-				{accepting ? 'Accepting…' : 'Accept'}
-			</button>
-		</div>
-		<p class="hint">
-			If someone has offered you an alias, this completes the handover. It installs
-			<strong>your</strong> keys — the previous owner cannot choose them, and cannot read
-			anything paid to it afterwards. It arrives at index {freeIndex} with its own balance.
-		</p>
-		{#if acceptErr}<p class="err">{acceptErr}</p>{/if}
-		{#if acceptMsg}<p class="ok">{acceptMsg}</p>{/if}
-	</section>
+	{#if offers.length > 0}
+		<section>
+			<h3>Offered to you</h3>
+			<ul class="offers">
+				{#each offers as o (o.aliasHash)}
+					<li>
+						<div class="oinfo">
+							<span class="nm">{o.name ? `${o.name}.hls` : o.aliasHash}</span>
+							<span class="from">from {o.from}</span>
+						</div>
+						<button
+							class="primary"
+							disabled={busy || acceptingHash !== null}
+							onclick={() => takeOffer(o)}
+						>
+							{acceptingHash === o.aliasHash ? 'Accepting…' : 'Accept'}
+						</button>
+					</li>
+				{/each}
+			</ul>
+			<p class="hint">
+				Accepting installs <strong>your</strong> keys — the previous owner cannot choose them
+				and cannot read anything paid to it afterwards. It arrives at index {freeIndex} with
+				its own balance, empty of whatever they held.
+			</p>
+			{#if offers.some((o) => !o.name)}
+				<p class="hint">
+					An alias shows as a hash when this browser has never seen its name. The chain
+					stores only the hash, so the name has to come from whoever offered it — you can
+					accept without knowing it, then label it above.
+				</p>
+			{/if}
+			{#if acceptErr}<p class="err">{acceptErr}</p>{/if}
+			{#if acceptMsg}<p class="ok">{acceptMsg}</p>{/if}
+		</section>
+	{:else if offersLoaded && acceptMsg}
+		<p class="ok">{acceptMsg}</p>
+	{/if}
 
 	{#if msg}<p class="ok">{msg}</p>{/if}
 	{#if labelError}<p class="err">{labelError}</p>{/if}
@@ -308,6 +338,15 @@
 	.suffix { color: var(--text-dim); font-family: ui-monospace, monospace; }
 	.label-in { width: 100%; margin-top: 0.3rem; font-size: 0.8rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0.4rem 0 0; }
+	.offers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+		gap: 0.4rem; }
+	.offers li { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+		padding: 0.7rem 0.8rem; background: var(--bg-input); border: 1px solid var(--accent);
+		border-radius: 6px; }
+	.oinfo { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
+	.from { font-size: 0.7rem; color: var(--text-dim); font-family: ui-monospace, monospace;
+		overflow-wrap: anywhere; }
+	.offers .primary { padding: 0.4rem 0.9rem; }
 	.warn { font-size: 0.75rem; opacity: 0.85; margin: 0.25rem 0 0; }
 	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
 	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }

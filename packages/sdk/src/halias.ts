@@ -701,11 +701,24 @@ export class Halias extends HaliasCore {
     alias: string,
     opts: { prepare?: boolean; deadlineSeconds?: number } = {},
   ): Promise<{ txHash: string; signature: string; deadline: bigint }> {
+    return this.acceptOffer(this.aliasHashOf(alias), opts);
+  }
+
+  /// Accept by alias hash, for an offer found rather than told.
+  ///
+  /// The contract identifies an alias by hash, so the name is never needed to accept one —
+  /// which matters because an offer is discoverable from `AliasOffered` while the name behind
+  /// its hash is not. Someone offered an alias out of the blue can take it without having to
+  /// be told what it is called.
+  async acceptOffer(
+    aliasHash: bigint,
+    opts: { prepare?: boolean; deadlineSeconds?: number } = {},
+  ): Promise<{ txHash: string; signature: string; deadline: bigint }> {
     this.ensureInit();
     const keys = this.keys!;
     const accepted = await contractAcceptAlias(
       this.domain,
-      this.aliasHashOf(alias),
+      aliasHash,
       {
         spendingPubkey:   keys.spendingPubkey,
         nullifierKeyHash: this.myNullifierKeyHash(),

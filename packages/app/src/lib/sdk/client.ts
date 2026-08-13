@@ -571,21 +571,67 @@ export async function pendingOwnerOf(aliasHash: string): Promise<string | null> 
 	return pending === ZeroAddress ? null : pending;
 }
 
-/// Accept an alias someone has offered to this wallet.
+export interface Offer {
+	aliasHash: string;
+	from: string;
+	/// The name, when this browser happens to know it — from having registered it, or from
+	/// being told. The chain stores only the hash and cannot give it back.
+	name: string | null;
+}
+
+/// Aliases currently offered to this wallet.
 ///
-/// The keys installed are this wallet's, derived at `index` — the recipient chooses them and
-/// nobody else can. That is why accepting is a separate step from offering rather than the
-/// sender simply transferring: a seller who picked the new keys could hand over the name and
-/// keep receiving everything paid to it.
-export async function acceptAliasAt(index: number, name: string): Promise<{ txHash: string } | null> {
+/// Discoverable because `AliasOffered` indexes `to`, so the node can filter by recipient
+/// rather than the client reading every offer ever made. Nothing here is private: the offer
+/// is a public mapping and a public event, so listing it reveals nothing that was not already
+/// on chain.
+///
+/// The events are only a candidate list. An offer can be withdrawn or already accepted, and
+/// neither rewrites history — so each hash is checked against `pendingAliasOwner`, which is
+/// the authoritative answer, and only the ones still standing are returned.
+export async function offersToMe(): Promise<Offer[]> {
+	if (!baseConfig) return [];
+	const me = await baseConfig.signer.getAddress();
+	const controller = new Contract(baseConfig.controllerAddress, CONTROLLER_ABI, baseConfig.provider);
+
+	const logs = await controller.queryFilter(
+		controller.filters.AliasOffered(null, null, me),
+		baseConfig.startBlock ?? 0
+	);
+
+	const names = readNameMap();
+	const seen = new Set<string>();
+	const offers: Offer[] = [];
+	// Newest first, so a re-offer to the same address supersedes the earlier one.
+	for (const log of [...logs].reverse()) {
+		const aliasHash: string = (log as any).args.aliasHash;
+		const key = aliasHash.toLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+
+		const pending: string = await controller.pendingAliasOwner(aliasHash);
+		if (pending.toLowerCase() !== me.toLowerCase()) continue;   // withdrawn, or already taken
+
+		offers.push({ aliasHash, from: (log as any).args.from, name: names[key] ?? null });
+	}
+	return offers;
+}
+
+/// Take an offer found by {offersToMe}, by hash.
+///
+/// The name is never needed: the contract identifies an alias by hash. That is what lets
+/// someone accept an alias they were never told the name of. The keys installed are this
+/// wallet's, derived at `index` — the recipient chooses them and nobody else can, which is
+/// why accepting is a separate step rather than the sender simply transferring.
+export async function acceptOfferAt(index: number, aliasHash: string): Promise<{ txHash: string } | null> {
 	const c = await clientFor(index);
 	return run(async () => {
-		const r = await c.acceptAlias(name);
-		rememberName(keccak256(toUtf8Bytes(name)), name.replace(/\.hls$/i, ''));
+		const r = await c.acceptOffer(BigInt(aliasHash));
 		await loadAliases();
 		return r;
 	});
 }
+
 
 // Wraps an action so the UI gets a consistent busy/error story rather than each window
 // inventing its own.
