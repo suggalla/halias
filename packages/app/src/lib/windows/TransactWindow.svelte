@@ -192,8 +192,10 @@
 				{#each ACTIONS as a (a.id)}
 					<li>
 						<button class="action" disabled={busy} onclick={() => setMode(a.id)}>
-							<span class="an">{a.label}</span>
-							<span class="ab">{a.blurb}</span>
+							<span class="atext">
+								<span class="an">{a.label}</span>
+								<span class="ab">{a.blurb}</span>
+							</span>
 							<span class="go">→</span>
 						</button>
 					</li>
@@ -304,14 +306,17 @@
 	.bal { font-variant-numeric: tabular-nums; opacity: 0.9; }
 	.actions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.4rem; }
-	.action { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 0.1rem 0.75rem;
-		align-items: center; padding: 0.7rem 0.85rem; background: var(--bg-input);
+	/* Flex, not grid. The grid version auto-placed the arrow into the first cell and pushed
+	   the label to the right, which read as a right-aligned list with a stray arrow. */
+	.action { width: 100%; display: flex; align-items: center; gap: 0.85rem;
+		padding: 0.7rem 0.85rem; background: var(--bg-input);
 		border: 1px solid var(--border); border-radius: 8px; text-align: left;
 		transition: border-color 0.15s, background 0.15s; }
 	.action:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-titlebar); }
-	.an { font-size: 0.9rem; color: var(--text-bright); }
-	.ab { grid-column: 1; font-size: 0.76rem; color: var(--text-dim); line-height: 1.45; }
-	.action .go { grid-row: 1 / span 2; color: var(--text-dim); font-size: 1rem; }
+	.atext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+	.an { font-size: 0.9rem; font-weight: 700; color: var(--text-bright); }
+	.ab { font-size: 0.76rem; color: var(--text-dim); line-height: 1.45; }
+	.action .go { flex: none; color: var(--text-dim); font-size: 1rem; }
 	.action:hover:not(:disabled) .go { color: var(--accent); }
 	/* Back to the action list, distinct from the header's back-to-wallet. */
 	.back.sub { align-self: flex-start; font-size: 0.8rem; color: var(--text-dim); }

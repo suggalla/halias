@@ -183,7 +183,7 @@
 <div class="wallet">
 	<header>
 		<div>
-			<span class="label">Wallet</span>
+			<span class="label">{$clientState.accountName ?? 'Wallet'}</span>
 			<button class="addr" title="Click to copy"
 				onclick={() => $clientState.address && copy($clientState.address)}>
 				{copied === $clientState.address ? 'copied' : $clientState.address}
