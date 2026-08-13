@@ -6,6 +6,7 @@
 	import ReviewStep from './ReviewStep.svelte';
 	import OwnershipView from './OwnershipView.svelte';
 	import DepositWindow from './DepositWindow.svelte';
+	import ViewKeyView from './ViewKeyView.svelte';
 
 	// Everything here acts as one alias.
 	//
@@ -19,7 +20,7 @@
 	// value moves or who receives it, because on chain that is precisely what is hidden.
 	// Signing without a summary means confirming something nobody has shown you.
 
-	type Mode = 'transfer' | 'withdraw' | 'deposit' | 'invite' | 'ownership';
+	type Mode = 'transfer' | 'withdraw' | 'deposit' | 'invite' | 'ownership' | 'viewkey';
 	type Phase = 'form' | 'review' | 'handoff';
 
 	// A list, not a tab strip. Five actions squeezed into one row lost the labels, and these
@@ -35,6 +36,8 @@
 		{ id: 'invite',    label: 'Invite',    blurb: 'Create a funded link for someone with no alias yet.' },
 		{ id: 'ownership', label: 'Transfer alias ownership',
 		  blurb: 'Hand this alias to a new owner, or sell it.' },
+		{ id: 'viewkey',   label: 'View-only key',
+		  blurb: 'Let someone read this alias without being able to spend from it.' },
 	];
 
 	let mode = $state<Mode | null>(null);
@@ -210,6 +213,8 @@
 				<InviteWindow />
 			{:else if mode === 'ownership'}
 				<OwnershipView />
+			{:else if mode === 'viewkey'}
+				<ViewKeyView />
 			{:else if mode === 'deposit'}
 				<DepositWindow embedded initialTarget={alias?.name ? `${alias.name}.hls` : ''} />
 			{:else}
