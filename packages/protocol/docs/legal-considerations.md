@@ -62,8 +62,21 @@ recipient was unknowable. Here the recipient is a registered name with a public 
 and a fee-gated registration. The product is *named* private payments, and the naming is
 not decorative.
 
-**Non-custodial throughout.** Keys derive client-side from a signature; no server of yours
-ever holds funds or keys.
+**Non-custodial throughout.** Keys are generated and held client-side; no server of yours
+ever holds funds or keys. Custody turns on control of funds rather than on who generated the
+key — MetaMask generates seeds client-side and is not a money transmitter — so moving from
+signature-derived keys to a client-generated mnemonic preserves this. What would break it is
+any server-side escrow, backup or recovery of the seed, encrypted or not. See
+[key-management.md](key-management.md), which states that as a hard constraint.
+
+**Selective disclosure is possible.** Spending and viewing keys are separable, so a holder
+can hand an auditor read access to their whole history without conferring any ability to
+spend — the same property Railgun ships as view-only wallets, and the direction `dataHash`
+is reserved for.
+
+**Biometrics never reach you.** Where a passkey unlocks local storage, WebAuthn keeps the
+biometric on the device and returns only a derived value, so biometric-privacy statutes do
+not attach.
 
 ### Unfavourable
 
@@ -137,6 +150,12 @@ calls. The pool stays unable to discriminate, which is the property worth protec
 5. Does the public registry help — does a named, fee-gated, permanent identity record
    distinguish this from a mixer in a way that matters legally, or only rhetorically?
 6. Front-end: what does hosting versus IPFS-only actually change?
+7. Publishing encryption source code carries a US EAR notification step (740.13(e)) that
+   open-source cryptography projects routinely file. Does it apply here, and is a
+   notification worth filing pre-emptively?
+8. Users will ask for seed recovery. Confirm the line in [key-management.md](key-management.md)
+   — that no server-side escrow or backup of key material may exist, in any form — is where
+   counsel would also draw it.
 
 ## Things that reduce exposure, in rough order of impact
 
