@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import * as path from "path";
 import * as fs from "fs";
-import { Halias, FileCache, decodeRelayBlob, quoteRelay, submitRelay } from "halias-sdk";
+import { Halias, FileCache, MnemonicSource, decodeRelayBlob, quoteRelay, submitRelay } from "halias-sdk";
 import { loadDeployment } from "./deployment";
 
 // The SDK against a live node, over real RPC.
@@ -106,8 +106,15 @@ async function main() {
   console.log(`  registry ${cfg.registry}`);
   console.log(`  controller ${cfg.controller}\n`);
 
+  // Each simulated user needs its own note keys, stable across reruns so alias counts stay
+  // deterministic. Deriving the phrase from the wallet key is a harness convenience and the
+  // exact coupling production must not have: a real client's phrase is independent of any
+  // wallet, which is what stops a signature reproducing it.
+  const seedFor = (s: ethers.Wallet) =>
+    new MnemonicSource(ethers.Mnemonic.fromEntropy(ethers.keccak256(s.privateKey)).phrase);
+
   const mk = (s: ethers.Wallet, aliasIndex = 0) => new Halias({
-    provider, signer: s as any, chainId,
+    provider, signer: s as any, seed: seedFor(s), chainId,
     poolAddress: cfg.pool, registryAddress: cfg.registry, controllerAddress: cfg.controller,
     artifacts: ARTIFACTS,
     startBlock: cfg.startBlock ?? 0,
@@ -115,9 +122,9 @@ async function main() {
     cache: new FileCache(path.join("/tmp", `halias-e2e-${Date.now()}-${s.address}-${aliasIndex}`)),
   });
 
-  // Two independent clients, each deriving its own keys from its own signature — the same
-  // way two real users would. A single client sending to itself would not exercise
-  // encryption to a foreign key or the recipient's scan.
+  // Two independent clients, each with its own seed — the same way two real users would.
+  // A single client sending to itself would not exercise encryption to a foreign key or the
+  // recipient's scan.
   //
   // Both are fresh wallets funded from the signer rather than the signer itself, so counts
   // are deterministic across repeated runs against the same node. Reusing the funded
@@ -149,7 +156,7 @@ async function main() {
   const bob   = mk(bobWallet as any);
   await alice.init();
   await bob.init();
-  check("both clients derive keys from a signature", true);
+  check("both clients derive keys from their own seed, no signature involved", true);
 
   const suffix = Date.now().toString(36);
   const aliceName = `alice${suffix}`;

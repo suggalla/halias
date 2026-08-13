@@ -2,14 +2,13 @@ import { ethers } from "ethers";
 import { normalizeAlias } from "./alias";
 import {
   init as initCrypto,
-  deriveRoot,
   deriveKeysFromRoot,
   poseidonHash,
   encryptOutput,
   encodeOutputBlob,
   HaliasKeys,
-  Signer,
 } from "./crypto";
+import { SeedSource } from "./seed";
 import { computeNullifier, randomBlinding, OwnedEntry } from "./entry";
 import { PoolTrees } from "./merkle";
 import { aliasHashToSmtKey } from "./smt";
@@ -21,7 +20,11 @@ import { CacheStore, serializeCache, deserializeCache } from "./cache";
 
 export interface HaliasConfig {
   provider: ethers.Provider;
-  signer: ethers.Signer & Signer;
+  // Broadcasts and pays gas. It has no part in key derivation — see seed.ts.
+  signer: ethers.Signer;
+  // Where the note keys come from. Optional so a caller that already holds a root can pass it
+  // to init() instead; one of the two has to be present before init().
+  seed?: SeedSource;
   chainId: number;
   // Three contracts since the split. The pool hashes its own address into
   // paramsHash, so poolAddress is the one that must be right for a proof to verify.
@@ -112,23 +115,26 @@ export abstract class HaliasCore {
 
   /// Bind this client to one alias identity.
   ///
-  /// `aliasIndex` selects which alias of the wallet's set this client acts as. Each index
-  /// has its own spending key, nullifier key and encryption key, so balances and notes do
-  /// not merge across aliases. One signature covers all of them, so switching alias costs
-  /// no extra prompt.
-  /// `root` skips the signature prompt when the caller already has it. Anything building
-  /// more than one client — enumerating aliases, switching between them — must pass it, or
-  /// the wallet asks for a signature per client and the UI turns into a prompt loop.
+  /// `aliasIndex` selects which alias of the set this client acts as. Each index has its own
+  /// spending key, nullifier key and encryption key, so balances and notes do not merge
+  /// across aliases. All of them come from the one root, so switching alias costs nothing.
+  ///
+  /// `root` reuses a root the caller already holds. Anything building more than one client —
+  /// enumerating aliases, switching between them — should pass it rather than re-deriving,
+  /// since a mnemonic source stretches the phrase through PBKDF2 on every call.
   async init(aliasIndex: number = 0, root?: bigint): Promise<void> {
     await initCrypto();
     this.aliasIndex = aliasIndex;
-    this.root = root ?? (await deriveRoot(this.config.signer));
+    if (root === undefined && !this.config.seed) {
+      throw new Error("init() needs a root or a seed source: pass config.seed, or init(index, root)");
+    }
+    this.root = root ?? (await this.config.seed!.root());
     this.keys = deriveKeysFromRoot(this.root, aliasIndex);
     this.initialized = true;
   }
 
-  /// The wallet-level secret behind every alias. Exposed so a caller can derive further
-  /// clients without another prompt; it never leaves the browser.
+  /// The secret behind every alias. Exposed so a caller can derive further clients without
+  /// re-stretching the phrase; it never leaves the client.
   get derivationRoot(): bigint {
     if (this.root === null) throw new Error("Call init() first");
     return this.root;

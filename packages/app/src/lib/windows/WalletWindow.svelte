@@ -9,7 +9,10 @@
 		selectAlias,
 		clientFor,
 		loadAliases,
-		nextFreeIndex
+		nextFreeIndex,
+		setSeedPhrase,
+		newSeedPhrase,
+		hasSeed
 	} from '../sdk/client.js';
 
 	// The wallet is a list of identities, not a balance.
@@ -114,10 +117,66 @@
 		labelError = null;
 		loadAliases();
 	}
+
+	// Recovery phrase, entered per session.
+	//
+	// Interim: key-management.md specifies a wizard that keeps this in an encrypted keystore
+	// unlocked by passkey or password. Until that exists it is typed each time and held only
+	// in memory — the one thing worse than asking again would be storing it in the clear.
+	let phrase = $state('');
+	let generated = $state(false);
+	let phraseError = $state<string | null>(null);
+	let unlocked = $state(hasSeed());
+
+	async function generate() {
+		phrase = await newSeedPhrase();
+		generated = true;
+		phraseError = null;
+	}
+
+	async function useSeed() {
+		try {
+			await setSeedPhrase(phrase);
+			unlocked = true;
+			phraseError = null;
+			phrase = '';
+			generated = false;
+			await connect();
+		} catch {
+			phraseError = 'That is not a valid recovery phrase — check for typos.';
+		}
+	}
 </script>
 
 <div class="wallet">
-	{#if $clientState.status === 'idle'}
+	{#if $clientState.status === 'idle' && !unlocked}
+		<div class="seed">
+			<p class="seed-intro">
+				Your recovery phrase holds your note keys. It is separate from your wallet, which
+				only broadcasts and pays gas.
+			</p>
+			<textarea
+				bind:value={phrase}
+				rows="3"
+				spellcheck="false"
+				autocomplete="off"
+				placeholder="Enter your 24-word recovery phrase, or generate a new one"
+			></textarea>
+			{#if generated}
+				<p class="seed-warn">
+					Write this down offline before continuing. It cannot be recovered, and anyone
+					who has it can spend every note.
+				</p>
+			{/if}
+			{#if phraseError}<p class="seed-err">{phraseError}</p>{/if}
+			<div class="seed-actions">
+				<button class="primary" onclick={useSeed} disabled={!phrase.trim()}>
+					Unlock and connect
+				</button>
+				<button onclick={generate}>Generate new</button>
+			</div>
+		</div>
+	{:else if $clientState.status === 'idle'}
 		<button class="primary" onclick={connect}>Connect wallet</button>
 	{:else}
 		<header>
@@ -260,6 +319,16 @@
 	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
 	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }
 	.primary { padding: 0.5rem 0.9rem; }
+	.seed { display: flex; flex-direction: column; gap: 0.6rem; }
+	.seed textarea { width: 100%; resize: vertical; font-family: ui-monospace, monospace;
+		font-size: 0.8rem; line-height: 1.5; padding: 0.5rem 0.6rem;
+		background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+		color: inherit; }
+	.seed textarea:focus { outline: none; border-color: var(--accent); }
+	.seed-intro { font-size: 0.8rem; color: var(--text-dim); margin: 0; }
+	.seed-warn { font-size: 0.78rem; color: var(--text-bright); margin: 0; }
+	.seed-err { color: #ff8a80; font-size: 0.8rem; margin: 0; }
+	.seed-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 	.steps { margin: 0.5rem 0 0; padding-left: 1.2rem; display: flex; flex-direction: column;
 		gap: 0.35rem; font-size: 0.8rem; color: var(--text-dim); }
 	.steps li.now { color: var(--text-bright); }

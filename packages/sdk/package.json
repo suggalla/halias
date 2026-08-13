@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "test": "mocha",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
     "circomlibjs": "^0.1.7",

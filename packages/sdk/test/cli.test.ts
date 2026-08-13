@@ -3,6 +3,8 @@ import { execFileSync, spawnSync } from "child_process";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
+// Mocha loads these as ES modules, where __dirname does not exist; the CommonJS branch is
+// for anything that loads them the other way. Both are live — this is not a legacy shim.
 const __dirname_compat = typeof __dirname !== "undefined" ? __dirname : dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(__dirname_compat, "../dist/cli.js");
 
