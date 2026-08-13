@@ -115,8 +115,8 @@
 			return;
 		}
 		if (r) {
-			// The contract stores a keccak and cannot return the plaintext, so the name is
-			// remembered here from what was typed.
+			// Remembered locally so the name shows immediately. The claim publishes it in
+			// NamePublished, so the chain answers from the next scan on; this covers the gap.
 			rememberName(keccak256(toUtf8Bytes(clean + '.hls')), clean);
 			msg = `${clean}.hls is yours, funded from the invite.`;
 			code = '';
@@ -212,7 +212,7 @@
 		{/if}
 
 		<aside class="note">
-			<strong>One confirmation, not two.</strong>
+			<strong>One transaction, not two.</strong>
 			Registering a name yourself takes two — a reservation, then the claim — because the
 			name has to be hidden until it is yours. An invite carries proof of who it is for, so
 			there is nothing to hide and nothing to race.

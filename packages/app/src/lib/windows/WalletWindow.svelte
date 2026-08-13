@@ -96,7 +96,7 @@
 			takenError = `${clean}.hls is already taken — try another name.`;
 			return;
 		}
-		// Registration is the one action that asks for two signatures. Naming the step turns a
+		// Registration is the one action that sends two transactions. Naming the step turns a
 		// second unexplained wallet prompt into an expected one — without it the natural read
 		// is that the first attempt failed.
 		if (await run(() => c.register(clean, (s: 'commit' | 'register') => (step = s)))) {
@@ -256,12 +256,12 @@
 				</li>
 				<li class:now={step === 'register'}>
 					Register it
-					<em>A second approval, one block later.</em>
+					<em>A second transaction, one block later.</em>
 				</li>
 			</ol>
 		{:else}
 			<p class="hint">
-				Registering takes <strong>two confirmations</strong>. The first reserves the name
+				Registering takes <strong>two transactions</strong>. The first reserves the name
 				without revealing it, so nobody watching can take it before you do; the second
 				claims it a block later.
 			</p>
