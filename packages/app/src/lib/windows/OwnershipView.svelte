@@ -9,12 +9,8 @@
 	// The version that let the sender set both handed over the name while installing keys the
 	// seller kept, and every payment to that name kept arriving for them.
 	//
-	// Two shapes, because the second is not a variation of the first: an ordinary handover
-	// leaves your notes where they are, while selling a name means emptying it first.
+	// Whether the balance leaves first is not a choice — see mustSweep below.
 
-	type Mode = 'offer' | 'sweep';
-
-	let mode = $state<Mode>('offer');
 	let newOwner = $state('');
 	let sweepTo = $state('');
 	let msg = $state<string | null>(null);
@@ -29,6 +25,14 @@
 	// An alias with no known name cannot be handed over here: every SDK call takes the name,
 	// and the contract stores only its hash. Saying so beats a failure at signing time.
 	const nameless = $derived(!!alias && !alias.name);
+
+	// Whether the balance has to leave first is decided by the balance, not by the user.
+	//
+	// A handover replaces the registry entry with the new owner's keys, and every spend that
+	// needs a change output proves the *sender's* pubkey is registered — under this alias,
+	// which it no longer is. So notes left behind are not merely forgotten, they are stranded:
+	// only an exact-amount withdrawal producing no change could still move them.
+	const mustSweep = $derived((alias?.balance ?? 0n) > 0n);
 
 	// Read the outstanding offer straight from the contract rather than tracking it locally.
 	// An offer made from another browser is just as real, and a local flag would deny it.
@@ -47,8 +51,8 @@
 	function validate(): string | null {
 		if (nameless) return 'This alias has no known name — label it in the wallet first.';
 		if (!isAddress(newOwner.trim())) return 'Enter the new owner’s Ethereum address';
-		if (mode === 'sweep' && !isAddress(sweepTo.trim()))
-			return 'Enter an address to receive the swept funds';
+		if (mustSweep && !isAddress(sweepTo.trim()))
+			return 'Enter an address to receive this alias’s balance';
 		return null;
 	}
 
@@ -111,13 +115,6 @@
 		</div>
 	{/if}
 
-	<div class="tabs" role="tablist">
-		<button role="tab" aria-selected={mode === 'offer'} class:active={mode === 'offer'}
-			onclick={() => { mode = 'offer'; confirming = false; formError = null; }}>hand over</button>
-		<button role="tab" aria-selected={mode === 'sweep'} class:active={mode === 'sweep'}
-			onclick={() => { mode = 'sweep'; confirming = false; formError = null; }}>empty & sell</button>
-	</div>
-
 	{#if !confirming}
 		<div class="form">
 			<label>
@@ -125,20 +122,25 @@
 				<input bind:value={newOwner} placeholder="0x…" disabled={busy} />
 			</label>
 
-			{#if mode === 'sweep'}
+			{#if mustSweep}
 				<label>
 					<span>Send this alias’s balance to</span>
 					<input bind:value={sweepTo} placeholder="0x…" disabled={busy} />
 				</label>
+				<p class="warn">
+					This alias holds {formatEther(alias?.balance ?? 0n)} ETH, so it is emptied before it
+					changes hands. That is not a courtesy — a handover installs the new owner's keys,
+					and afterwards nothing left behind can be spent, because every spend has to prove
+					the sender's key is the one registered here.
+				</p>
 				<p class="hint">
-					Withdraws every note this alias holds, one transaction each, then offers the name
-					on. With {formatEther(alias?.balance ?? 0n)} ETH shielded, expect several wallet
-					prompts.
+					Every note is withdrawn separately, so expect several wallet prompts before the
+					offer itself.
 				</p>
 			{:else}
 				<p class="hint">
-					Your notes stay where they are. The new owner gets the name and everything paid to
-					it from now on — not your balance.
+					This alias is empty, so there is nothing to move out first. The new owner gets the
+					name and everything paid to it from now on.
 				</p>
 			{/if}
 
@@ -159,28 +161,23 @@
 			<dl>
 				<div><dt>Alias</dt><dd class="mono">{label}</dd></div>
 				<div><dt>New owner</dt><dd class="mono">{newOwner.trim()}</dd></div>
-				{#if mode === 'sweep'}
+				{#if mustSweep}
 					<div><dt>Balance to</dt><dd class="mono">{sweepTo.trim()}</dd></div>
-					<div><dt>Sweeping</dt><dd>{formatEther(alias?.balance ?? 0n)} ETH</dd></div>
+					<div><dt>Emptying</dt><dd>{formatEther(alias?.balance ?? 0n)} ETH</dd></div>
 				{/if}
 			</dl>
 
 			<p class="warn">
-				{#if mode === 'sweep'}
-					Sweeping is a courtesy, not a guarantee — nothing on chain can prove an alias is
-					empty, and notes already under your keys stay spendable by you. A buyer is
-					acquiring the name and its future payments, never a balance.
-				{:else}
-					Once they accept, the name and every future payment to it are theirs. You keep the
-					notes you already hold.
-				{/if}
+				Once they accept, the name and every future payment to it are theirs. Nothing on
+				chain can prove an alias is empty, so a buyer is acquiring the name and its future
+				payments — never a balance.
 			</p>
 
 			<div class="actions">
 				<button class="ghost" disabled={busy} onclick={() => (confirming = false)}>Back</button>
 				<button class="primary" disabled={busy}
-					onclick={mode === 'sweep' ? doSweepAndOffer : doOffer}>
-					{busy ? 'Working…' : mode === 'sweep' ? 'Sweep and offer' : 'Offer it'}
+					onclick={mustSweep ? doSweepAndOffer : doOffer}>
+					{busy ? 'Working…' : mustSweep ? 'Empty and offer' : 'Offer it'}
 				</button>
 			</div>
 		</div>

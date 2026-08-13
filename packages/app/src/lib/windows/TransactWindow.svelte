@@ -33,7 +33,8 @@
 		{ id: 'deposit',   label: 'Add funds', blurb: 'Move ETH from a wallet into this alias.' },
 		{ id: 'withdraw',  label: 'Withdraw',  blurb: 'Move ETH out to an ordinary address.' },
 		{ id: 'invite',    label: 'Invite',    blurb: 'Create a funded link for someone with no alias yet.' },
-		{ id: 'ownership', label: 'Ownership', blurb: 'Hand this alias to a new owner, or sell it.' },
+		{ id: 'ownership', label: 'Transfer alias ownership',
+		  blurb: 'Hand this alias to a new owner, or sell it.' },
 	];
 
 	let mode = $state<Mode | null>(null);
@@ -172,7 +173,12 @@
 		<p class="empty">Choose an alias in the wallet to transfer or withdraw.</p>
 	{:else}
 		<header>
-			<button class="back" onclick={deselectAlias}>← Wallet</button>
+			<!-- One back button, not two. Inside an action it returns to the action list; at the
+				     list it leaves for the wallet. Two of them stacked meant the visible one at the
+				     top of the screen always left the alias entirely. -->
+				<button class="back" onclick={() => (mode === null ? deselectAlias() : setMode(null))}>
+					{mode === null ? '← Wallet' : '← Actions'}
+				</button>
 			<div class="who">
 				<span class="nm">{label}</span>
 				<span class="bal" title="Shielded balance of this alias">
@@ -200,8 +206,6 @@
 			</ul>
 
 		{:else if phase === 'form'}
-			<button class="back sub" onclick={() => setMode(null)}>← Actions</button>
-
 			{#if mode === 'invite'}
 				<InviteWindow />
 			{:else if mode === 'ownership'}
@@ -312,9 +316,6 @@
 	.action:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-titlebar); }
 	.an { font-size: 0.9rem; font-weight: 700; color: var(--text-bright); }
 	.ab { font-size: 0.76rem; color: var(--text-dim); line-height: 1.45; }
-	/* Back to the action list, distinct from the header's back-to-wallet. */
-	.back.sub { align-self: flex-start; font-size: 0.8rem; color: var(--text-dim); }
-	.back.sub:hover { color: var(--accent); }
 	.form { display: flex; flex-direction: column; gap: 0.6rem; }
 	label { display: flex; flex-direction: column; gap: 0.25rem; }
 	label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
