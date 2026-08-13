@@ -266,13 +266,27 @@
 						</p>
 
 						{#if entries.length > 1}
-							<div class="tabs" role="tablist">
+							<!-- A list, not a tab strip. These are separate stored secrets of two
+							     different kinds, not views of one thing, and a row has room to say
+							     which kind each is — which a tab label cannot. -->
+							<ul class="stored">
 								{#each entries as e (e.id)}
-									<button role="tab" aria-selected={selected?.id === e.id}
-										class:active={selected?.id === e.id}
-										onclick={() => { selected = e; error = null; password = ''; }}>{e.label}</button>
+									<li>
+										<button
+											class="entry"
+											class:on={selected?.id === e.id}
+											aria-current={selected?.id === e.id}
+											onclick={() => { selected = e; error = null; password = ''; }}
+										>
+											<span class="en">{e.label}</span>
+											<span class="ek">
+												{e.kind === 'view' ? 'Reads one alias' : 'Recovery phrase'}
+												{e.hasPasskey ? ' · passkey' : ''}
+											</span>
+										</button>
+									</li>
 								{/each}
-							</div>
+							</ul>
 						{/if}
 
 						{#if selected.hasPasskey}
@@ -601,6 +615,16 @@
 	.or { margin: 0; text-align: center; font-size: 0.72rem; color: var(--text-dim);
 		text-transform: uppercase; letter-spacing: 0.1em; }
 
+	.stored { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+		gap: 0.35rem; }
+	.entry { width: 100%; display: flex; flex-direction: column; gap: 0.1rem;
+		padding: 0.55rem 0.7rem; background: var(--bg-input);
+		border: 1px solid var(--border); border-radius: 8px; text-align: left;
+		transition: border-color 0.15s, background 0.15s; }
+	.entry:hover { border-color: var(--accent); }
+	.entry.on { border-color: var(--accent); background: var(--bg-titlebar); }
+	.en { font-size: 0.85rem; font-weight: 700; color: var(--text-bright); }
+	.ek { font-size: 0.72rem; color: var(--text-dim); }
 	.kinds { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.45rem; }
 	.action { width: 100%; display: flex; flex-direction: column; gap: 0.2rem;
