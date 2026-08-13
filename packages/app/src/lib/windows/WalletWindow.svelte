@@ -9,6 +9,7 @@
 		clientFor,
 		loadAliases,
 		nextFreeIndex,
+		recoverAlias,
 		offersToMe,
 		acceptOfferAt,
 		type Offer
@@ -117,14 +118,13 @@
 		loadAliases();
 	}
 
-	// Accepting an alias someone offered to this wallet.
+	// Aliases offered to this wallet.
 	//
-	// It lives here rather than with the alias's own actions because you do not own it yet —
-	// there is nothing to select. Accepting installs *this* wallet's keys, derived at a free
-	// index, which is why only the recipient can complete a handover.
-	// Found rather than typed. AliasOffered indexes the recipient, so the node can answer
-	// "what have I been offered" directly — and the contract accepts by hash, so an offer can
-	// be taken without ever being told the name behind it.
+	// Here rather than with an alias's own actions because you do not own it yet — there is
+	// nothing to select. Found rather than typed: AliasOffered indexes the recipient, so the
+	// node answers "what have I been offered" directly, and the contract accepts by hash, so
+	// an offer can be taken without being told the name behind it. Accepting installs *this*
+	// wallet's keys, which is why only the recipient can complete a handover.
 	let offers = $state<Offer[]>([]);
 	let offersLoaded = $state(false);
 	let acceptMsg = $state<string | null>(null);
@@ -133,14 +133,23 @@
 
 	const freeIndex = $derived(nextFreeIndex($clientState.aliases));
 
-	// This address owns aliases and the unlocked phrase derives none of them.
+	// Only aliases this phrase can actually act as.
 	//
-	// One alias like this is ordinary — bought, or held for someone. All of them is a
-	// different fact: almost always the wrong phrase, and worth saying loudly, because the
-	// alternative reading is that the aliases are broken.
-	const noneDerivable = $derived(
-		$clientState.aliases.length > 0 && $clientState.aliases.every((a) => a.index === null)
-	);
+	// An alias owned by this address whose keys the phrase cannot derive is not usable: you
+	// cannot send from it, and its balance reads as zero because nothing decrypts. Listing it
+	// beside working ones made the list look broken. It is not gone, and it is not stuck —
+	// offering needs the owner's signature rather than the alias's keys, so it can be brought
+	// back under this phrase. That lives on one line below rather than in the list.
+	const usable = $derived($clientState.aliases.filter((a) => a.index !== null));
+	const orphaned = $derived($clientState.aliases.filter((a) => a.index === null));
+
+	let recovering = $state<string | null>(null);
+	async function recover(aliasHash: string) {
+		recovering = aliasHash;
+		const r = await recoverAlias(aliasHash);
+		recovering = null;
+		msg = r ? 'Recovered — it now uses your current keys, with an empty balance.' : null;
+	}
 
 	async function loadOffers() {
 		try {
@@ -193,45 +202,19 @@
 		</div>
 	</header>
 
-	{#if noneDerivable}
-		<div class="mismatch">
-			<strong>This recovery phrase does not match these aliases.</strong>
-			<p>
-				This address owns {$clientState.aliases.length}
-				{$clientState.aliases.length === 1 ? 'alias' : 'aliases'}, but the unlocked phrase
-				derives none of their keys — so they show as view only and cannot be spent from.
-				They are not damaged; they belong to a different phrase.
-			</p>
-			<p>Disconnect and unlock the phrase they were registered with, or register a new alias on this one.</p>
-		</div>
-	{/if}
-
 	<section>
 		<h3>Aliases</h3>
-		{#if $clientState.aliases.length === 0}
+		{#if usable.length === 0}
 			<p class="empty">None yet — register one below to start receiving.</p>
 		{:else}
 			<ul class="aliases">
-				{#each $clientState.aliases as a}
+				{#each usable as a}
 					<li>
-						<button
-							class="alias"
-							disabled={busy || a.index === null}
-							onclick={() => a.index !== null && selectAlias(a.index)}
-						>
+						<button class="alias" disabled={busy} onclick={() => selectAlias(a.index!)}>
 							<span class="nm">{a.name ? `${a.name}.hls` : a.aliasHash}</span>
 							<span class="bal">{formatEther(a.balance)} ETH</span>
 						</button>
-						{#if a.index === null}
-							<!-- Owned, but no derivation index within range reproduces its published
-							     key — so this address can see it and cannot spend from it.
-							     Naming the likely cause matters: the old message stated the symptom,
-							     and the reader's next question was always "why". -->
-							<p class="warn">
-								View only — registered with a different recovery phrase, so this one
-								cannot derive its keys. Unlock the phrase it was registered with to use it.
-							</p>
-						{:else if !a.name}
+						{#if !a.name}
 							<input
 								class="label-in"
 								placeholder="Know the name? Type it to label locally"
@@ -241,6 +224,40 @@
 					</li>
 				{/each}
 			</ul>
+		{/if}
+
+		<!-- Kept out of the list, because it cannot be acted as. Kept on screen, because this
+		     address does own it and it can be brought back — silently hiding an owned name
+		     would look like it had been lost. -->
+		{#if orphaned.length > 0}
+			<details class="orphans">
+				<summary>
+					{orphaned.length}
+					{orphaned.length === 1 ? 'alias belongs' : 'aliases belong'} to a different recovery phrase
+				</summary>
+				<p class="hint">
+					This address owns {orphaned.length === 1 ? 'it' : 'them'}, but the phrase you
+					unlocked cannot derive {orphaned.length === 1 ? 'its' : 'their'} keys, so
+					{orphaned.length === 1 ? 'it' : 'they'} cannot receive or spend. Unlock the
+					original phrase to use {orphaned.length === 1 ? 'it' : 'them'} as before — or
+					recover the name onto this phrase, which issues new keys and starts the balance
+					at zero. Anything already received stays unreadable.
+				</p>
+				<ul class="aliases">
+					{#each orphaned as a}
+						<li class="orphan">
+							<span class="nm">{a.name ? `${a.name}.hls` : a.aliasHash}</span>
+							<button
+								class="ghost"
+								disabled={busy || recovering !== null}
+								onclick={() => recover(a.aliasHash)}
+							>
+								{recovering === a.aliasHash ? 'Recovering…' : 'Recover onto this phrase'}
+							</button>
+						</li>
+					{/each}
+				</ul>
+			</details>
 		{/if}
 	</section>
 
@@ -365,10 +382,15 @@
 	.suffix { color: var(--text-dim); font-family: ui-monospace, monospace; }
 	.label-in { width: 100%; margin-top: 0.3rem; font-size: 0.8rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0.4rem 0 0; }
-	.mismatch { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.8rem;
-		border: 1px solid #ff8a80; border-radius: 8px; background: var(--bg-input); }
-	.mismatch strong { font-size: 0.85rem; color: #ff8a80; }
-	.mismatch p { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--text-dim); }
+	.orphans { margin-top: 0.7rem; font-size: 0.8rem; }
+	.orphans summary { cursor: pointer; color: var(--text-dim); }
+	.orphans summary:hover { color: var(--accent); }
+	.orphans .hint { margin: 0.5rem 0; }
+	.orphan { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+		padding: 0.55rem 0.7rem; background: var(--bg-input);
+		border: 1px solid var(--border); border-radius: 6px; }
+	.orphan .nm { flex: 1; min-width: 0; }
+	.orphan .ghost { padding: 0.32rem 0.7rem; font-size: 0.76rem; }
 	.offers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.4rem; }
 	.offers li { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
@@ -378,7 +400,6 @@
 	.from { font-size: 0.7rem; color: var(--text-dim); font-family: ui-monospace, monospace;
 		overflow-wrap: anywhere; }
 	.offers .primary { padding: 0.4rem 0.9rem; }
-	.warn { font-size: 0.75rem; opacity: 0.85; margin: 0.25rem 0 0; }
 	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
 	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }
 	.primary { padding: 0.5rem 0.9rem; }

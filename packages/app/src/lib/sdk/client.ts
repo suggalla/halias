@@ -617,6 +617,29 @@ export async function offersToMe(): Promise<Offer[]> {
 	return offers;
 }
 
+/// Bring an alias back under the currently unlocked phrase.
+///
+/// An alias this address owns but cannot derive keys for is not broken and not stuck:
+/// offering is authorised by the owner's signature, not by the alias's keys. So it can be
+/// offered to its own owner and accepted with the keys they *do* have, which installs a fresh
+/// set at a free index.
+///
+/// What does not come back is the balance. Notes already received were encrypted to the old
+/// viewing key, and no new key can read them — this recovers the name, not its history.
+export async function recoverAlias(aliasHash: string): Promise<{ txHash: string } | null> {
+	if (!baseConfig) return null;
+	const me = await baseConfig.signer.getAddress();
+	const index = nextFreeIndex(get(clientState).aliases);
+	return run(async () => {
+		// Any initialised client can make the offer; it needs the signer, not this alias's keys.
+		const c = await clientFor(index);
+		await c.offerAliasByHash(BigInt(aliasHash), me);
+		const r = await c.acceptOffer(BigInt(aliasHash));
+		await loadAliases();
+		return r;
+	});
+}
+
 /// Take an offer found by {offersToMe}, by hash.
 ///
 /// The name is never needed: the contract identifies an alias by hash. That is what lets
