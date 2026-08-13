@@ -61,7 +61,7 @@ export const REGISTRY_ABI = [
   "event AliasReassigned(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 leaf, bytes32 encryptionPubkey)",
 ];
 
-export const DOMAIN_ABI = [
+export const CONTROLLER_ABI = [
   "function register(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 salt) external payable",
   "function aliasToHash(string name) external pure returns (bytes32)",
   "function registerDirect(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external payable",
@@ -142,8 +142,8 @@ export function getRegistry(address: string, runner: ethers.ContractRunner): eth
   return new ethers.Contract(address, REGISTRY_ABI, runner);
 }
 
-export function getDomain(address: string, runner: ethers.ContractRunner): ethers.Contract {
-  return new ethers.Contract(address, DOMAIN_ABI, runner);
+export function getController(address: string, runner: ethers.ContractRunner): ethers.Contract {
+  return new ethers.Contract(address, CONTROLLER_ABI, runner);
 }
 
 /// Assembles the calldata struct. Kept in one place so the field order cannot drift between
@@ -242,13 +242,15 @@ export async function register(
   nullifierKeyHash: bigint,
   encryptionPubkey: bigint,
   fee: bigint,
+  /// The commit-reveal secret. Derived by the caller rather than random here — see
+  /// {Halias-register} — so that the reveal needs nothing carried over from the commit.
+  salt: string,
   /// Reports which of the two transactions is in flight. Registration is the only operation
   /// here that needs two wallet confirmations, and a caller that cannot say which one is
   /// which leaves the user staring at a second unexplained prompt.
   onStep?: (step: "commit" | "register") => void,
 ): Promise<ethers.ContractTransactionResponse> {
   const owner = await (domain.runner as ethers.Signer).getAddress();
-  const salt  = ethers.hexlify(ethers.randomBytes(32));
 
   const commitment = await domain.registrationCommitment(
     name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey),

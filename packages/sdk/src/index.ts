@@ -14,7 +14,7 @@ export { scanEvents, findMyOutputs } from "./events";
 export type { Output, RegistryEntry, ScanResult } from "./events";
 
 export {
-  getPool, getRegistry, getDomain,
+  getPool, getRegistry, getController,
   transact, register, updateAliasData, offerAlias, cancelOffer, acceptAlias, lookupAlias, claim,
   signUpdateAliasData, signOfferAlias, signCancelOffer,
   computeParamsHash, encodeRegistration, buildTransactParams,
@@ -40,4 +40,4 @@ export {
   encodeInviteCode, decodeInviteCode,
 } from "./invite";
 export type { InviteKeys } from "./invite";
-export { POOL_ABI, REGISTRY_ABI as POOL_REGISTRY_ABI, DOMAIN_ABI } from "./contract";
+export { POOL_ABI, REGISTRY_ABI as POOL_REGISTRY_ABI, CONTROLLER_ABI } from "./contract";

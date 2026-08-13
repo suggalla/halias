@@ -15,7 +15,7 @@ import { PoolTrees } from "./merkle";
 import { aliasHashToSmtKey } from "./smt";
 import { dummyOutput, TransactOutput } from "./proof";
 import { scanEvents, findMyOutputs, Output, RegistryEntry, ScanResult } from "./events";
-import { getPool, getRegistry, getDomain } from "./contract";
+import { getPool, getRegistry, getController } from "./contract";
 import { CacheStore, serializeCache, deserializeCache } from "./cache";
 
 
@@ -27,7 +27,7 @@ export interface HaliasConfig {
   // paramsHash, so poolAddress is the one that must be right for a proof to verify.
   poolAddress: string;
   registryAddress: string;
-  domainAddress: string;
+  controllerAddress: string;
   artifacts: {
     transactWasm: string;
     transactZkey: string;
@@ -107,7 +107,7 @@ export abstract class HaliasCore {
     this.config = config;
     this.pool     = getPool(config.poolAddress, config.signer);
     this.registry = getRegistry(config.registryAddress, config.signer);
-    this.domain   = getDomain(config.domainAddress, config.signer);
+    this.domain   = getController(config.controllerAddress, config.signer);
   }
 
   /// Bind this client to one alias identity.
@@ -255,7 +255,7 @@ export abstract class HaliasCore {
       this.config.provider,
       this.config.poolAddress,
       this.config.registryAddress,
-      this.config.domainAddress,
+      this.config.controllerAddress,
       fromBlock,
       this.config.rpcChunkSize,
       this.config.onProgress,

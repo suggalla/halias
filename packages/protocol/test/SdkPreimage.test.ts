@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   computeParamsHash, encodeRegistration, buildTransactParams,
-  POOL_ABI, POOL_REGISTRY_ABI as REGISTRY_ABI, DOMAIN_ABI,
+  POOL_ABI, POOL_REGISTRY_ABI as REGISTRY_ABI, CONTROLLER_ABI,
   NO_RELAYER, type TransactParams,
 } from "halias-sdk";
 import { ensurePoseidon } from "../scripts/poseidon";
@@ -43,7 +43,7 @@ describe("SDK preimage agreement", function () {
 
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
-    domain   = await ethers.getContractAt("HaliasController",   await deployer.domain());
+    domain   = await ethers.getContractAt("HaliasController",   await deployer.controller());
     poolAddr = await pool.getAddress();
     chainId  = (await ethers.provider.getNetwork()).chainId;
   });
@@ -217,6 +217,6 @@ describe("SDK preimage agreement", function () {
     };
     check(POOL_ABI, "HaliasPool");
     check(REGISTRY_ABI, "HaliasRegistry");
-    check(DOMAIN_ABI, "HaliasController");
+    check(CONTROLLER_ABI, "HaliasController");
   });
 });

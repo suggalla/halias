@@ -39,7 +39,7 @@ describe("HaliasDeployer", function () {
 
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
-    domain   = await ethers.getContractAt("HaliasController",   await deployer.domain());
+    domain   = await ethers.getContractAt("HaliasController",   await deployer.controller());
   });
 
   it("closes the cycle on the real addresses", async function () {
@@ -65,7 +65,7 @@ describe("HaliasDeployer", function () {
     const from = await deployer.getAddress();
     expect(await deployer.registry()).to.equal(ethers.getCreateAddress({ from, nonce: 1 }));
     expect(await deployer.pool()).to.equal(ethers.getCreateAddress({ from, nonce: 2 }));
-    expect(await deployer.domain()).to.equal(ethers.getCreateAddress({ from, nonce: 3 }));
+    expect(await deployer.controller()).to.equal(ethers.getCreateAddress({ from, nonce: 3 }));
   });
 
   it("leaves nobody but the domain able to write the registry", async function () {

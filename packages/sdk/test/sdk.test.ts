@@ -260,7 +260,7 @@ describe("Halias construction", () => {
     // Three addresses since the split. poolAddress is the one paramsHash commits to.
     poolAddress:     "0x" + "11".repeat(20),
     registryAddress: "0x" + "22".repeat(20),
-    domainAddress:   "0x" + "33".repeat(20),
+    controllerAddress:   "0x" + "33".repeat(20),
     artifacts: { transactWasm: "/dev/null", transactZkey: "/dev/null" },
   });
 

@@ -125,7 +125,7 @@ describe("Circuit/contract alignment", function () {
     })).deploy(await tv.getAddress(), (await ethers.getSigners())[0].address);
     pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
-    halias   = await ethers.getContractAt("HaliasController",   await dep.domain());
+    halias   = await ethers.getContractAt("HaliasController",   await dep.controller());
     REGISTRATION_FEE = await halias.registrationFee();
     registrySMT = new SMT();
     poolTree    = new MerkleTree(POOL_LEVELS);

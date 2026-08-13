@@ -65,7 +65,7 @@ async function main() {
   const rpc = process.env.RPC_URL ?? "http://127.0.0.1:8545";
   const cfg = loadDeployment();
 
-  for (const k of ["pool", "registry", "domain"]) {
+  for (const k of ["pool", "registry", "controller"]) {
     if (!cfg[k]) throw new Error(`deployment has no "${k}" — run scripts/deploy.ts first`);
   }
   for (const [k, p] of Object.entries(ARTIFACTS)) {
@@ -104,11 +104,11 @@ async function main() {
   console.log(`  signer   ${signer.address}`);
   console.log(`  pool     ${cfg.pool}`);
   console.log(`  registry ${cfg.registry}`);
-  console.log(`  domain   ${cfg.domain}\n`);
+  console.log(`  controller ${cfg.controller}\n`);
 
   const mk = (s: ethers.Wallet, aliasIndex = 0) => new Halias({
     provider, signer: s as any, chainId,
-    poolAddress: cfg.pool, registryAddress: cfg.registry, domainAddress: cfg.domain,
+    poolAddress: cfg.pool, registryAddress: cfg.registry, controllerAddress: cfg.controller,
     artifacts: ARTIFACTS,
     startBlock: cfg.startBlock ?? 0,
     rpcChunkSize: 2000,
@@ -140,7 +140,7 @@ async function main() {
     "function aliases(bytes32) view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint256 registeredAt)",
     "function isRegistered(bytes32) view returns (bool)",
   ], provider);
-  const domainContract = new ethers.Contract(cfg.domain, [
+  const controllerContract = new ethers.Contract(cfg.controller, [
     "function ownerOf(uint256) view returns (address)",
     "function pendingAliasOwner(bytes32) view returns (address)",
   ], provider);
@@ -451,7 +451,7 @@ async function main() {
      claimPayload.claim?.registration.owner, pauperWallet.address);
 
   const claimQuote = await quoteRelay(provider, claimPayload, relayWallet.address);
-  check("it simulates against the domain, not the pool", claimQuote.valid, claimQuote.reason ?? "");
+  check("it simulates against the controller, not the pool", claimQuote.valid, claimQuote.reason ?? "");
   eq("the quote reports it as a claim", claimQuote.kind, "claim");
   check("the relayer profits from submitting it", claimQuote.profit > 0n,
         `fee ${ethers.formatEther(claimQuote.fee)} - gas ${ethers.formatEther(claimQuote.gasCost)}`);
@@ -460,7 +460,7 @@ async function main() {
 
   const giftHash = ethers.keccak256(ethers.toUtf8Bytes(`${pauperName}.hls`));
   eq("the alias belongs to the claimer, not the submitter",
-     await domainContract.ownerOf(BigInt(giftHash)), pauperWallet.address);
+     await controllerContract.ownerOf(BigInt(giftHash)), pauperWallet.address);
   eq("who still holds no ETH",
      (await balanceOf(provider, pauperWallet.address)).toString(), "0");
 
@@ -543,7 +543,7 @@ async function main() {
   const squatter = mk(squatterWallet as any);
   await squatter.init();
 
-  const domainAsSquatter = new ethers.Contract(cfg.domain, [
+  const controllerAsSquatter = new ethers.Contract(cfg.controller, [
     "function register(string,bytes32,bytes32,bytes32,bytes32) external payable",
     "function registrationCommitment(string,bytes32,bytes32,bytes32,address,bytes32) external pure returns (bytes32)",
     "function registrationFee() external view returns (uint256)",
@@ -564,10 +564,10 @@ async function main() {
   const targetHash = ethers.keccak256(ethers.toUtf8Bytes(`${target}2.hls`));
   let noCommitment = false;
   try {
-    await (await domainAsSquatter.register(
+    await (await controllerAsSquatter.register(
       targetHash, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.toBeHex(3n, 32), "",
       ethers.hexlify(ethers.randomBytes(32)),
-      { value: await domainAsSquatter.registrationFee() },
+      { value: await controllerAsSquatter.registrationFee() },
     )).wait();
   } catch { noCommitment = true; }
   check("registering without a prior commitment is refused", noCommitment);
@@ -706,7 +706,7 @@ async function main() {
   // Submitted by the relayer, not by the owner. That is the point of removing updateKeys:
   // the moment you most need to re-key is after a compromise, which is also when you are
   // least able to pay for a transaction.
-  const rotateAsRelayer = new ethers.Contract(cfg.domain, [
+  const rotateAsRelayer = new ethers.Contract(cfg.controller, [
     "function acceptAlias(bytes32,bytes32,bytes32,bytes32,uint256,bytes) external",
   ], relayWallet);
   const rotatedKeys = (rotated as any).keys;
@@ -724,7 +724,7 @@ async function main() {
      (await registryContract.aliases(aliceKey)).spendingPubkey,
      ethers.toBeHex((rotated as any).keys.spendingPubkey, 32));
   eq("the alias is still owned by the same address",
-     await domainContract.ownerOf(BigInt(aliceKey)), aliceWallet.address);
+     await controllerContract.ownerOf(BigInt(aliceKey)), aliceWallet.address);
   // In-place update is the whole reason this is an SMT: the alias must keep its slot, or
   // every sender holding a proof against its position breaks.
   eq("rotation keeps the alias in its slot",
@@ -753,25 +753,25 @@ async function main() {
 
   await alice.offerAlias(aliceName, heirWallet.address);
   eq("an offer moves nothing on its own",
-     await domainContract.ownerOf(BigInt(aliceAliasHash)), aliceWallet.address);
+     await controllerContract.ownerOf(BigInt(aliceAliasHash)), aliceWallet.address);
 
   // Withdrawing an offer, before covering the path where it is taken up. An offer that
   // cannot be revoked is a standing option written against the owner.
   await alice.cancelOffer(aliceName);
   eq("a cancelled offer leaves no pending owner",
-     await domainContract.pendingAliasOwner(aliceAliasHash), ethers.ZeroAddress);
+     await controllerContract.pendingAliasOwner(aliceAliasHash), ethers.ZeroAddress);
   // Prepared, then submitted — because `prepare` only signs an EIP-712 message off chain and
   // succeeds whether or not an offer exists. The cancellation has to be enforced where the
   // signature is redeemed, which is the only place that can see there is nothing to accept.
   const staleAccept = await heirClient.acceptAlias(aliceName, { prepare: true });
   check("a signature can still be produced for a cancelled offer", !!staleAccept.signature);
-  const domainForStale = new ethers.Contract(cfg.domain, [
+  const controllerForStale = new ethers.Contract(cfg.controller, [
     "function acceptAlias(bytes32,bytes32,bytes32,bytes32,uint256,bytes) external",
   ], relayWallet);
   const heirKeysEarly = (heirClient as any).keys;
   let staleRejected = false;
   try {
-    await (await domainForStale.acceptAlias(
+    await (await controllerForStale.acceptAlias(
       aliceAliasHash,
       ethers.toBeHex(heirKeysEarly.spendingPubkey, 32),
       ethers.toBeHex((heirClient as any).myNullifierKeyHash(), 32),
@@ -789,11 +789,11 @@ async function main() {
   const accepted = await heirClient.acceptAlias(aliceName, { prepare: true });
   check("the recipient can authorise without submitting", accepted.txHash === "" && !!accepted.signature);
 
-  const domainAsRelayer = new ethers.Contract(cfg.domain, [
+  const controllerAsRelayer = new ethers.Contract(cfg.controller, [
     "function acceptAlias(bytes32,bytes32,bytes32,bytes32,uint256,bytes) external",
   ], relayWallet);
   const heirKeys = (heirClient as any).keys;
-  await (await domainAsRelayer.acceptAlias(
+  await (await controllerAsRelayer.acceptAlias(
     aliceAliasHash,
     ethers.toBeHex(heirKeys.spendingPubkey, 32),
     ethers.toBeHex((heirClient as any).myNullifierKeyHash(), 32),
@@ -802,7 +802,7 @@ async function main() {
   )).wait();
 
   eq("the alias NFT moved to the new owner",
-     await domainContract.ownerOf(BigInt(aliceAliasHash)), heirWallet.address);
+     await controllerContract.ownerOf(BigInt(aliceAliasHash)), heirWallet.address);
   eq("and the registry now holds the recipient's own key",
      (await registryContract.aliases(aliceAliasHash)).spendingPubkey,
      ethers.toBeHex(heirKeys.spendingPubkey, 32));
@@ -848,7 +848,7 @@ async function main() {
 
   const claimHash = ethers.keccak256(ethers.toUtf8Bytes(`${claimName}.hls`));
   eq("the claimed alias is owned by the claimer",
-     await domainContract.ownerOf(BigInt(claimHash)), claimerWallet.address);
+     await controllerContract.ownerOf(BigInt(claimHash)), claimerWallet.address);
   check("the claimer registered without pre-existing funds", beforeClaim === 0n);
 
   // The note pays the registration fee; the remainder comes back as the claimer's own
@@ -884,10 +884,10 @@ async function main() {
   // Offered, not moved. Sweeping is a courtesy — nothing on chain can prove an alias is
   // empty — and the handover still waits on the recipient's own keys.
   eq("the alias is offered but still bob's until accepted",
-     await domainContract.ownerOf(BigInt(ethers.keccak256(ethers.toUtf8Bytes(`${bobName}.hls`)))),
+     await controllerContract.ownerOf(BigInt(ethers.keccak256(ethers.toUtf8Bytes(`${bobName}.hls`)))),
      bobWallet.address);
   eq("with the offer recorded",
-     await domainContract.pendingAliasOwner(ethers.keccak256(ethers.toUtf8Bytes(`${bobName}.hls`))),
+     await controllerContract.pendingAliasOwner(ethers.keccak256(ethers.toUtf8Bytes(`${bobName}.hls`))),
      sweepHeir.address);
 
   console.log(`\n${passed} passed, ${failed} failed\n`);

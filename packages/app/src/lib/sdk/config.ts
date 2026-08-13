@@ -24,7 +24,7 @@ export interface NetworkConfig {
 	// must be right for a proof to verify — the pool hashes its own address into paramsHash.
 	poolAddress: string;
 	registryAddress: string;
-	domainAddress: string;
+	controllerAddress: string;
 	startBlock: number;
 }
 
@@ -38,7 +38,7 @@ export const NETWORKS: Record<number, NetworkConfig> = {
 		blockExplorer: 'https://sepolia.etherscan.io',
 		poolAddress: (sepolia as any).pool,
 		registryAddress: (sepolia as any).registry,
-		domainAddress: (sepolia as any).domain,
+		controllerAddress: (sepolia as any).domain,
 		startBlock: (sepolia as any).startBlock ?? 0
 	}
 };
@@ -55,7 +55,7 @@ if (localhost?.pool) {
 		blockExplorer: '',
 		poolAddress: localhost.pool as string,
 		registryAddress: localhost.registry as string,
-		domainAddress: localhost.domain as string,
+		controllerAddress: localhost.domain as string,
 		startBlock: (localhost.startBlock as number) ?? 0
 	};
 }
@@ -78,7 +78,7 @@ export function usableNetworks(): NetworkConfig[] {
 }
 
 export function isSplitDeployment(net: NetworkConfig): boolean {
-	return Boolean(net.poolAddress && net.registryAddress && net.domainAddress);
+	return Boolean(net.poolAddress && net.registryAddress && net.controllerAddress);
 }
 
 // One circuit handles deposit, transfer and withdraw via a signed publicAmount, so there
