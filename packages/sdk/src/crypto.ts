@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import nacl from "tweetnacl";
 
-// @ts-ignore — circomlibjs ships no types. An import rather than a require so this module
+// @ts-expect-error — circomlibjs ships no types. An import rather than a require so this module
 // is valid ESM: bundlers can then read this source directly instead of a CommonJS build,
 // which is what stops the browser serving a stale copy after every SDK rebuild.
 import { buildPoseidon } from "circomlibjs";
@@ -55,7 +55,7 @@ export function poseidonHash(inputs: bigint[]): bigint {
 /// across every name an EOA owns. One signature still unlocks all of them, so the prompt
 /// count does not change.
 ///
-/// This does NOT make aliases unlinkable on its own — `HaliasDomain.ownerOf` still names
+/// This does NOT make aliases unlinkable on its own — `HaliasController.ownerOf` still names
 /// the same EOA for each. Separating those requires holding them from different addresses;
 /// see multi-alias-flow.md. What it does fix is note separation: distinct balances,
 /// distinct decryption, and no shared key in the registry.

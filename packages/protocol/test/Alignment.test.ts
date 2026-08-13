@@ -125,16 +125,18 @@ describe("Circuit/contract alignment", function () {
     })).deploy(await tv.getAddress(), (await ethers.getSigners())[0].address);
     pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
-    halias   = await ethers.getContractAt("HaliasDomain",   await dep.domain());
+    halias   = await ethers.getContractAt("HaliasController",   await dep.domain());
     REGISTRATION_FEE = await halias.registrationFee();
     registrySMT = new SMT();
     poolTree    = new MerkleTree(POOL_LEVELS);
   });
 
   async function registerLocal(pubkey: bigint, nk: bigint) {
-    const aliasHash = ethers.keccak256(ethers.randomBytes(32));
-    await registerAlias(halias, (await ethers.getSigners())[0], aliasHash, ethers.toBeHex(pubkey, 32), ethers.toBeHex(toNullifierKeyHash(nk), 32),
-      ethers.keccak256(ethers.randomBytes(32)), "", REGISTRATION_FEE);
+    // The contract derives the hash from the name, so the test starts from a name too.
+    const name = `a${Math.floor(Math.random() * 1e12)}.hls`;
+    const aliasHash = ethers.keccak256(ethers.toUtf8Bytes(name));
+    await registerAlias(halias, (await ethers.getSigners())[0], name, ethers.toBeHex(pubkey, 32), ethers.toBeHex(toNullifierKeyHash(nk), 32),
+      ethers.keccak256(ethers.randomBytes(32)), REGISTRATION_FEE);
     const key  = aliasHashToKey(aliasHash);
     const slot = Number(await registry.aliasSlot(aliasHash)) - 1;
     registrySMT.update(slot, key, registryLeaf(pubkey, nk));

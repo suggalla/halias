@@ -26,7 +26,7 @@ error AliasNotRegistered();
 ///         of here is what lets the tree be reasoned about on its own.
 ///
 ///         There is no admin and no upgrade path. Exactly one address may write, fixed at
-///         construction: the controller, which is {HaliasDomain}. Everything else is a
+///         construction: the controller, which is {HaliasController}. Everything else is a
 ///         view. The role is named for what it does rather than for the contract that
 ///         fills it, so this contract never has to know what a name or an owner is.
 ///

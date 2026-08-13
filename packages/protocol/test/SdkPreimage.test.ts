@@ -43,7 +43,7 @@ describe("SDK preimage agreement", function () {
 
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
-    domain   = await ethers.getContractAt("HaliasDomain",   await deployer.domain());
+    domain   = await ethers.getContractAt("HaliasController",   await deployer.domain());
     poolAddr = await pool.getAddress();
     chainId  = (await ethers.provider.getNetwork()).chainId;
   });
@@ -145,6 +145,59 @@ describe("SDK preimage agreement", function () {
     expect(offChain).to.equal(onChain);
   });
 
+  it("agrees on the EIP-712 digest a recipient signs to accept an alias", async function () {
+    // The SDK builds this typed data itself and hands it to the wallet — it cannot hand over
+    // a bare digest, because wallets sign typed data, not hashes. So the two encodings live
+    // in two places and can drift: a wrong typehash, a reordered field, a uint256 where the
+    // contract says bytes32. Any of those produces a signature the contract rejects with
+    // NotSignedByOwner, which reads as "wrong signer" and sends you looking in the wrong
+    // place entirely.
+    //
+    // acceptAliasDigest exists to be the oracle for exactly this, and had no caller.
+    const aliasHash = ethers.keccak256(ethers.toUtf8Bytes("digestcheck.hls"));
+    const [signer]  = await ethers.getSigners();
+    const to        = signer.address;
+    const deadline  = 1893456000n;
+    const keys = {
+      spendingPubkey:   ethers.toBeHex(111n, 32),
+      nullifierKeyHash: ethers.toBeHex(222n, 32),
+      encryptionPubkey: ethers.toBeHex(333n, 32),
+    };
+
+    const net = await ethers.provider.getNetwork();
+    const domainData = {
+      name: "Halias", version: "1",
+      chainId: Number(net.chainId), verifyingContract: await domain.getAddress(),
+    };
+    const types = {
+      AcceptAlias: [
+        { name: "aliasHash",        type: "bytes32" },
+        { name: "spendingPubkey",   type: "bytes32" },
+        { name: "nullifierKeyHash", type: "bytes32" },
+        { name: "encryptionPubkey", type: "bytes32" },
+        { name: "to",               type: "address" },
+        { name: "nonce",            type: "uint256" },
+        { name: "deadline",         type: "uint256" },
+      ],
+    };
+    const value = {
+      aliasHash,
+      spendingPubkey:   keys.spendingPubkey,
+      nullifierKeyHash: keys.nullifierKeyHash,
+      encryptionPubkey: keys.encryptionPubkey,
+      to,
+      nonce: await domain.aliasNonce(aliasHash),
+      deadline,
+    };
+
+    expect(ethers.TypedDataEncoder.hash(domainData, types, value)).to.equal(
+      await domain.acceptAliasDigest(
+        aliasHash, keys.spendingPubkey, keys.nullifierKeyHash, keys.encryptionPubkey,
+        to, deadline,
+      ),
+    );
+  });
+
   it("matches the compiled artifacts fragment for fragment", async function () {
     // Signature agreement, which is what SdkAbi.test.ts does for the monolith. Kept beside
     // the preimage check so the two failure modes are visible together.
@@ -164,6 +217,6 @@ describe("SDK preimage agreement", function () {
     };
     check(POOL_ABI, "HaliasPool");
     check(REGISTRY_ABI, "HaliasRegistry");
-    check(DOMAIN_ABI, "HaliasDomain");
+    check(DOMAIN_ABI, "HaliasController");
   });
 });

@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { buildTransactParams, getPool, getDomain, type TransactParams } from "./contract";
+import { buildTransactParams, getPool, getDomain } from "./contract";
 
 /// Handing a signed withdrawal to someone else to submit.
 ///

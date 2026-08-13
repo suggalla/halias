@@ -10,32 +10,14 @@ import {
   HaliasKeys,
   Signer,
 } from "./crypto";
-import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS } from "./entry";
-import { MerkleTree, PoolTrees } from "./merkle";
+import { computeNullifier, randomBlinding, OwnedEntry } from "./entry";
+import { PoolTrees } from "./merkle";
 import { aliasHashToSmtKey } from "./smt";
-import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
+import { dummyOutput, TransactOutput } from "./proof";
 import { scanEvents, findMyOutputs, Output, RegistryEntry, ScanResult } from "./events";
-import { deriveInviteKeys, InviteKeys, encodeInviteCode } from "./invite";
-import {
-  getPool,
-  getRegistry,
-  getDomain,
-  transact as contractTransact,
-  register as contractRegister,
-  updateAliasData as contractUpdateAliasData,
-  lookupAlias as contractLookupAlias,
-  claim as contractClaim,
-  encodeRegistration,
-  computeParamsHash,
-  TransactParams,
-  ZERO_TRANSACT_PARAMS,
-  NO_RELAYER,
-} from "./contract";
+import { getPool, getRegistry, getDomain } from "./contract";
 import { CacheStore, serializeCache, deserializeCache } from "./cache";
-import { randomBytes, toHex } from "./random";
 
-const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const REGISTRY_LEVELS = 32;
 
 export interface HaliasConfig {
   provider: ethers.Provider;

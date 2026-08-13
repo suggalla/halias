@@ -1,26 +1,19 @@
 import { ethers } from "ethers";
 import { normalizeAlias } from "./alias";
-import {
-  init as initCrypto,
-  deriveKeysFromRoot,
-  poseidonHash,
-  encryptOutput,
-  encodeOutputBlob,
-  HaliasKeys,
-  Signer,
-} from "./crypto";
+import { deriveKeysFromRoot, poseidonHash } from "./crypto";
 import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS } from "./entry";
-import { MerkleTree, PoolTrees } from "./merkle";
-import { SMT, aliasHashToSmtKey } from "./smt";
+import { PoolTrees } from "./merkle";
+import { aliasHashToSmtKey } from "./smt";
 import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
-import { scanEvents, findMyOutputs, Output, RegistryEntry } from "./events";
+import { findMyOutputs, Output } from "./events";
 import { deriveInviteKeys, InviteKeys, encodeInviteCode } from "./invite";
 import {
-  getPool,
-  getRegistry,
-  getDomain,
+  
+  
+  
   transact as contractTransact,
   register as contractRegister,
+  registerDirect as contractRegisterDirect,
   updateAliasData as contractUpdateAliasData,
   offerAlias as contractOfferAlias,
   cancelOffer as contractCancelOffer,
@@ -34,11 +27,8 @@ import {
   ZERO_TRANSACT_PARAMS,
   NO_RELAYER,
 } from "./contract";
-import { CacheStore, serializeCache, deserializeCache } from "./cache";
-import { randomBytes, toHex } from "./random";
 
 const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const REGISTRY_LEVELS = 32;
 
 import { HaliasCore } from "./client-core";
 import { encodeRelayBlob } from "./relay";
@@ -117,20 +107,25 @@ export class Halias extends HaliasCore {
   async register(
     alias: string,
     onStep?: (step: "commit" | "register") => void,
+    /// One transaction instead of two, and no front-running protection. Only correct where
+    /// the mempool is not public; see {registerDirect} on the contract. Defaults off, and
+    /// deliberately not surfaced by the CLI.
+    opts: { direct?: boolean } = {},
   ): Promise<{ txHash: string }> {
     this.ensureInit();
     const cleanAlias = normalizeAlias(alias);
-    const aliasHash  = this.aliasHashOf(alias);
 
     const spendingBytes32 = this.keys!.spendingPubkey;
     const encBytes32      = BigInt(ethers.hexlify(this.keys!.encryption.publicKey));
 
     const nullifierKeyHash = poseidonHash([this.keys!.nullifierKey, 1n]);
     const fee = await this.domain.registrationFee() as bigint;
-    const tx = await contractRegister(
-      this.domain, aliasHash, spendingBytes32, nullifierKeyHash, encBytes32,
-      fee, `${cleanAlias}.hls`, onStep,
-    );
+    const tx = opts.direct
+      ? await contractRegisterDirect(
+          this.domain, `${cleanAlias}.hls`, spendingBytes32, nullifierKeyHash, encBytes32, fee)
+      : await contractRegister(
+          this.domain, `${cleanAlias}.hls`, spendingBytes32, nullifierKeyHash, encBytes32,
+          fee, onStep);
     return { txHash: await this.settle(tx) };
   }
 
@@ -642,7 +637,7 @@ export class Halias extends HaliasCore {
   async lookup(alias: string): Promise<LookupResult> {
     this.ensureInit();
     const cleanAlias = normalizeAlias(alias);
-    const aliasHash  = this.aliasHashOf(alias);
+    const aliasHash = this.aliasHashOf(alias);
     const r = await contractLookupAlias(this.registry, aliasHash);
     if (r.spendingPubkey === 0n) throw new Error(`"${cleanAlias}.hls" is not registered`);
     return {
@@ -719,8 +714,7 @@ export class Halias extends HaliasCore {
 
   async updateAliasData(alias: string, newDataHash: bigint): Promise<{ txHash: string }> {
     this.ensureInit();
-    const cleanAlias = normalizeAlias(alias);
-    const aliasHash  = this.aliasHashOf(alias);
+    const aliasHash = this.aliasHashOf(alias);
 
     const tx = await contractUpdateAliasData(this.domain, aliasHash, newDataHash);
     return { txHash: await this.settle(tx) };
@@ -791,15 +785,21 @@ export class Halias extends HaliasCore {
     const secret = randomBlinding();
     const temp   = deriveInviteKeys(secret);
 
-    // Unnamed account: random key, no name preimage, invisible to alias lookup.
-    const tempAliasHash = BigInt(ethers.hexlify(randomBytes(32))) % FIELD_PRIME;
+    // The invite account needs a registry entry — its note is a non-zero output, and those
+    // must prove membership — so it needs a name like any other alias.
+    //
+    // Derived from the secret rather than random, and through a hash rather than directly:
+    // deterministic means it can be recomputed instead of remembered, and hashing means
+    // publishing the name does not publish the secret that spends the note. The prefix marks
+    // it as machinery in the directory; a user alias cannot collide, since those are
+    // validated lowercase alphanumeric and this contains a hyphen.
+    const inviteName = `invite-${ethers.keccak256(ethers.toBeHex(secret, 32)).slice(2, 18)}.hls`;
+    const tempAliasHash = BigInt(ethers.keccak256(ethers.toUtf8Bytes(inviteName)));
     const registrationFee = await this.domain.registrationFee() as bigint;
 
-    // No name: the invite account's aliasHash is random, so there is no plaintext behind
-    // it and nothing to publish.
     const regTx = await contractRegister(
-      this.domain, tempAliasHash, temp.spendingPubkey,
-      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee, "",
+      this.domain, inviteName, temp.spendingPubkey,
+      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
     );
     await regTx.wait();
     await this.refresh();
@@ -871,6 +871,7 @@ export class Halias extends HaliasCore {
   ): Promise<{ txHash: string; relayBlob?: string }> {
     this.ensureInit();
     await this.ensureSync();
+    const cleanAlias = normalizeAlias(alias);
 
     const relayerFee = opts.relayerFee ?? 0n;
     const relayer    = opts.relayer ?? ethers.ZeroAddress;
@@ -881,8 +882,7 @@ export class Halias extends HaliasCore {
     const note = await this.findInviteNote(temp);
     if (!note) throw new Error("No unspent invite note found for this secret");
 
-    const cleanAlias = normalizeAlias(alias);
-    const aliasHash  = this.aliasHashOf(alias);
+    const aliasHash = this.aliasHashOf(alias);
     const smtKey     = aliasHash % FIELD_PRIME;
 
     const keys             = this.keys!;

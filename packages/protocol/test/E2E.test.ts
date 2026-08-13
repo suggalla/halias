@@ -161,7 +161,7 @@ describe("E2E against the real verifier", function () {
 
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
-    domain   = await ethers.getContractAt("HaliasDomain",   await deployer.domain());
+    domain   = await ethers.getContractAt("HaliasController",   await deployer.domain());
     poolAddr = await pool.getAddress();
     domainAddr = await domain.getAddress();
 
@@ -181,7 +181,7 @@ describe("E2E against the real verifier", function () {
 
     await (await commitAndRegister(
       domain, (await ethers.getSigners())[0],
-      aliasHash, ethers.toBeHex(pubkey, 32), ethers.toBeHex(nkHash, 32), enc, name,
+      name, ethers.toBeHex(pubkey, 32), ethers.toBeHex(nkHash, 32), enc,
       await domain.registrationFee(),
     )).wait();
 

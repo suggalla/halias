@@ -16,10 +16,14 @@ describe("Root history", function () {
 
   const randRoot = () => ethers.keccak256(ethers.randomBytes(32));
 
+  // A registration is just a way to move the registry root here; the name only has to be
+  // unique, since the contract derives the alias hash from it.
+  let nameSeq = 0;
   async function registerSomething() {
     await registerAlias(
       domain, (await ethers.getSigners())[0],
-      randRoot(), ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), randRoot(), "",
+      `r${nameSeq++}x${Math.floor(Math.random() * 1e9)}.hls`,
+      ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), randRoot(),
       await domain.registrationFee(),
     );
   }
@@ -32,7 +36,7 @@ describe("Root history", function () {
     })).deploy(await mv.getAddress(), (await ethers.getSigners())[0].address);
     pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
-    domain   = await ethers.getContractAt("HaliasDomain",   await dep.domain());
+    domain   = await ethers.getContractAt("HaliasController",   await dep.domain());
     MAX_AGE = await registry.REGISTRY_ROOT_MAX_AGE();
   });
 

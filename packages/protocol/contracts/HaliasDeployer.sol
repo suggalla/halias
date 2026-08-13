@@ -3,12 +3,12 @@ pragma solidity 0.8.28;
 
 import "./HaliasRegistry.sol";
 import "./HaliasPool.sol";
-import "./HaliasDomain.sol";
+import "./HaliasController.sol";
 
 error PredictionMismatch(address predicted, address actual);
 
 /// @title  HaliasDeployer — brings the three contracts up in one transaction
-/// @notice Deploys {HaliasRegistry}, {HaliasPool} and {HaliasDomain} already wired to each
+/// @notice Deploys {HaliasRegistry}, {HaliasPool} and {HaliasController} already wired to each
 ///         other, with every reference immutable.
 /// @dev    The three have a dependency cycle: the pool reads the registry, the domain writes
 ///         to the registry and spends from the pool, and the registry has to name its
@@ -32,7 +32,7 @@ error PredictionMismatch(address predicted, address actual);
 contract HaliasDeployer {
     HaliasRegistry public immutable registry;
     HaliasPool     public immutable pool;
-    HaliasDomain   public immutable domain;
+    HaliasController   public immutable domain;
 
     constructor(address transactVerifier, address admin) {
         // Third CREATE from this contract. Computed before any of them so the registry can
@@ -41,7 +41,7 @@ contract HaliasDeployer {
 
         registry = new HaliasRegistry(predictedDomain);                        // nonce 1
         pool     = new HaliasPool(transactVerifier, address(registry));        // nonce 2
-        domain   = new HaliasDomain(address(pool), address(registry), admin);  // nonce 3
+        domain   = new HaliasController(address(pool), address(registry), admin);  // nonce 3
 
         // Cannot fail as written. It is here because if it ever does, the registry has
         // named a controller that will never exist and the whole deployment is inert —

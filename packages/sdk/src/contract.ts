@@ -62,9 +62,11 @@ export const REGISTRY_ABI = [
 ];
 
 export const DOMAIN_ABI = [
-  "function register(bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, string name, bytes32 salt) external payable",
-  "function commit(bytes32 commitment) external",
-  "function registrationCommitment(bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner, bytes32 salt) external pure returns (bytes32)",
+  "function register(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 salt) external payable",
+  "function aliasToHash(string name) external pure returns (bytes32)",
+  "function registerDirect(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external payable",
+  "function commitRegistration(bytes32 commitment) external",
+  "function registrationCommitment(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner, bytes32 salt) external pure returns (bytes32)",
   "function MIN_COMMIT_AGE() external view returns (uint256)",
   `function claim(${REGISTRATION} r, ${TRANSACT_PARAMS} p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, string name) external`,
   "function updateAliasData(bytes32 aliasHash, bytes32 newDataHash, uint256 deadline, bytes signature) external",
@@ -211,14 +213,35 @@ export async function transact(
 /// The salt is random per registration and never reused. It is not a secret to protect
 /// afterwards; it exists so the commitment cannot be brute-forced from the small space of
 /// plausible names before the reveal.
-export async function register(
+/// Register in one transaction, skipping the commitment.
+///
+/// Safe only where the mempool is not public. The name is in this call's calldata, so on a
+/// public mempool anyone can register it first with their own keys and receive every payment
+/// meant for whoever asked for it — which is what {register}'s two steps exist to prevent.
+/// Nothing here defaults to this; a caller has to choose it.
+export async function registerDirect(
   domain: ethers.Contract,
-  aliasHash: bigint,
+  name: string,
   spendingPubkey: bigint,
   nullifierKeyHash: bigint,
   encryptionPubkey: bigint,
   fee: bigint,
-  name: string = "",
+): Promise<ethers.ContractTransactionResponse> {
+  return domain.registerDirect(
+    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey), { value: fee },
+  );
+}
+
+/// Register `name`. The alias hash is derived from it by the contract rather than passed
+/// alongside it — the two used to be separate arguments checked against each other, which is
+/// only a way for them to disagree.
+export async function register(
+  domain: ethers.Contract,
+  name: string,
+  spendingPubkey: bigint,
+  nullifierKeyHash: bigint,
+  encryptionPubkey: bigint,
+  fee: bigint,
   /// Reports which of the two transactions is in flight. Registration is the only operation
   /// here that needs two wallet confirmations, and a caller that cannot say which one is
   /// which leaves the user staring at a second unexplained prompt.
@@ -228,7 +251,7 @@ export async function register(
   const salt  = ethers.hexlify(ethers.randomBytes(32));
 
   const commitment = await domain.registrationCommitment(
-    h32(aliasHash), h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey),
+    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey),
     owner, salt,
   ) as string;
 
@@ -241,10 +264,10 @@ export async function register(
   // this transaction revert with CommitmentPending. The commitment is live either way, which
   // is all the reveal needs, so treating that revert as fatal would hand them a denial of
   // service over a transaction that did exactly what we wanted.
-  let commitTx: ethers.ContractTransactionResponse | null = null;
+  let commitTx: ethers.ContractTransactionResponse | null;
   onStep?.("commit");
   try {
-    const sent = await domain.commit(commitment);
+    const sent = await domain.commitRegistration(commitment);
     await sent.wait();
     commitTx = sent;
   } catch (e: any) {
@@ -266,8 +289,7 @@ export async function register(
   // from the transaction we just mined is exact and costs no extra call.
   onStep?.("register");
   return domain.register(
-    h32(aliasHash), h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey),
-    name, salt,
+    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey), salt,
     // Nonce from the commit when we sent one; otherwise let ethers resolve it, since no
     // second send is racing it.
     commitTx ? { value: fee, nonce: commitTx.nonce + 1 } : { value: fee },
