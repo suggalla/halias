@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { SMT, aliasHashToKey } from "./helpers/smt";
+import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 
 // The registry stores nullifierKeyHash already hashed, so the leaf is a direct Poseidon of
@@ -28,7 +29,7 @@ describe("HaliasRegistry", function () {
   this.timeout(120000);
 
   let registry: any;
-  let controller: any, stranger: any;
+  let stranger: any;
 
   const rand32 = () => ethers.keccak256(ethers.randomBytes(32));
   // A dataHash is committed into the Poseidon leaf, so it must be a field element. A raw
@@ -42,12 +43,17 @@ describe("HaliasRegistry", function () {
     await initPoseidon();
   });
 
-  beforeEach(async function () {
-    [controller, stranger] = await ethers.getSigners();
+  async function deployRegistry() {
+    const [controller, stranger] = await ethers.getSigners();
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
-    registry = await (await ethers.getContractFactory("HaliasRegistry", {
+    const registry = await (await ethers.getContractFactory("HaliasRegistry", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(controller.address);
+    return { stranger, registry };
+  }
+
+  beforeEach(async function () {
+    ({ stranger, registry } = await loadFixture(deployRegistry));
   });
 
   // ── Construction ────────────────────────────────────────────────────────────

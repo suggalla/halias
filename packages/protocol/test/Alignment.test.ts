@@ -6,6 +6,7 @@ import * as crypto from "crypto";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { MerkleTree } from "./helpers/merkleTree";
 import { SMT, registryLeaf, aliasHashToKey, toNullifierKeyHash } from "./helpers/smt";
+import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
 
@@ -117,16 +118,21 @@ describe("Circuit/contract alignment", function () {
     DUMMY_OUT_COMMITMENT = poseidonHash([DUMMY_OUT_PUBKEY, 0n, 0n, 0n, 0n]);
   });
 
-  beforeEach(async function () {
+  async function deployStack() {
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const tv = await (await ethers.getContractFactory("TransactVerifier")).deploy();
     const dep = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(await tv.getAddress(), (await ethers.getSigners())[0].address);
-    pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
-    registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
-    halias   = await ethers.getContractAt("HaliasController",   await dep.controller());
-    REGISTRATION_FEE = await halias.registrationFee();
+    const pool     = await ethers.getContractAt("HaliasPool",         await dep.pool());
+    const registry = await ethers.getContractAt("HaliasRegistry",     await dep.registry());
+    const halias   = await ethers.getContractAt("HaliasController",   await dep.controller());
+    return { pool, registry, halias, REGISTRATION_FEE: await halias.registrationFee() };
+  }
+
+  beforeEach(async function () {
+    ({ pool, registry, halias, REGISTRATION_FEE } = await loadFixture(deployStack));
+    // Mirrors of on-chain state, so they are rebuilt per test rather than snapshotted.
     registrySMT = new SMT();
     poolTree    = new MerkleTree(POOL_LEVELS);
   });
