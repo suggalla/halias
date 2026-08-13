@@ -1,0 +1,227 @@
+<script lang="ts">
+	import { formatEther, isAddress } from 'ethers';
+	import { clientState, getClient, run, pendingOwnerOf } from '../sdk/client.js';
+
+	// Handing an alias to someone else.
+	//
+	// This is an offer, never a transfer. The sender cannot choose the recipient's keys —
+	// only the recipient can say which keys are theirs — so nothing moves until they accept.
+	// The version that let the sender set both handed over the name while installing keys the
+	// seller kept, and every payment to that name kept arriving for them.
+	//
+	// Two shapes, because the second is not a variation of the first: an ordinary handover
+	// leaves your notes where they are, while selling a name means emptying it first.
+
+	type Mode = 'offer' | 'sweep';
+
+	let mode = $state<Mode>('offer');
+	let newOwner = $state('');
+	let sweepTo = $state('');
+	let msg = $state<string | null>(null);
+	let formError = $state<string | null>(null);
+	let confirming = $state(false);
+	let pending = $state<string | null>(null);
+	let pendingFor: string | null = null;
+
+	const alias = $derived($clientState.selected);
+	const busy = $derived($clientState.status === 'syncing');
+	const label = $derived(alias ? (alias.name ? `${alias.name}.hls` : alias.aliasHash) : '');
+	// An alias with no known name cannot be handed over here: every SDK call takes the name,
+	// and the contract stores only its hash. Saying so beats a failure at signing time.
+	const nameless = $derived(!!alias && !alias.name);
+
+	// Read the outstanding offer straight from the contract rather than tracking it locally.
+	// An offer made from another browser is just as real, and a local flag would deny it.
+	$effect(() => {
+		const hash = alias?.aliasHash ?? null;
+		if (hash === pendingFor) return;
+		pendingFor = hash;
+		pending = null;
+		if (hash) pendingOwnerOf(hash).then((p) => { if (pendingFor === hash) pending = p; });
+	});
+
+	async function reloadPending() {
+		if (alias) pending = await pendingOwnerOf(alias.aliasHash);
+	}
+
+	function validate(): string | null {
+		if (nameless) return 'This alias has no known name — label it in the wallet first.';
+		if (!isAddress(newOwner.trim())) return 'Enter the new owner’s Ethereum address';
+		if (mode === 'sweep' && !isAddress(sweepTo.trim()))
+			return 'Enter an address to receive the swept funds';
+		return null;
+	}
+
+	async function doOffer() {
+		formError = validate();
+		if (formError) return;
+		msg = null;
+		const c = getClient();
+		const r = await run(() => c.offerAlias(`${alias!.name}.hls`, newOwner.trim()));
+		confirming = false;
+		if (r) {
+			msg = `${label} is offered. It stays yours until they accept.`;
+			newOwner = '';
+			await reloadPending();
+		}
+	}
+
+	async function doSweepAndOffer() {
+		formError = validate();
+		if (formError) return;
+		msg = null;
+		const c = getClient();
+		const r = await run(() =>
+			c.sweepAndOffer(`${alias!.name}.hls`, sweepTo.trim(), newOwner.trim())
+		);
+		confirming = false;
+		if (r) {
+			const n = (r as any).sweepTxHashes?.length ?? 0;
+			msg = `Swept ${n} note${n === 1 ? '' : 's'} and offered ${label}.`;
+			newOwner = '';
+			sweepTo = '';
+			await reloadPending();
+		}
+	}
+
+	async function doCancel() {
+		msg = null;
+		const c = getClient();
+		if (await run(() => c.cancelOffer(`${alias!.name}.hls`))) {
+			msg = 'Offer withdrawn.';
+			await reloadPending();
+		}
+	}
+</script>
+
+<div class="own">
+	{#if pending}
+		<!-- The single most important thing on this screen when it applies: the alias is
+		     already promised to someone, and a second offer would silently replace it. -->
+		<div class="pending">
+			<div>
+				<span class="k">Offered to</span>
+				<span class="mono">{pending}</span>
+			</div>
+			<p class="hint">
+				Still yours, and still receiving, until they accept. Offering it to someone else
+				replaces this.
+			</p>
+			<button class="ghost" disabled={busy} onclick={doCancel}>Withdraw offer</button>
+		</div>
+	{/if}
+
+	<div class="tabs" role="tablist">
+		<button role="tab" aria-selected={mode === 'offer'} class:active={mode === 'offer'}
+			onclick={() => { mode = 'offer'; confirming = false; formError = null; }}>hand over</button>
+		<button role="tab" aria-selected={mode === 'sweep'} class:active={mode === 'sweep'}
+			onclick={() => { mode = 'sweep'; confirming = false; formError = null; }}>empty & sell</button>
+	</div>
+
+	{#if !confirming}
+		<div class="form">
+			<label>
+				<span>New owner’s address</span>
+				<input bind:value={newOwner} placeholder="0x…" disabled={busy} />
+			</label>
+
+			{#if mode === 'sweep'}
+				<label>
+					<span>Send this alias’s balance to</span>
+					<input bind:value={sweepTo} placeholder="0x…" disabled={busy} />
+				</label>
+				<p class="hint">
+					Withdraws every note this alias holds, one transaction each, then offers the name
+					on. With {formatEther(alias?.balance ?? 0n)} ETH shielded, expect several wallet
+					prompts.
+				</p>
+			{:else}
+				<p class="hint">
+					Your notes stay where they are. The new owner gets the name and everything paid to
+					it from now on — not your balance.
+				</p>
+			{/if}
+
+			<button class="primary" disabled={busy || nameless} onclick={() => { formError = validate(); if (!formError) confirming = true; }}>
+				Review
+			</button>
+
+			{#if nameless}
+				<p class="warn">
+					This alias has no known name in this browser, and a handover needs it. Label it in
+					the wallet first.
+				</p>
+			{/if}
+		</div>
+	{:else}
+		<div class="review">
+			<h3>Confirm</h3>
+			<dl>
+				<div><dt>Alias</dt><dd class="mono">{label}</dd></div>
+				<div><dt>New owner</dt><dd class="mono">{newOwner.trim()}</dd></div>
+				{#if mode === 'sweep'}
+					<div><dt>Balance to</dt><dd class="mono">{sweepTo.trim()}</dd></div>
+					<div><dt>Sweeping</dt><dd>{formatEther(alias?.balance ?? 0n)} ETH</dd></div>
+				{/if}
+			</dl>
+
+			<p class="warn">
+				{#if mode === 'sweep'}
+					Sweeping is a courtesy, not a guarantee — nothing on chain can prove an alias is
+					empty, and notes already under your keys stay spendable by you. A buyer is
+					acquiring the name and its future payments, never a balance.
+				{:else}
+					Once they accept, the name and every future payment to it are theirs. You keep the
+					notes you already hold.
+				{/if}
+			</p>
+
+			<div class="actions">
+				<button class="ghost" disabled={busy} onclick={() => (confirming = false)}>Back</button>
+				<button class="primary" disabled={busy}
+					onclick={mode === 'sweep' ? doSweepAndOffer : doOffer}>
+					{busy ? 'Working…' : mode === 'sweep' ? 'Sweep and offer' : 'Offer it'}
+				</button>
+			</div>
+		</div>
+	{/if}
+
+	{#if formError}<p class="err">{formError}</p>{/if}
+	{#if msg}<p class="ok">{msg}</p>{/if}
+</div>
+
+<style>
+	.own { display: flex; flex-direction: column; gap: 0.85rem; }
+	.pending { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem;
+		border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-titlebar); }
+	.pending > div { display: flex; flex-direction: column; gap: 0.15rem; }
+	.k { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.09em;
+		color: var(--text-dim); }
+	.pending .ghost { align-self: flex-start; }
+
+	.form, .review { display: flex; flex-direction: column; gap: 0.6rem; }
+	label { display: flex; flex-direction: column; gap: 0.25rem; }
+	label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+		color: var(--text-dim); }
+	h3 { margin: 0; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em;
+		color: var(--text-dim); font-weight: 600; }
+
+	dl { margin: 0; display: flex; flex-direction: column; gap: 0.4rem;
+		border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem;
+		background: var(--bg-input); }
+	dl > div { display: flex; gap: 1rem; align-items: baseline; }
+	dt { flex: none; width: 7rem; font-size: 0.68rem; text-transform: uppercase;
+		letter-spacing: 0.08em; color: var(--text-dim); }
+	dd { margin: 0; min-width: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
+
+	.mono { font-family: ui-monospace, monospace; font-size: 0.78rem; overflow-wrap: anywhere; }
+	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
+	.warn { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--accent-bright);
+		border-left: 2px solid var(--accent); padding-left: 0.6rem; }
+	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }
+	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
+
+	.actions { display: flex; gap: 0.5rem; }
+	.actions .primary { flex: 1; }
+	.primary { padding: 0.55rem; }
+</style>

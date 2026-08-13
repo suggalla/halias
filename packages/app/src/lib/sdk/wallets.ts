@@ -19,9 +19,9 @@ const store = createStore();
 /// Readable rather than a one-shot read: extensions announce asynchronously during page load,
 /// so a list captured on mount is reliably short. Subscribing means a wallet that initialises
 /// late still appears rather than looking uninstalled.
-export const wallets = readable<EIP6963ProviderDetail[]>(store.getProviders(), (set) => {
+export const wallets = readable<readonly EIP6963ProviderDetail[]>(store.getProviders(), (set) => {
 	set(store.getProviders());
-	return store.subscribe((providers) => set([...providers]));
+	return store.subscribe((providers) => set(providers));
 });
 
 /// Look a wallet up by its reverse-DNS id (`io.metamask`, `io.rabby`, …).

@@ -206,6 +206,68 @@ textarea[readonly] {
 	background: var(--bg-dark);
 }
 
+/* === SEGMENTED CONTROL ===
+ *
+ * One definition, because three components had grown their own copy and they had already
+ * drifted. Sits in a track rather than floating as separate buttons: with four options the
+ * loose version read as four unrelated controls instead of one choice.
+ *
+ * Wraps rather than shrinking — squeezing four labels into one row on a narrow window
+ * truncated them to the point where "withdraw" and "ownership" were indistinguishable. */
+.tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.2rem;
+	padding: 0.2rem;
+	background: var(--bg-input);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+
+.tabs button {
+	flex: 1 1 6rem;
+	padding: 0.42rem 0.6rem;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	color: var(--text-dim);
+	font-size: 0.82rem;
+	text-transform: capitalize;
+	letter-spacing: 0.01em;
+	transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.tabs button:hover:not(.active) {
+	color: var(--text-bright);
+	background: var(--bg-window);
+}
+
+.tabs button.active {
+	background: var(--bg-titlebar);
+	border-color: var(--accent);
+	color: var(--accent-bright);
+	font-weight: 700;
+}
+
+/* Secondary action. Outlined, so it reads as available without competing with .primary. */
+.ghost {
+	padding: 0.5rem 0.9rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: none;
+	color: inherit;
+	transition: border-color 0.15s, color 0.15s;
+}
+
+.ghost:hover:not(:disabled) {
+	border-color: var(--accent);
+	color: var(--accent-bright);
+}
+
+.ghost:disabled {
+	color: var(--text-dim);
+	border-color: var(--border);
+}
+
 input[type='checkbox'] {
 	accent-color: var(--accent);
 	width: 0.95rem;
