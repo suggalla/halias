@@ -11,10 +11,18 @@
 	// notes, no prior involvement — and this screen sits outside the wallet → alias → act
 	// progression to match.
 
-	let target = $state('');
+	// Embedded under an alias, this arrives pointed at that alias; opened from the top bar it
+	// starts blank, because the payer may hold no alias at all.
+	let { initialTarget = '', embedded = false }: { initialTarget?: string; embedded?: boolean } =
+		$props();
+
+	// Seeded once, deliberately: this is a form field, and the component remounts when the
+	// action is reopened, so tracking the prop afterwards would overwrite what was typed.
+	// svelte-ignore state_referenced_locally
+	let target = $state(initialTarget);
 	let amount = $state('');
-	let phase = $state<'form' | 'review'>('form');
-	let msg = $state<string | null>(null);
+	let phase = $state<'form' | 'review' | 'done'>('form');
+	let sent = $state<{ amount: string; target: string; txHash: string } | null>(null);
 	let formError = $state<string | null>(null);
 
 	const busy = $derived($clientState.status === 'syncing');
@@ -38,30 +46,40 @@
 	}
 
 	async function confirm() {
-		msg = null;
 		const amt = amount.trim();
 		const to = target.trim();
-		// Index 0 derives keys from the wallet signature without needing a registration —
-		// which is the whole point: the payer may have no alias at all.
+		// Index 0 derives keys without needing a registration — which is the whole point: the
+		// payer may have no alias at all.
 		const c = await clientFor(0);
 		const r = await run(() => c.depositTo(to, amt));
 		if (!r) return (phase = 'form');
 		await refreshWalletBalance();
-		msg = `Deposited ${amt} ETH to ${to}. Only ${to} can spend it.`;
-		target = '';
+		// Stays put and reports what happened, rather than clearing back to an empty form.
+		// A deposit is irreversible and the transaction hash is the only handle on it — a
+		// form that resets loses it, and reads as though nothing was sent.
+		sent = { amount: amt, target: to, txHash: (r as any).txHash };
+		phase = 'done';
+	}
+
+	function again() {
+		sent = null;
 		amount = '';
+		target = initialTarget;
+		formError = null;
 		phase = 'form';
 	}
 </script>
 
 <div class="deposit">
-	<header>
-		<h2>Pay an alias</h2>
-		<p class="lede">
-			Move ETH from this wallet into the pool, held under any registered
-			<code>.hls</code> name. You do not need an alias of your own to pay one.
-		</p>
-	</header>
+	{#if !embedded}
+		<header>
+			<h2>Pay an alias</h2>
+			<p class="lede">
+				Move ETH from this wallet into the pool, held under any registered
+				<code>.hls</code> name. You do not need an alias of your own to pay one.
+			</p>
+		</header>
+	{/if}
 
 	{#if $clientState.address === null}
 		<p class="hint">Connect a wallet to deposit.</p>
@@ -110,7 +128,7 @@
 		</aside>
 
 		<button class="primary" disabled={busy} onclick={toReview}>Review</button>
-	{:else}
+	{:else if phase === 'review'}
 		<ReviewStep
 			mode="deposit"
 			amount={amount.trim()}
@@ -121,10 +139,26 @@
 			onconfirm={confirm}
 			oncancel={() => (phase = 'form')}
 		/>
+	{:else if sent}
+		<div class="done">
+			<h3>Deposited</h3>
+			<dl class="src">
+				<dt>Amount</dt>
+				<dd>{sent.amount} ETH</dd>
+				<dt>To</dt>
+				<dd class="mono">{sent.target}</dd>
+				<dt>Transaction</dt>
+				<dd class="mono">{sent.txHash}</dd>
+			</dl>
+			<p class="hint">
+				Only {sent.target} can spend it. The amount and the paying address are public; who
+				received it is not.
+			</p>
+			<button class="ghost" onclick={again}>Deposit again</button>
+		</div>
 	{/if}
 
 	{#if formError}<p class="err">{formError}</p>{/if}
-	{#if msg}<p class="ok">{msg}</p>{/if}
 	{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
 </div>
 
@@ -155,8 +189,11 @@
 	strong { font-weight: 600; }
 	code { font-family: ui-monospace, monospace; }
 	.primary { padding: 0.55rem; }
-	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; }
-	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; line-height: 1.5; }
+	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
+	.done { display: flex; flex-direction: column; gap: 0.7rem; }
+	.done h3 { margin: 0; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em;
+		color: var(--accent); font-weight: 600; }
+	.done .ghost { align-self: flex-start; }
 	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; line-height: 1.5; }
 	@media (max-width: 30rem) {
 		.src { grid-template-columns: 1fr; gap: 0.1rem; }
