@@ -139,8 +139,15 @@ export function hasSeed(): boolean {
   return seedSource !== null;
 }
 
-// aliasHash -> the name it was registered under. Local only, because the contract stores
-// a keccak and cannot give the name back. Losing this loses the label, not the alias.
+// aliasHash -> a locally remembered name.
+//
+// No longer the source of truth. Registration publishes the plaintext in NamePublished, and
+// every path does it — invites included, under a name derived from the invite secret — so the
+// chain answers for any alias, on a device that has never seen it.
+//
+// Kept because it fills the gap between registering and the next scan picking up the event
+// just emitted, and because the contract does permit an alias with no published name even
+// though this client never creates one.
 const NAME_MAP_KEY = 'halias.names';
 
 export function readNameMap(): Record<string, string> {
@@ -512,7 +519,17 @@ export async function loadAliases(): Promise<void> {
 			aliasHash: a.aliasHash,
 			slot: a.slot,
 			index: a.index,
-			name: names[a.aliasHash.toLowerCase()] ?? null,
+			// Chain first. Registration publishes the plaintext in NamePublished — it is the one
+			// moment it can be, and every registration path does it — so the name survives a new
+			// browser, a cleared cache, and a device that never saw it. This read the local map
+			// only, which is why an alias registered elsewhere showed as a bare hash.
+			//
+			// The local map covers the moments before the chain has been re-read.
+			//
+			// Stripped to the bare label. NamePublished carries the full "alice.hls" — the
+			// registration hashes the whole string — while the local map has always held "alice",
+			// and every screen appends the suffix itself. Mixing the two renders "alice.hls.hls".
+			name: (a.name ?? names[a.aliasHash.toLowerCase()])?.replace(/\.hls$/i, '') ?? null,
 			balance
 		});
 	}
@@ -573,7 +590,7 @@ export interface Offer {
 	aliasHash: string;
 	from: string;
 	/// The name, when this browser happens to know it — from having registered it, or from
-	/// being told. The chain stores only the hash and cannot give it back.
+	/// registration published, which is every alias except an invite account.
 	name: string | null;
 }
 
@@ -597,6 +614,17 @@ export async function offersToMe(): Promise<Offer[]> {
 		baseConfig.startBlock ?? 0
 	);
 
+	// Names come from the chain, not from what this browser happens to remember: an offer is
+	// usually the first time you have ever seen the alias, so the local map is empty for it by
+	// definition. NamePublished carries the plaintext from registration.
+	const published = new Map<string, string>();
+	for (const log of await controller.queryFilter(
+		controller.filters.NamePublished(),
+		baseConfig.startBlock ?? 0
+	)) {
+		published.set((log as any).args.aliasHash.toLowerCase(), (log as any).args.name);
+	}
+
 	const names = readNameMap();
 	const seen = new Set<string>();
 	const offers: Offer[] = [];
@@ -610,7 +638,8 @@ export async function offersToMe(): Promise<Offer[]> {
 		const pending: string = await controller.pendingAliasOwner(aliasHash);
 		if (pending.toLowerCase() !== me.toLowerCase()) continue;   // withdrawn, or already taken
 
-		offers.push({ aliasHash, from: (log as any).args.from, name: names[key] ?? null });
+		const name = published.get(key) ?? names[key] ?? null;
+		offers.push({ aliasHash, from: (log as any).args.from, name: name?.replace(/\.hls$/i, '') ?? null });
 	}
 	return offers;
 }
