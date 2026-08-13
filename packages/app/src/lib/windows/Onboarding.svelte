@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { clientState, connect, setSeedPhrase, newSeedPhrase } from '../sdk/client.js';
+	import {
+		clientState, connect, connectViewOnly, setSeedPhrase, newSeedPhrase, setViewKey
+	} from '../sdk/client.js';
 	import { wallets, legacyWallet } from '../sdk/wallets.js';
 	import {
 		listVault,
@@ -10,7 +12,8 @@
 		deleteVault,
 		passkeySupported,
 		nextLabel,
-		type VaultEntry
+		type VaultEntry,
+		type VaultKind
 	} from '../sdk/vault.js';
 	import { isValidMnemonic } from 'halias-sdk';
 
@@ -28,7 +31,7 @@
 	// password protects *this browser's copy*; the phrase is what recovers the wallet
 	// anywhere, and the wording below has to keep those apart.
 
-	type Stage = 'choose' | 'unlock' | 'phrase' | 'protect' | 'wallet';
+	type Stage = 'choose' | 'pick' | 'unlock' | 'phrase' | 'viewkey' | 'protect' | 'wallet';
 
 	// Which path is being walked, which decides how many steps there are.
 	//
@@ -36,6 +39,14 @@
 	// phrase and the password are different things protecting different things. Numbering
 	// them together is what made a single step appear to change identity halfway through.
 	let mode = $state<'unlock' | 'create'>('create');
+
+	// What is being added, when adding. A full wallet holds a phrase and can spend; a
+	// view-only one holds a key that reads a single alias and can do nothing else. They are
+	// stored and encrypted identically — a view key exposes an alias's whole history and
+	// cannot be revoked, so leaving it in the clear would give away exactly what this protocol
+	// is for.
+	let kind = $state<VaultKind>('wallet');
+	let viewCode = $state('');
 
 	let entries = $state<VaultEntry[]>([]);
 	let ready = $state(false);
@@ -77,18 +88,39 @@
 				selected = e[0];
 				stage = 'unlock';
 			} else {
-				stage = 'phrase';
+				stage = 'pick';
 			}
 		});
 	});
 
-	/// Leave the saved wallets and add another phrase.
+	/// Leave the saved wallets and add another.
 	function startCreate() {
 		mode = 'create';
-		stage = 'phrase';
+		stage = 'pick';
 		error = null;
 		phrase = '';
+		viewCode = '';
 		label = '';
+	}
+
+	function pick(k: VaultKind) {
+		kind = k;
+		error = null;
+		stage = k === 'wallet' ? 'phrase' : 'viewkey';
+	}
+
+	/// Accept a view key and move on to protecting it.
+	async function toProtectView() {
+		try {
+			const { decodeViewKey } = await import('halias-sdk');
+			decodeViewKey(viewCode);
+		} catch (e: any) {
+			error = e?.message ?? 'That is not a valid view-only key';
+			return;
+		}
+		error = null;
+		if (!label.trim()) label = nextLabel(entries, 'view');
+		stage = 'protect';
 	}
 
 	async function refreshEntries() {
@@ -97,12 +129,21 @@
 
 	// ── unlock an existing wallet ──────────────────────────────────────────────
 
+	async function useSecret(entry: VaultEntry, secret: string) {
+		if (entry.kind === 'view') {
+			await setViewKey(secret, entry.label);
+			await connectViewOnly();   // a viewer needs no wallet, so this is the whole flow
+		} else {
+			await setSeedPhrase(secret, entry.label);
+			stage = 'wallet';
+		}
+	}
+
 	async function unlockPasskey(entry: VaultEntry) {
 		busy = true;
 		error = null;
 		try {
-			await setSeedPhrase(await unlockWithPasskey(entry.id), entry.label);
-			stage = 'wallet';
+			await useSecret(entry, await unlockWithPasskey(entry.id));
 		} catch (e: any) {
 			error = e?.message?.includes('dismissed')
 				? 'Passkey prompt was dismissed.'
@@ -115,11 +156,10 @@
 		busy = true;
 		error = null;
 		try {
-			await setSeedPhrase(await unlockWithPassword(entry.id, password), entry.label);
+			await useSecret(entry, await unlockWithPassword(entry.id, password));
 			password = '';
-			stage = 'wallet';
-		} catch {
-			error = 'Wrong password.';
+		} catch (e: any) {
+			error = /view|checksum/i.test(e?.message ?? '') ? e.message : 'Wrong password.';
 		}
 		busy = false;
 	}
@@ -166,8 +206,9 @@
 		busy = true;
 		error = null;
 		try {
-			const chosen = label.trim() || nextLabel(entries);
-			const id = await createVault(phrase, password, chosen);
+			const chosen = label.trim() || nextLabel(entries, kind);
+			const secret = kind === 'view' ? viewCode.trim() : phrase;
+			const id = await createVault(secret, password, chosen, kind);
 			if (wantPasskey && canPasskey) {
 				try {
 					await addPasskey(id, password);
@@ -177,13 +218,21 @@
 					notice = `Saved, but the passkey could not be added: ${e?.message ?? 'dismissed'}. You can still unlock with your password.`;
 				}
 			}
-			await setSeedPhrase(phrase, chosen);
 			await refreshEntries();
-			phrase = '';
-			password = '';
-			password2 = '';
-			generated = false;
-			stage = 'wallet';
+			if (kind === 'view') {
+				await setViewKey(secret, chosen);
+				viewCode = '';
+				password = '';
+				password2 = '';
+				await connectViewOnly();
+			} else {
+				await setSeedPhrase(phrase, chosen);
+				phrase = '';
+				password = '';
+				password2 = '';
+				generated = false;
+				stage = 'wallet';
+			}
 		} catch (e: any) {
 			error = e?.message ?? 'Could not save this wallet.';
 		}
@@ -210,8 +259,10 @@
 						<p class="sum">Unlocked.</p>
 					{:else if selected}
 						<p class="say">
-							<strong>{selected.label}</strong> is stored on this browser, encrypted. Unlock it
-							to continue.
+							<strong>{selected.label}</strong> is stored on this browser, encrypted.
+							{selected.kind === 'view'
+								? 'It reads one alias and cannot spend from it.'
+								: 'Unlock it to continue.'}
 						</p>
 
 						{#if entries.length > 1}
@@ -270,12 +321,68 @@
 			<!-- Creating is two: the phrase is the wallet and exists whatever this device does
 			     with it; the password only protects the copy kept here. Collapsing them into one
 			     step is what made the form appear to change identity halfway through. -->
-			<li class:on={stage === 'phrase'} class:done={stage !== 'phrase'}>
-				<span class="num">{stage === 'phrase' ? '1' : '✓'}</span>
+			<li class:on={stage === 'pick' || stage === 'phrase' || stage === 'viewkey'}
+				class:done={stage === 'protect' || stage === 'wallet'}>
+				<span class="num">{stage === 'protect' || stage === 'wallet' ? '✓' : '1'}</span>
 				<div class="body">
-					<h2>Your recovery phrase</h2>
+					<h2>
+						{stage === 'pick' ? 'What you are adding'
+							: kind === 'view' ? 'Your view-only key'
+							: 'Your recovery phrase'}
+					</h2>
 
-					{#if stage !== 'phrase'}
+					{#if stage === 'pick'}
+						<!-- The choice that decides everything after it: one of these can spend and
+						     the other is structurally unable to. Asked once, up front, rather than
+						     discovered when an action turns out to be missing. -->
+						<p class="say">What are you setting up?</p>
+						<ul class="kinds">
+							<li>
+								<button class="action" onclick={() => pick('wallet')}>
+									<span class="an">Full wallet</span>
+									<span class="ab">
+										A recovery phrase. Registers names, receives, and spends. Every alias you
+										hold derives from it.
+									</span>
+								</button>
+							</li>
+							<li>
+								<button class="action" onclick={() => pick('view')}>
+									<span class="an">View-only</span>
+									<span class="ab">
+										A key someone shared with you. Reads one alias — its balance and its whole
+										history — and cannot spend, or reach any other alias.
+									</span>
+								</button>
+							</li>
+						</ul>
+						{#if entries.length > 0}
+							<button class="link" onclick={() => { mode = 'unlock'; stage = 'unlock'; error = null; }}>
+								← Back to saved wallets
+							</button>
+						{/if}
+
+					{:else if stage === 'viewkey'}
+						<p class="say">
+							Paste the view-only key you were given. It reads one alias and cannot spend
+							from it — and it is still a secret: it exposes that alias's entire history.
+						</p>
+						<textarea
+							bind:value={viewCode}
+							rows="3"
+							spellcheck="false"
+							autocomplete="off"
+							placeholder="hvk1…"
+						></textarea>
+						{#if error}<p class="err">{error}</p>{/if}
+						<div class="row">
+							<button class="primary" disabled={!viewCode.trim()} onclick={toProtectView}>
+								Continue
+							</button>
+							<button class="ghost" onclick={() => (stage = 'pick')}>Back</button>
+						</div>
+
+					{:else if stage !== 'phrase'}
 						<p class="sum">Held for this session.</p>
 					{:else}
 						<p class="say">
@@ -328,14 +435,23 @@
 				<div class="body">
 					<h2>Protect it on this device</h2>
 
-					{#if stage === 'phrase'}
-						<p class="say pending">A password, so you do not retype the phrase every time.</p>
+					{#if stage === 'pick' || stage === 'phrase' || stage === 'viewkey'}
+						<p class="say pending">
+							A password, so you do not retype {kind === 'view' ? 'the key' : 'the phrase'}
+							every time.
+						</p>
 					{:else if stage === 'wallet'}
 						<p class="sum">Saved and encrypted.</p>
 					{:else}
 						<p class="say">
-							Choose a password. It encrypts <strong>this browser's copy</strong> — it is not
-							your recovery phrase, and it cannot recover the wallet anywhere else.
+							Choose a password. It encrypts <strong>this browser's copy</strong>.
+							{#if kind === 'view'}
+								A view key cannot be recovered if you lose it — ask whoever shared it for
+								another.
+							{:else}
+								It is not your recovery phrase, and it cannot recover the wallet anywhere
+								else.
+							{/if}
 						</p>
 						<!-- The account name is what a password manager saves this password against,
 						     which lets it hold one password per wallet rather than offering the first
@@ -386,6 +502,7 @@
 			</li>
 		{/if}
 
+		{#if !(mode === 'create' && kind === 'view')}
 		<li class:on={stage === 'wallet'} class:pending={stage !== 'wallet'}>
 			<span class="num">{mode === 'unlock' ? '2' : '3'}</span>
 			<div class="body">
@@ -422,6 +539,7 @@
 				{/if}
 			</div>
 		</li>
+		{/if}
 	</ol>
 
 	{#if notice}<p class="warn notice">{notice}</p>{/if}
@@ -480,6 +598,15 @@
 	.or { margin: 0; text-align: center; font-size: 0.72rem; color: var(--text-dim);
 		text-transform: uppercase; letter-spacing: 0.1em; }
 
+	.kinds { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+		gap: 0.45rem; }
+	.action { width: 100%; display: flex; flex-direction: column; gap: 0.2rem;
+		padding: 0.75rem 0.85rem; background: var(--bg-input);
+		border: 1px solid var(--border); border-radius: 8px; text-align: left;
+		transition: border-color 0.15s, background 0.15s; }
+	.action:hover { border-color: var(--accent); background: var(--bg-titlebar); }
+	.an { font-size: 0.9rem; font-weight: 700; color: var(--text-bright); }
+	.ab { font-size: 0.76rem; color: var(--text-dim); line-height: 1.45; }
 	.row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 	.row .primary { flex: 1; min-width: 8rem; padding: 0.55rem 1rem; }
 	.alt { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.15rem; }

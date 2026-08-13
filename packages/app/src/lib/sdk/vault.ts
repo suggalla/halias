@@ -33,9 +33,22 @@ const STORE = 'entries';
 // an attacker makes.
 const PBKDF2_ITERATIONS = 600_000;
 
+/// What a stored entry holds.
+///
+///   wallet — a recovery phrase. Spends, receives, derives every alias.
+///   view   — one alias's view-only key. Reads it and can do nothing else.
+///
+/// Both are encrypted identically. A view key buys no funds, but it exposes an alias's entire
+/// payment history permanently and cannot be revoked — which is precisely the privacy this
+/// protocol exists to provide, so storing it in the clear would give away the product while
+/// technically losing no money. Railgun reaches the same conclusion: its view-only wallets
+/// take the same encryptionKey as full ones.
+export type VaultKind = 'wallet' | 'view';
+
 export interface VaultEntry {
 	id: string;
 	label: string;
+	kind: VaultKind;
 	createdAt: number;
 	hasPasskey: boolean;
 }
@@ -48,8 +61,9 @@ interface Wrapped {
 interface StoredEntry {
 	id: string;
 	label: string;
+	kind?: VaultKind;
 	createdAt: number;
-	/// AES-GCM(dataKey, mnemonic)
+	/// AES-GCM(dataKey, secret) — a recovery phrase, or a view key.
 	phrase: Wrapped;
 	/// AES-GCM(PBKDF2(password, salt), dataKey)
 	pass: Wrapped & { salt: number[]; iterations: number };
@@ -231,24 +245,32 @@ export async function listVault(): Promise<VaultEntry[]> {
 	try {
 		const all = (await tx('readonly', (s) => s.getAll())) as StoredEntry[];
 		return all
-			.map((e) => ({ id: e.id, label: e.label, createdAt: e.createdAt, hasPasskey: !!e.prf }))
+			.map((e) => ({
+				id: e.id,
+				label: e.label,
+				// Entries written before view keys existed carry no kind and are all phrases.
+				kind: e.kind ?? 'wallet',
+				createdAt: e.createdAt,
+				hasPasskey: !!e.prf,
+			}))
 			.sort((a, b) => a.createdAt - b.createdAt);
 	} catch {
 		return [];
 	}
 }
 
-/// Store a phrase, wrapped by a password. Returns the entry id.
+/// Store a secret — a recovery phrase or a view key — wrapped by a password.
 ///
 /// `label` is just a name to tell several apart. It is not a secret and not part of any key.
 export async function createVault(
-	mnemonic: string,
+	secret: string,
 	password: string,
-	label: string
+	label: string,
+	kind: VaultKind = 'wallet'
 ): Promise<string> {
 	const dataKeyRaw = randomBytes(32);
 	const dataKey = await aesKey(dataKeyRaw);
-	const phrase = await seal(dataKey, utf8(mnemonic));
+	const phrase = await seal(dataKey, utf8(secret));
 
 	const salt = randomBytes(16);
 	const passKey = await keyFromPassword(password, salt, PBKDF2_ITERATIONS);
@@ -257,6 +279,7 @@ export async function createVault(
 	const entry: StoredEntry = {
 		id: crypto.randomUUID(),
 		label,
+		kind,
 		createdAt: Date.now(),
 		phrase,
 		pass: { ...wrappedPass, salt: arr(salt), iterations: PBKDF2_ITERATIONS },
@@ -307,8 +330,11 @@ export async function deleteVault(id: string): Promise<void> {
 }
 
 const LABEL_PREFIX = 'Halias Wallet';
+const VIEW_PREFIX = 'View-only';
 
 /// "Halias Wallet 1", "Halias Wallet 2", … — a default, not a requirement.
+///
+/// View keys enumerate separately, so adding one does not advance the wallet numbering.
 ///
 /// Counted from the numbers already in use rather than from how many entries there are.
 /// Those differ the moment one is removed: with 1 and 2 stored, deleting the first leaves a
@@ -318,10 +344,12 @@ const LABEL_PREFIX = 'Halias Wallet';
 ///
 /// Only auto-generated names are counted. Someone who calls a wallet "DeFi" has not used up
 /// a number, and the next default is unaffected.
-export function nextLabel(existing: VaultEntry[]): string {
+export function nextLabel(existing: VaultEntry[], kind: VaultKind = 'wallet'): string {
+	const prefix = kind === 'view' ? VIEW_PREFIX : LABEL_PREFIX;
 	const used = existing
-		.map((e) => new RegExp(`^${LABEL_PREFIX} (\\d+)$`).exec(e.label.trim()))
+		.filter((e) => e.kind === kind)
+		.map((e) => new RegExp(`^${prefix} (\\d+)$`).exec(e.label.trim()))
 		.filter((m): m is RegExpExecArray => m !== null)
 		.map((m) => parseInt(m[1], 10));
-	return `${LABEL_PREFIX} ${used.length === 0 ? 1 : Math.max(...used) + 1}`;
+	return `${prefix} ${used.length === 0 ? 1 : Math.max(...used) + 1}`;
 }

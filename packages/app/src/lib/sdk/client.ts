@@ -69,6 +69,9 @@ export interface AliasSummary {
 
 export interface ClientState {
 	status: Status;
+	/// Reading with a view key rather than holding a phrase. Every spending path is hidden,
+	/// and the SDK refuses them regardless.
+	viewOnly: boolean;
 	/// The unlocked vault entry's label. Which wallet you are in is not derivable from the
 	/// address — several can share one — so it has to be carried and shown.
 	accountName: string | null;
@@ -91,6 +94,7 @@ export interface ClientState {
 
 const EMPTY: ClientState = {
 	status: 'idle',
+	viewOnly: false,
 	accountName: null,
 	address: null,
 	chainId: null,
@@ -126,6 +130,10 @@ let connectedRdns: string | null = null;
 // IndexedDB — see vault.ts — and is decrypted here by a passkey or a password.
 let seedSource: any = null;
 
+// A view key, when this session is reading rather than spending. Mutually exclusive with the
+// phrase above: a view key derives no root and covers exactly one alias.
+let viewKey: any = null;
+
 /// Accept a recovery phrase for this session. Throws on a phrase that fails BIP-39's
 /// checksum, so a typo is caught while the user is still looking at it.
 ///
@@ -145,6 +153,18 @@ export async function newSeedPhrase(): Promise<string> {
 
 export function hasSeed(): boolean {
   return seedSource !== null;
+}
+
+/// Read one alias with a view-only key. Throws on a key that fails its checksum.
+export async function setViewKey(code: string, label?: string): Promise<void> {
+  const { decodeViewKey } = await import('halias-sdk');
+  viewKey = decodeViewKey(code);
+  seedSource = null;
+  clientState.update((s) => ({ ...s, viewOnly: true, accountName: label ?? s.accountName }));
+}
+
+export function isViewOnly(): boolean {
+  return viewKey !== null;
 }
 
 // aliasHash -> a locally remembered name.
@@ -358,6 +378,83 @@ function watchWallet(ethereum: any): void {
 /// `rdns` names which one (EIP-6963 reverse-DNS id). Omitted, it connects to the only wallet
 /// present, or to a pre-6963 wallet injected the old way — but never guesses between several,
 /// since guessing is the behaviour EIP-6963 exists to end.
+/// Open a session that only reads, using the view key already set.
+///
+/// No wallet at all. A viewer signs nothing and pays no gas, so requiring an extension to
+/// look at a history would be a hurdle with nothing behind it — the provider comes straight
+/// from the network's RPC. Every contract handle is read-only as a result, which is a second
+/// reason a spend cannot slip through beyond the SDK's own refusal.
+export async function connectViewOnly(): Promise<void> {
+	if (!viewKey) {
+		clientState.update((s) => ({ ...s, status: 'error', error: 'Enter a view-only key first' }));
+		return;
+	}
+	clientState.update((s) => ({ ...s, status: 'connecting', error: null }));
+	try {
+		const net = usableNetworks()[0];
+		if (!net) throw new Error('This build has no usable deployment');
+		const { JsonRpcProvider, VoidSigner, ZeroAddress } = await import('ethers');
+		const { Halias, BrowserCache } = await import('halias-sdk');
+		const provider = new JsonRpcProvider(net.rpcUrl);
+
+		baseConfig = {
+			provider,
+			// A VoidSigner: it answers getAddress and can estimate, and throws on any attempt to
+			// send. The SDK already refuses every spending path on a view-only client; this makes
+			// the refusal structural rather than only enforced. The address is the zero address
+			// because a viewer genuinely has no account — it holds a key, not a wallet.
+			signer: new VoidSigner(ZeroAddress, provider),
+			chainId: net.chainId,
+			poolAddress: net.poolAddress,
+			registryAddress: net.registryAddress,
+			controllerAddress: net.controllerAddress,
+			artifacts: artifactPaths(),
+			cache: new BrowserCache(),
+			startBlock: net.startBlock,
+			rpcChunkSize: 2000,
+			onProgress: (pct: number) => clientState.update((s) => ({ ...s, syncProgress: pct }))
+		};
+
+		const c = new Halias(baseConfig);
+		await c.initViewOnly(viewKey, 0);
+		clients.set(0, c);
+		client = c;
+
+		clientState.update((s) => ({
+			...s,
+			status: 'syncing',
+			// No address: there is no account here, only a key that reads one.
+			address: null,
+			chainId: net.chainId
+		}));
+
+		const self = await c.selfAlias();
+		const balance = (await c.balance()).total;
+		const summary: AliasSummary = {
+			aliasHash: self?.aliasHash ?? '0x',
+			slot: self?.slot ?? 0,
+			name: self?.name?.replace(/\.hls$/i, '') ?? null,
+			index: 0,
+			balance
+		};
+		clientState.update((s) => ({
+			...s,
+			status: 'ready',
+			aliases: [summary],
+			selected: summary,
+			balance
+		}));
+	} catch (e: any) {
+		client = null;
+		baseConfig = null;
+		clientState.update((s) => ({
+			...s,
+			status: 'error',
+			error: describeRevert(e) ?? e?.shortMessage ?? e?.message ?? String(e)
+		}));
+	}
+}
+
 export async function connect(rdns?: string): Promise<void> {
 	const chosen = rdns ? findWallet(rdns) : soleWallet();
 	const ethereum = chosen?.provider ?? (rdns ? undefined : legacyWallet());
@@ -477,6 +574,7 @@ export function disconnect() {
 	baseConfig = null;
 	root = null;
 	seedSource = null;
+	viewKey = null;
 	connectedRdns = null;
 	clients.clear();
 	clientState.set({ ...EMPTY });

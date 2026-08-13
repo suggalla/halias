@@ -159,6 +159,28 @@ export class Halias extends HaliasCore {
     return { txHash: await this.settle(tx) };
   }
 
+  /// The alias this client's keys belong to, found by matching its spending pubkey against
+  /// what the registry publishes.
+  ///
+  /// {myAliases} cannot answer this for a view key: it asks who *owns* the alias NFT, and a
+  /// viewer owns nothing. The registry is the right source either way — it is what binds a
+  /// key to a name.
+  async selfAlias(): Promise<{ aliasHash: string; name: string | null; slot: number } | null> {
+    this.ensureInit();
+    await this.ensureSync();
+    const hash = this.aliasHashByPubkey.get(this.keys!.spendingPubkey);
+    if (hash === undefined) return null;
+    const h = "0x" + hash.toString(16).padStart(64, "0");
+    const entry = this.registryEntries.find(
+      (e) => e.aliasHash.toLowerCase() === h.toLowerCase(),
+    );
+    return {
+      aliasHash: h,
+      name: this.namesByAlias.get(entry?.aliasHash ?? h) ?? null,
+      slot: entry?.registrySlot ?? 0,
+    };
+  }
+
   /// The view-only half of this alias's keys.
   ///
   /// Whoever holds it can decrypt every note addressed to this alias, tell which are spent,

@@ -34,9 +34,15 @@
 	const PANEL_LABEL = { about: 'About', relay: 'Relay', deposit: 'Deposit',
 		redeem: 'Redeem', none: '' };
 
-	const connected = $derived($clientState.status !== 'idle' && $clientState.address !== null);
+	// A viewer has no address — it signs nothing — so connectedness cannot be read off one.
+	const viewing = $derived($clientState.viewOnly && $clientState.status !== 'idle');
+	const connected = $derived(
+		viewing || ($clientState.status !== 'idle' && $clientState.address !== null)
+	);
 	const alias = $derived($clientState.selected);
-	const step = $derived(!connected ? 1 : alias === null ? 2 : 3);
+	// A view key covers exactly one alias and is bound to it on unlock, so there is no wallet
+	// level to stand at: it opens directly on that alias.
+	const step = $derived(!connected ? 1 : viewing ? 3 : alias === null ? 2 : 3);
 	// Which chain this is talking to. Worth being permanently visible rather than implied:
 	// the same alias name on a testnet and on mainnet are unrelated identities.
 	const net = $derived($clientState.chainId !== null ? getNetwork($clientState.chainId) : undefined);
@@ -97,7 +103,7 @@
 			{/if}
 			<!-- The label has to say what the click does. As a fixed "About" it toggled with no
 			     indication it would, so the panel looked like a dead end. -->
-			{#if connected}
+			{#if connected && !viewing}
 				<button class="link" class:on={panel === 'deposit'}
 					onclick={() => (panel = panel === 'deposit' ? 'none' : 'deposit')}>Deposit</button>
 				<button class="link" class:on={panel === 'redeem'}
@@ -130,16 +136,27 @@
 			<section class="panel"><WalletWindow /></section>
 		{:else}
 			<section class="panel">
-				<div class="tabs" role="tablist">
-					<button role="tab" aria-selected={tab === 'actions'} class:active={tab === 'actions'}
-						onclick={() => (tab = 'actions')}>Actions</button>
-					<button role="tab" aria-selected={tab === 'history'} class:active={tab === 'history'}
-						onclick={() => (tab = 'history')}>History</button>
-				</div>
-				{#if tab === 'actions'}
-					<TransactWindow />
-				{:else}
+				<!-- No Actions tab for a view key: there are no actions it can take, and a tab
+				     leading only to refusals is worse than its absence. History is the whole
+				     point of one, so it is shown directly rather than behind a lone tab. -->
+				{#if viewing}
+					<div class="viewbar">
+						<span class="vtag">View only</span>
+						<span class="vname">{alias?.name ? `${alias.name}.hls` : 'Alias'}</span>
+					</div>
 					<HistoryView />
+				{:else}
+					<div class="tabs" role="tablist">
+						<button role="tab" aria-selected={tab === 'actions'} class:active={tab === 'actions'}
+							onclick={() => (tab = 'actions')}>Actions</button>
+						<button role="tab" aria-selected={tab === 'history'} class:active={tab === 'history'}
+							onclick={() => (tab = 'history')}>History</button>
+					</div>
+					{#if tab === 'actions'}
+						<TransactWindow />
+					{:else}
+						<HistoryView />
+					{/if}
 				{/if}
 			</section>
 		{/if}
@@ -206,6 +223,13 @@
 	.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 	/* Local is not the network anyone should mistake for the real one. */
 	.dot.local { background: #ffb27a; }
+	.viewbar { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1rem;
+		padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+	.vtag { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em;
+		color: var(--bg-dark); background: var(--accent); padding: 0.15rem 0.45rem;
+		border-radius: 999px; font-weight: 700; }
+	.vname { font-family: ui-monospace, monospace; font-size: 0.85rem;
+		overflow-wrap: anywhere; }
 	/* Boxed, not bare text. These sit beside a network pill and a breadcrumb, and without a
 	   boundary there was nothing to tell a reader they were controls at all. */
 	.link { color: var(--text-dim); font-size: 0.8rem; padding: 0.3rem 0.7rem;
