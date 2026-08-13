@@ -9,6 +9,7 @@ import {
   HaliasKeys,
 } from "./crypto";
 import { SeedSource } from "./seed";
+import { ViewKeys, keysFromViewKeys } from "./viewkey";
 import { computeNullifier, randomBlinding, OwnedEntry } from "./entry";
 import { PoolTrees } from "./merkle";
 import { aliasHashToSmtKey } from "./smt";
@@ -103,6 +104,7 @@ export abstract class HaliasCore {
   protected lastBlock = 0;
   protected synced = false;
   protected initialized = false;
+  protected viewOnly = false;
   protected aliasIndex = 0;
   protected root: bigint | null = null;
 
@@ -131,6 +133,36 @@ export abstract class HaliasCore {
     this.root = root ?? (await this.config.seed!.root());
     this.keys = deriveKeysFromRoot(this.root, aliasIndex);
     this.initialized = true;
+  }
+
+  /// Bind this client to a view key: it can read one alias and can spend nothing.
+  ///
+  /// There is no root, so nothing here can derive another alias or another index — a view key
+  /// is scoped to the one alias it was exported from, and holding it reveals no others.
+  ///
+  /// Spending is refused by {ensureSpendable} rather than by an absent key. The key really is
+  /// absent, but a missing witness surfaces as a proof that fails to verify, which is a
+  /// terrible way to learn you were never able to do this.
+  async initViewOnly(view: ViewKeys, aliasIndex: number = 0): Promise<void> {
+    await initCrypto();
+    this.aliasIndex = aliasIndex;
+    this.root = null;
+    this.keys = keysFromViewKeys(view);
+    this.viewOnly = true;
+    this.initialized = true;
+  }
+
+  /// True when this client holds only a viewing key.
+  get isViewOnly(): boolean {
+    return this.viewOnly;
+  }
+
+  /// Refuse anything that would need a spending key. Called by every operation that sends a
+  /// transaction, so the refusal arrives before a wallet opens rather than after a proof.
+  protected ensureSpendable() {
+    if (this.viewOnly) {
+      throw new Error("This is a view-only key — it can read this alias but cannot spend from it");
+    }
   }
 
   /// The secret behind every alias. Exposed so a caller can derive further clients without

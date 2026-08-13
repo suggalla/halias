@@ -3,6 +3,8 @@ export { encryptOutput, decryptOutput, encodeOutputBlob, decodeOutputBlob } from
 export type { NaclKeypair, HaliasKeys, EncryptedOutput } from "./crypto";
 
 export { generateMnemonic, isValidMnemonic, rootFromMnemonic, MnemonicSource, RootSource } from "./seed";
+export { encodeViewKey, decodeViewKey, viewKeysFrom, keysFromViewKeys } from "./viewkey";
+export type { ViewKeys } from "./viewkey";
 export type { SeedSource } from "./seed";
 
 export { MerkleTree } from "./merkle";

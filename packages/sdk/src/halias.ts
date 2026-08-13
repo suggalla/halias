@@ -7,6 +7,7 @@ import { aliasHashToSmtKey } from "./smt";
 import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
 import { findMyOutputs, Output } from "./events";
 import { deriveInviteKeys, InviteKeys, encodeInviteCode } from "./invite";
+import { encodeViewKey, viewKeysFrom } from "./viewkey";
 import {
   
   
@@ -115,6 +116,7 @@ export class Halias extends HaliasCore {
     opts: { direct?: boolean } = {},
   ): Promise<{ txHash: string }> {
     this.ensureInit();
+    this.ensureSpendable();
     const cleanAlias = normalizeAlias(alias);
 
     // Ask before paying. Registration is commit-then-reveal, and a taken name only fails at
@@ -157,6 +159,21 @@ export class Halias extends HaliasCore {
     return { txHash: await this.settle(tx) };
   }
 
+  /// The view-only half of this alias's keys.
+  ///
+  /// Whoever holds it can decrypt every note addressed to this alias, tell which are spent,
+  /// and total them — and can spend nothing, because the spending key is derived separately
+  /// and is not included. It covers this alias index alone: it reveals no other alias and
+  /// cannot derive one.
+  ///
+  /// It is a secret. It exposes the entire payment history of this alias to anyone who has
+  /// it, and unlike a password it cannot be changed without re-registering the alias under
+  /// fresh keys.
+  exportViewKey(): string {
+    this.ensureInit();
+    return encodeViewKey(viewKeysFrom(this.keys!));
+  }
+
   /// Is this name already registered? A free read, and the same question {register} asks
   /// before it spends anything.
   async isAliasTaken(alias: string): Promise<boolean> {
@@ -168,6 +185,7 @@ export class Halias extends HaliasCore {
 
   async deposit(amountEth: string, tokenAddress: bigint = ETH_TOKEN_ADDRESS): Promise<DepositResult> {
     this.ensureInit();
+    this.ensureSpendable();
     await this.ensureSync();
     const selfProof = await this.selfRegistryProof();
     return this._deposit(amountEth, tokenAddress, {
@@ -195,6 +213,7 @@ export class Halias extends HaliasCore {
     tokenAddress: bigint = ETH_TOKEN_ADDRESS,
   ): Promise<DepositResult> {
     this.ensureInit();
+    this.ensureSpendable();
     await this.ensureSync();
 
     const recipient = await this.lookup(recipientName);
@@ -303,6 +322,7 @@ export class Halias extends HaliasCore {
     opts: { relayerFee?: bigint; relayer?: string; prepare?: boolean } = {},
   ): Promise<SendResult> {
     this.ensureInit();
+    this.ensureSpendable();
     await this.ensureSync();
 
     const sendAmount = ethers.parseEther(amountEth);
@@ -442,6 +462,7 @@ export class Halias extends HaliasCore {
     opts: { relayerFee?: bigint; relayer?: string; prepare?: boolean; uniform?: boolean } = {},
   ): Promise<WithdrawResult> {
     this.ensureInit();
+    this.ensureSpendable();
     await this.ensureSync();
 
     const amount          = ethers.parseEther(amountEth);
@@ -715,12 +736,14 @@ export class Halias extends HaliasCore {
   /// keys. Notes it already received stay unreadable — those needed the old viewing key.
   async offerAliasByHash(aliasHash: bigint, to: string): Promise<{ txHash: string }> {
     this.ensureInit();
+    this.ensureSpendable();
     const tx = await contractOfferAlias(this.domain, aliasHash, to, await this.nextNonce());
     return { txHash: await this.settle(tx) };
   }
 
   async cancelOffer(alias: string): Promise<{ txHash: string }> {
     this.ensureInit();
+    this.ensureSpendable();
     const tx = await contractCancelOffer(this.domain, this.aliasHashOf(alias), await this.nextNonce());
     return { txHash: await this.settle(tx) };
   }
@@ -747,6 +770,7 @@ export class Halias extends HaliasCore {
     opts: { prepare?: boolean; deadlineSeconds?: number } = {},
   ): Promise<{ txHash: string; signature: string; deadline: bigint }> {
     this.ensureInit();
+    this.ensureSpendable();
     const keys = this.keys!;
     const accepted = await contractAcceptAlias(
       this.domain,
@@ -773,6 +797,7 @@ export class Halias extends HaliasCore {
 
   async updateAliasData(alias: string, newDataHash: bigint): Promise<{ txHash: string }> {
     this.ensureInit();
+    this.ensureSpendable();
     const aliasHash = this.aliasHashOf(alias);
 
     const tx = await contractUpdateAliasData(this.domain, aliasHash, newDataHash);
@@ -796,6 +821,7 @@ export class Halias extends HaliasCore {
     newOwner: string,
   ): Promise<{ sweepTxHashes: string[]; offerTxHash: string }> {
     this.ensureInit();
+    this.ensureSpendable();
     await this.ensureSync();
 
     const sweepTxHashes: string[] = [];
@@ -838,6 +864,7 @@ export class Halias extends HaliasCore {
   // generates the secret knows it.
   async createInvite(amountEth: string): Promise<InviteResult> {
     this.ensureInit();
+    this.ensureSpendable();
     await this.ensureSync();
 
     const amount = ethers.parseEther(amountEth);
@@ -934,6 +961,7 @@ export class Halias extends HaliasCore {
     opts: { relayerFee?: bigint; relayer?: string; prepare?: boolean } = {},
   ): Promise<{ txHash: string; relayBlob?: string }> {
     this.ensureInit();
+    this.ensureSpendable();
     await this.ensureSync();
     const cleanAlias = normalizeAlias(alias);
 
