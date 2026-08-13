@@ -145,7 +145,9 @@
 					<span class="kind {e.kind}">{VERB[e.kind]}</span>
 					<span class="amt">
 						{#if e.kind === 'register'}
-							<span class="dim">this alias</span>
+							<!-- Registering moves no value into or out of the alias, so the amount
+							     column has nothing to report. The fee it cost is on the meta line. -->
+							<span class="dim" title="Registration moves no value">—</span>
 						{:else}
 							{SIGN[e.kind]}{formatEther(e.amount)} ETH
 						{/if}
