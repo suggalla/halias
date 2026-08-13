@@ -145,9 +145,10 @@
 					<span class="kind {e.kind}">{VERB[e.kind]}</span>
 					<span class="amt">
 						{#if e.kind === 'register'}
-							<!-- Registering moves no value into or out of the alias, so the amount
-							     column has nothing to report. The fee it cost is on the meta line. -->
-							<span class="dim" title="Registration moves no value">—</span>
+							<!-- No amount moves, so this column carries the thing the row is actually
+							     about: the name that was registered. An em dash said "nothing here",
+							     which is true of the value and wrong about the event. -->
+							<span class="nm">{alias?.name ? `${alias.name}.hls` : '—'}</span>
 						{:else}
 							{SIGN[e.kind]}{formatEther(e.amount)} ETH
 						{/if}
@@ -205,6 +206,8 @@
 	.tx:hover { opacity: 0.9; }
 	.dim { color: var(--text-dim); }
 	.empty, .note { font-size: 0.8rem; color: var(--text-dim); margin: 0; }
+	.nm { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--text-dim);
+		overflow-wrap: anywhere; }
 	.bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
 		padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
 	.count { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.09em;
