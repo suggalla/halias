@@ -682,8 +682,18 @@ export class Halias extends HaliasCore {
   /// the token while installing keys they kept, and every payment to that name would arrive
   /// for them. Only the recipient can say which keys are theirs.
   async offerAlias(alias: string, to: string): Promise<{ txHash: string }> {
+    return this.offerAliasByHash(this.aliasHashOf(alias), to);
+  }
+
+  /// Offer by hash, for an alias this client cannot derive keys for.
+  ///
+  /// Offering is authorised by the owner's signature and touches no note keys, so an alias
+  /// whose keys are lost is still transferable. That is what makes it recoverable: offer it
+  /// to yourself and accept with a key set you do have, and the name works again under new
+  /// keys. Notes it already received stay unreadable — those needed the old viewing key.
+  async offerAliasByHash(aliasHash: bigint, to: string): Promise<{ txHash: string }> {
     this.ensureInit();
-    const tx = await contractOfferAlias(this.domain, this.aliasHashOf(alias), to, await this.nextNonce());
+    const tx = await contractOfferAlias(this.domain, aliasHash, to, await this.nextNonce());
     return { txHash: await this.settle(tx) };
   }
 
