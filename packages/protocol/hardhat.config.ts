@@ -1,5 +1,12 @@
 import { HardhatUserConfig } from "hardhat/config";
-import "@nomicfoundation/hardhat-toolbox";
+// The plugins this repo actually uses, rather than @nomicfoundation/hardhat-toolbox.
+// The toolbox is a meta-package that also pulls in typechain, ignition, gas-reporter and
+// solidity-coverage — none of which anything here imports, all of which load on every
+// hardhat invocation. On a repo living on a Windows drive under WSL that module loading is
+// I/O-bound and dominates the startup of even a no-op run.
+import "@nomicfoundation/hardhat-ethers";
+import "@nomicfoundation/hardhat-chai-matchers";
+import "@nomicfoundation/hardhat-verify";   // etherscan/sourcify config below, and deploy-time verification
 import * as dotenv from "dotenv";
 import * as path from "path";
 
@@ -22,6 +29,13 @@ const config: HardhatUserConfig = {
     artifacts: "/tmp/halias-artifacts",
     cache:     "/tmp/halias-cache",
   },
+  // `npm run test:fast` skips the three suites that generate real Groth16 proofs or parse the
+  // 42MB proving key. They are ~85% of the suite's wall time for ~17% of its tests, so leaving
+  // them out gives a much tighter edit-run loop. They are not optional — `test:hardhat` still
+  // runs everything, and that is what has to pass before anything ships.
+  mocha: process.env.FAST
+    ? { grep: "E2E against the real verifier|Circuit/contract alignment|SDK preimage agreement", invert: true }
+    : {},
   networks: {
     hardhat: {
       allowUnlimitedContractSize: true,

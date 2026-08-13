@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
 
@@ -62,8 +63,8 @@ describe("HaliasPool", function () {
     )).wait();
   }
 
-  beforeEach(async function () {
-    [registrar, user, recipient, relayer] = await ethers.getSigners();
+  async function deployPool() {
+    const [registrar, user, recipient, relayer] = await ethers.getSigners();
 
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     // The registry hashes leaves with PoseidonT4 and nodes with T3; the pool tree only
@@ -71,18 +72,26 @@ describe("HaliasPool", function () {
     const registryLibs = { PoseidonT3: t3, PoseidonT4: t4 };
     const poolLibs     = { PoseidonT3: t3 };
 
-    verifierAddr = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
+    const verifierAddr = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
 
     // The registrar does not exist yet, so a signer stands in for it. That is the whole of
     // the registry's write authority — no mock registry is involved anywhere here.
-    registry     = await (await ethers.getContractFactory("HaliasRegistry", { libraries: registryLibs })).deploy(registrar.address);
-    registryAddr = await registry.getAddress();
+    const registry     = await (await ethers.getContractFactory("HaliasRegistry", { libraries: registryLibs })).deploy(registrar.address);
+    const registryAddr = await registry.getAddress();
 
-    pool     = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs })).deploy(verifierAddr, registryAddr);
-    poolAddr = await pool.getAddress();
+    const pool     = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs })).deploy(verifierAddr, registryAddr);
+    const poolAddr = await pool.getAddress();
 
-    token    = await (await ethers.getContractFactory("MockERC20")).deploy("Test", "TST", 18);
-    feeToken = await (await ethers.getContractFactory("MockFeeToken")).deploy();
+    const token    = await (await ethers.getContractFactory("MockERC20")).deploy("Test", "TST", 18);
+    const feeToken = await (await ethers.getContractFactory("MockFeeToken")).deploy();
+
+    return { registrar, user, recipient, relayer, verifierAddr,
+             registry, registryAddr, pool, poolAddr, token, feeToken };
+  }
+
+  beforeEach(async function () {
+    ({ registrar, user, recipient, relayer, verifierAddr,
+       registry, registryAddr, pool, poolAddr, token, feeToken } = await loadFixture(deployPool));
   });
 
   // ── Construction ────────────────────────────────────────────────────────────

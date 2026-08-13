@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { registerAlias, acceptAliasAs, signOwnerAction } from "./helpers/register";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
-import { time } from "@nomicfoundation/hardhat-network-helpers";
+import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { aliasHashToKey } from "./helpers/smt";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
@@ -108,8 +108,11 @@ describe("HaliasController", function () {
     }, "0x", "0x", ZERO_PROOF, { value: amount })).wait();
   }
 
-  beforeEach(async function () {
-    [admin, user, claimer, relayer, other] = await ethers.getSigners();
+  // Deploying the stack costs more than every assertion that follows it, and 47 tests each
+  // wanted it clean. loadFixture runs it once and reverts the chain to that snapshot for the
+  // rest, which is the same isolation for a fraction of the work.
+  async function deployStack() {
+    const [admin, user, claimer, relayer, other] = await ethers.getSigners();
 
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const registryLibs = { PoseidonT3: t3, PoseidonT4: t4 };
@@ -120,20 +123,31 @@ describe("HaliasController", function () {
     // cycle, so one address has to be known before it exists. Production resolves this with
     // CREATE2; here the plain nonce-derived address is enough and exercises the same shape.
     const nonce = await ethers.provider.getTransactionCount(admin.address);
-    domainAddr = ethers.getCreateAddress({ from: admin.address, nonce: nonce + 2 });
+    const domainAddr = ethers.getCreateAddress({ from: admin.address, nonce: nonce + 2 });
 
-    registry = await (await ethers.getContractFactory("HaliasRegistry", { libraries: registryLibs }))
+    const registry = await (await ethers.getContractFactory("HaliasRegistry", { libraries: registryLibs }))
       .deploy(domainAddr);
-    pool = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs }))
+    const pool = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs }))
       .deploy(verifier, await registry.getAddress());
-    domain = await (await ethers.getContractFactory("HaliasController"))
+    const domain = await (await ethers.getContractFactory("HaliasController"))
       .deploy(await pool.getAddress(), await registry.getAddress(), admin.address);
 
     expect(await domain.getAddress()).to.equal(domainAddr);
-    poolAddr = await pool.getAddress();
-    FEE = await domain.registrationFee();
 
-    token = await (await ethers.getContractFactory("MockERC20")).deploy("Test", "TST", 18);
+    const token = await (await ethers.getContractFactory("MockERC20")).deploy("Test", "TST", 18);
+
+    return {
+      admin, user, claimer, relayer, other,
+      registry, pool, domain, token,
+      domainAddr, poolAddr: await pool.getAddress(),
+      FEE: await domain.registrationFee(),
+    };
+  }
+
+  beforeEach(async function () {
+    ({ admin, user, claimer, relayer, other,
+       registry, pool, domain, token,
+       domainAddr, poolAddr, FEE } = await loadFixture(deployStack));
   });
 
   // ── Construction ────────────────────────────────────────────────────────────

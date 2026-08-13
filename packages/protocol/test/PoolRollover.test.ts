@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
+import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 
 // Tree rollover, and the two bugs it creates.
@@ -31,7 +32,6 @@ describe("pool tree rollover", function () {
   this.timeout(180000);
 
   let pool: any, registry: any;
-  let registrar: any;
 
   const rand32 = () => ethers.keccak256(ethers.randomBytes(32));
 
@@ -68,16 +68,21 @@ describe("pool tree rollover", function () {
 
   before(async function () { await initPoseidon(); });
 
-  beforeEach(async function () {
-    [registrar] = await ethers.getSigners();
+  async function deploySmallTreePool() {
+    const [registrar] = await ethers.getSigners();
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const verifier = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
-    registry = await (await ethers.getContractFactory("HaliasRegistry", {
+    const registry = await (await ethers.getContractFactory("HaliasRegistry", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(registrar.address);
-    pool = await (await ethers.getContractFactory("MockSmallTreePool", {
+    const pool = await (await ethers.getContractFactory("MockSmallTreePool", {
       libraries: { PoseidonT3: t3 },
     })).deploy(verifier, await registry.getAddress());
+    return { registry, pool };
+  }
+
+  beforeEach(async function () {
+    ({ registry, pool } = await loadFixture(deploySmallTreePool));
   });
 
   // ── Mechanics ───────────────────────────────────────────────────────────────

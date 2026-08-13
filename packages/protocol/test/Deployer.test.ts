@@ -3,6 +3,7 @@ import { ethers } from "hardhat";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { aliasHashToKey } from "./helpers/smt";
 import { registerAlias } from "./helpers/register";
+import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
 
@@ -27,19 +28,26 @@ describe("HaliasDeployer", function () {
 
   const rand32 = () => ethers.keccak256(ethers.randomBytes(32));
 
-  beforeEach(async function () {
-    [admin, user] = await ethers.getSigners();
+  async function deployStack() {
+    const [admin, user] = await ethers.getSigners();
 
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
-    verifier = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
+    const verifier = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
 
-    deployer = await (await ethers.getContractFactory("HaliasDeployer", {
+    const deployer = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(verifier, admin.address);
 
-    registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
-    pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
-    domain   = await ethers.getContractAt("HaliasController",   await deployer.controller());
+    return {
+      admin, user, verifier, deployer,
+      registry: await ethers.getContractAt("HaliasRegistry",   await deployer.registry()),
+      pool:     await ethers.getContractAt("HaliasPool",       await deployer.pool()),
+      domain:   await ethers.getContractAt("HaliasController", await deployer.controller()),
+    };
+  }
+
+  beforeEach(async function () {
+    ({ admin, user, verifier, deployer, registry, pool, domain } = await loadFixture(deployStack));
   });
 
   it("closes the cycle on the real addresses", async function () {

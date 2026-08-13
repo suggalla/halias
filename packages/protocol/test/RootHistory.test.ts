@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { registerAlias } from "./helpers/register";
-import { mine, time } from "@nomicfoundation/hardhat-network-helpers";
+import { mine, time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
 
@@ -28,16 +28,20 @@ describe("Root history", function () {
     );
   }
 
-  beforeEach(async function () {
+  async function deployStack() {
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
     const dep = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(await mv.getAddress(), (await ethers.getSigners())[0].address);
-    pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
-    registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
-    domain   = await ethers.getContractAt("HaliasController",   await dep.controller());
-    MAX_AGE = await registry.REGISTRY_ROOT_MAX_AGE();
+    const pool     = await ethers.getContractAt("HaliasPool",       await dep.pool());
+    const registry = await ethers.getContractAt("HaliasRegistry",   await dep.registry());
+    const domain   = await ethers.getContractAt("HaliasController", await dep.controller());
+    return { pool, registry, domain, MAX_AGE: await registry.REGISTRY_ROOT_MAX_AGE() };
+  }
+
+  beforeEach(async function () {
+    ({ pool, registry, domain, MAX_AGE } = await loadFixture(deployStack));
   });
 
   describe("pool roots", function () {
@@ -192,18 +196,23 @@ describe("Pairwise insertion equivalence", function () {
   const proof = ethers.AbiCoder.defaultAbiCoder().encode(
     ["uint256[2]", "uint256[2][2]", "uint256[2]"], [[0, 0], [[0, 0], [0, 0]], [0, 0]]);
 
-  beforeEach(async function () {
+  async function deployPairwise() {
     const [deployer] = await ethers.getSigners();
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
     const dep = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
     })).deploy(await mv.getAddress(), deployer.address);
-    pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
-    registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
-    seq = await (await ethers.getContractFactory("MockTreeSequential", {
+    const pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
+    const registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
+    const seq = await (await ethers.getContractFactory("MockTreeSequential", {
       libraries: { PoseidonT3: t3 },
     })).deploy();
+    return { pool, registry, seq };
+  }
+
+  beforeEach(async function () {
+    ({ pool, registry, seq } = await loadFixture(deployPairwise));
   });
 
   async function transactWith(c0: string, c1: string) {
