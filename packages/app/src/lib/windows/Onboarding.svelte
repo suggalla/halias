@@ -40,6 +40,14 @@
 	let revealed = $state(false);
 	let confirmedWritten = $state(false);
 
+	// Pre-filled rather than required.
+	//
+	// One wallet needs no name — "Wallet 1" says everything true about it, and demanding a
+	// name there is a field to fill in for nothing. Several wallets need one badly, and that
+	// is not an edge case here: the whole point of holding a second is that it is not linkable
+	// to the first, which "Wallet 2" describes about as well as "the other one". So it is
+	// offered with a default already in it and can be skipped by ignoring it.
+	let label = $state('');
 	let password = $state('');
 	let password2 = $state('');
 	let wantPasskey = $state(passkeySupported());
@@ -124,6 +132,7 @@
 			return;
 		}
 		error = null;
+		if (!label.trim()) label = nextLabel(entries);
 		stage = 'protect';
 	}
 
@@ -133,7 +142,7 @@
 		busy = true;
 		error = null;
 		try {
-			const id = await createVault(phrase, password, nextLabel(entries));
+			const id = await createVault(phrase, password, label.trim() || nextLabel(entries));
 			if (wantPasskey && canPasskey) {
 				try {
 					await addPasskey(id, password);
@@ -172,7 +181,8 @@
 
 				{:else if stage === 'unlock' && selected}
 					<p class="say">
-						Stored on this browser, encrypted. Unlock it to continue.
+						<strong>{selected.label}</strong> is stored on this browser, encrypted. Unlock it
+						to continue.
 					</p>
 
 					{#if entries.length > 1}
@@ -221,6 +231,19 @@
 					<p class="say">
 						Choose a password. It encrypts <strong>this browser's copy</strong> — it is not
 						your recovery phrase, and it cannot recover the wallet anywhere else.
+					</p>
+					<label>
+						<span>Name this wallet</span>
+						<input
+							bind:value={label}
+							maxlength="40"
+							disabled={busy}
+							placeholder={nextLabel(entries)}
+						/>
+					</label>
+					<p class="note">
+						Only a label for telling wallets apart on this device, and in your passkey list.
+						It is not a secret and not part of any key.
 					</p>
 					<label>
 						<span>Password</span>

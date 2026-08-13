@@ -50,8 +50,8 @@ import type { NetworkConfig } from './config.js';
 
 // A single live Halias client, created once a wallet is connected.
 //
-// Everything the SDK does is client-side: keys derive from a personal_sign, proofs are
-// generated in the browser from the wasm and zkey below. Nothing here talks to a server
+// Everything the SDK does is client-side: keys derive from a stored recovery phrase, proofs
+// are generated in the browser from the wasm and zkey below. Nothing here talks to a server
 // of ours, which is the property the whole design exists to preserve.
 
 export type Status = 'idle' | 'connecting' | 'syncing' | 'ready' | 'error';
@@ -60,8 +60,9 @@ export interface AliasSummary {
 	aliasHash: string;
 	slot: number;
 	name: string | null;
-	/// Which derivation index unlocks it. null means this wallet owns the alias but cannot
-	/// currently derive its keys — visible, not spendable.
+	/// Which derivation index unlocks it. null means this address owns the alias but the
+	/// unlocked phrase cannot derive its keys, so it cannot send or receive — the wallet
+	/// screen leaves those out of the list rather than showing something unusable.
 	index: number | null;
 	balance: bigint;
 }
@@ -117,11 +118,8 @@ let root: bigint | null = null;
 // than re-running discovery and possibly landing on a different extension.
 let connectedRdns: string | null = null;
 
-// The phrase behind that root, held in memory only for this session.
-//
-// Interim: the wizard in key-management.md replaces this with a keystore in IndexedDB,
-// wrapped by a password and a passkey. Until that exists the phrase is entered every time,
-// which is inconvenient but honest — nothing here pretends to store it safely.
+// The phrase behind that root, for this session only. At rest it lives encrypted in
+// IndexedDB — see vault.ts — and is decrypted here by a passkey or a password.
 let seedSource: any = null;
 
 /// Accept a recovery phrase for this session. Throws on a phrase that fails BIP-39's
@@ -615,29 +613,6 @@ export async function offersToMe(): Promise<Offer[]> {
 		offers.push({ aliasHash, from: (log as any).args.from, name: names[key] ?? null });
 	}
 	return offers;
-}
-
-/// Bring an alias back under the currently unlocked phrase.
-///
-/// An alias this address owns but cannot derive keys for is not broken and not stuck:
-/// offering is authorised by the owner's signature, not by the alias's keys. So it can be
-/// offered to its own owner and accepted with the keys they *do* have, which installs a fresh
-/// set at a free index.
-///
-/// What does not come back is the balance. Notes already received were encrypted to the old
-/// viewing key, and no new key can read them — this recovers the name, not its history.
-export async function recoverAlias(aliasHash: string): Promise<{ txHash: string } | null> {
-	if (!baseConfig) return null;
-	const me = await baseConfig.signer.getAddress();
-	const index = nextFreeIndex(get(clientState).aliases);
-	return run(async () => {
-		// Any initialised client can make the offer; it needs the signer, not this alias's keys.
-		const c = await clientFor(index);
-		await c.offerAliasByHash(BigInt(aliasHash), me);
-		const r = await c.acceptOffer(BigInt(aliasHash));
-		await loadAliases();
-		return r;
-	});
 }
 
 /// Take an offer found by {offersToMe}, by hash.
