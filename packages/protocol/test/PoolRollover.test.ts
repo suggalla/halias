@@ -31,7 +31,7 @@ describe("pool tree rollover", function () {
   this.timeout(180000);
 
   let pool: any, registry: any;
-  let registrar: any, user: any;
+  let registrar: any;
 
   const rand32 = () => ethers.keccak256(ethers.randomBytes(32));
 
@@ -69,7 +69,7 @@ describe("pool tree rollover", function () {
   before(async function () { await initPoseidon(); });
 
   beforeEach(async function () {
-    [registrar, user] = await ethers.getSigners();
+    [registrar] = await ethers.getSigners();
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     const verifier = await (await (await ethers.getContractFactory("MockTransactVerifier")).deploy()).getAddress();
     registry = await (await ethers.getContractFactory("HaliasRegistry", {

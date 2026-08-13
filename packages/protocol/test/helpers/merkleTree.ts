@@ -26,7 +26,7 @@ export class MerkleTree {
   }
 
   _buildLayers(): bigint[][] {
-    let layers: bigint[][] = [
+    const layers: bigint[][] = [
       [...this.leaves],
     ];
 

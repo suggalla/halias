@@ -9,7 +9,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "mocha"
+    "test": "mocha",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "circomlibjs": "^0.1.7",

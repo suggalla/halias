@@ -34,9 +34,8 @@ describe("E2E against the real verifier", function () {
   this.timeout(600000);
 
   let pool: any, registry: any, domain: any;
-  let poolAddr: string, domainAddr: string;
+  let poolAddr: string;
   let user: any, recipient: any, relayer: any;
-  let chainId: bigint;
 
   // Local mirrors of the on-chain trees, kept in step so proofs can be built.
   let tree: MerkleTree;
@@ -148,7 +147,6 @@ describe("E2E against the real verifier", function () {
     await initPoseidon();
     NULLIFIER_KEY = poseidonHash([VIEWING_KEY]);
     [user, recipient, relayer] = await ethers.getSigners();
-    chainId = (await ethers.provider.getNetwork()).chainId;
 
     const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
     // The real verifier. If this is ever swapped for the mock, the file stops testing
@@ -163,7 +161,6 @@ describe("E2E against the real verifier", function () {
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
     domain   = await ethers.getContractAt("HaliasController",   await deployer.controller());
     poolAddr = await pool.getAddress();
-    domainAddr = await domain.getAddress();
 
     tree = new MerkleTree(POOL_LEVELS);
     smt  = new SMT();
