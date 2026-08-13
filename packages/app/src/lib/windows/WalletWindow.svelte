@@ -133,6 +133,15 @@
 
 	const freeIndex = $derived(nextFreeIndex($clientState.aliases));
 
+	// This address owns aliases and the unlocked phrase derives none of them.
+	//
+	// One alias like this is ordinary — bought, or held for someone. All of them is a
+	// different fact: almost always the wrong phrase, and worth saying loudly, because the
+	// alternative reading is that the aliases are broken.
+	const noneDerivable = $derived(
+		$clientState.aliases.length > 0 && $clientState.aliases.every((a) => a.index === null)
+	);
+
 	async function loadOffers() {
 		try {
 			offers = await offersToMe();
@@ -184,6 +193,19 @@
 		</div>
 	</header>
 
+	{#if noneDerivable}
+		<div class="mismatch">
+			<strong>This recovery phrase does not match these aliases.</strong>
+			<p>
+				This address owns {$clientState.aliases.length}
+				{$clientState.aliases.length === 1 ? 'alias' : 'aliases'}, but the unlocked phrase
+				derives none of their keys — so they show as view only and cannot be spent from.
+				They are not damaged; they belong to a different phrase.
+			</p>
+			<p>Disconnect and unlock the phrase they were registered with, or register a new alias on this one.</p>
+		</div>
+	{/if}
+
 	<section>
 		<h3>Aliases</h3>
 		{#if $clientState.aliases.length === 0}
@@ -202,8 +224,13 @@
 						</button>
 						{#if a.index === null}
 							<!-- Owned, but no derivation index within range reproduces its published
-							     key — so this wallet can see it and cannot spend from it. -->
-							<p class="warn">Keys not derivable from this wallet — view only</p>
+							     key — so this address can see it and cannot spend from it.
+							     Naming the likely cause matters: the old message stated the symptom,
+							     and the reader's next question was always "why". -->
+							<p class="warn">
+								View only — registered with a different recovery phrase, so this one
+								cannot derive its keys. Unlock the phrase it was registered with to use it.
+							</p>
 						{:else if !a.name}
 							<input
 								class="label-in"
@@ -338,6 +365,10 @@
 	.suffix { color: var(--text-dim); font-family: ui-monospace, monospace; }
 	.label-in { width: 100%; margin-top: 0.3rem; font-size: 0.8rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0.4rem 0 0; }
+	.mismatch { display: flex; flex-direction: column; gap: 0.45rem; padding: 0.8rem;
+		border: 1px solid #ff8a80; border-radius: 8px; background: var(--bg-input); }
+	.mismatch strong { font-size: 0.85rem; color: #ff8a80; }
+	.mismatch p { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--text-dim); }
 	.offers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.4rem; }
 	.offers li { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
