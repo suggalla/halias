@@ -9,7 +9,6 @@
 		clientFor,
 		loadAliases,
 		nextFreeIndex,
-		recoverAlias,
 		offersToMe,
 		acceptOfferAt,
 		type Offer
@@ -135,21 +134,10 @@
 
 	// Only aliases this phrase can actually act as.
 	//
-	// An alias owned by this address whose keys the phrase cannot derive is not usable: you
-	// cannot send from it, and its balance reads as zero because nothing decrypts. Listing it
-	// beside working ones made the list look broken. It is not gone, and it is not stuck —
-	// offering needs the owner's signature rather than the alias's keys, so it can be brought
-	// back under this phrase. That lives on one line below rather than in the list.
+	// An alias owned by this address whose keys the phrase cannot derive cannot send, and its
+	// balance reads zero because nothing decrypts — so listing it beside working ones only
+	// made the list look broken.
 	const usable = $derived($clientState.aliases.filter((a) => a.index !== null));
-	const orphaned = $derived($clientState.aliases.filter((a) => a.index === null));
-
-	let recovering = $state<string | null>(null);
-	async function recover(aliasHash: string) {
-		recovering = aliasHash;
-		const r = await recoverAlias(aliasHash);
-		recovering = null;
-		msg = r ? 'Recovered — it now uses your current keys, with an empty balance.' : null;
-	}
 
 	async function loadOffers() {
 		try {
@@ -226,39 +214,6 @@
 			</ul>
 		{/if}
 
-		<!-- Kept out of the list, because it cannot be acted as. Kept on screen, because this
-		     address does own it and it can be brought back — silently hiding an owned name
-		     would look like it had been lost. -->
-		{#if orphaned.length > 0}
-			<details class="orphans">
-				<summary>
-					{orphaned.length}
-					{orphaned.length === 1 ? 'alias belongs' : 'aliases belong'} to a different recovery phrase
-				</summary>
-				<p class="hint">
-					This address owns {orphaned.length === 1 ? 'it' : 'them'}, but the phrase you
-					unlocked cannot derive {orphaned.length === 1 ? 'its' : 'their'} keys, so
-					{orphaned.length === 1 ? 'it' : 'they'} cannot receive or spend. Unlock the
-					original phrase to use {orphaned.length === 1 ? 'it' : 'them'} as before — or
-					recover the name onto this phrase, which issues new keys and starts the balance
-					at zero. Anything already received stays unreadable.
-				</p>
-				<ul class="aliases">
-					{#each orphaned as a}
-						<li class="orphan">
-							<span class="nm">{a.name ? `${a.name}.hls` : a.aliasHash}</span>
-							<button
-								class="ghost"
-								disabled={busy || recovering !== null}
-								onclick={() => recover(a.aliasHash)}
-							>
-								{recovering === a.aliasHash ? 'Recovering…' : 'Recover onto this phrase'}
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</details>
-		{/if}
 	</section>
 
 	<section>
@@ -382,15 +337,6 @@
 	.suffix { color: var(--text-dim); font-family: ui-monospace, monospace; }
 	.label-in { width: 100%; margin-top: 0.3rem; font-size: 0.8rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0.4rem 0 0; }
-	.orphans { margin-top: 0.7rem; font-size: 0.8rem; }
-	.orphans summary { cursor: pointer; color: var(--text-dim); }
-	.orphans summary:hover { color: var(--accent); }
-	.orphans .hint { margin: 0.5rem 0; }
-	.orphan { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
-		padding: 0.55rem 0.7rem; background: var(--bg-input);
-		border: 1px solid var(--border); border-radius: 6px; }
-	.orphan .nm { flex: 1; min-width: 0; }
-	.orphan .ghost { padding: 0.32rem 0.7rem; font-size: 0.76rem; }
 	.offers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.4rem; }
 	.offers li { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
