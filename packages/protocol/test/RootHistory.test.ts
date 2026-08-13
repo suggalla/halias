@@ -36,7 +36,7 @@ describe("Root history", function () {
     })).deploy(await mv.getAddress(), (await ethers.getSigners())[0].address);
     pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
-    domain   = await ethers.getContractAt("HaliasController",   await dep.domain());
+    domain   = await ethers.getContractAt("HaliasController",   await dep.controller());
     MAX_AGE = await registry.REGISTRY_ROOT_MAX_AGE();
   });
 

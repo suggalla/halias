@@ -1,6 +1,6 @@
 import { get, writable } from 'svelte/store';
 import { BrowserProvider, Interface, isAddress, keccak256, toUtf8Bytes } from 'ethers';
-import { POOL_ABI, REGISTRY_ABI, DOMAIN_ABI } from 'halias-sdk';
+import { POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI } from 'halias-sdk';
 
 // Errors the contracts can revert with that no ABI fragment above declares — the SDK's ABIs
 // list functions and events, not error types.
@@ -228,7 +228,7 @@ function describeRevert(e: any): string | null {
 		e?.data?.data ?? e?.data ?? e?.info?.error?.data?.data ?? e?.info?.error?.data;
 	if (typeof data !== 'string' || data.length < 10) return null;
 
-	for (const abi of [POOL_ABI, REGISTRY_ABI, DOMAIN_ABI, ERROR_ABI]) {
+	for (const abi of [POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI, ERROR_ABI]) {
 		try {
 			const parsed = new Interface(abi).parseError(data);
 			if (!parsed) continue;
@@ -355,7 +355,7 @@ export async function connect(): Promise<void> {
 		for (const [field, value] of [
 			['poolAddress', net.poolAddress],
 			['registryAddress', net.registryAddress],
-			['domainAddress', net.domainAddress]
+			['controllerAddress', net.controllerAddress]
 		] as const) {
 			if (!value || !isAddress(value))
 				throw new Error(
@@ -371,7 +371,7 @@ export async function connect(): Promise<void> {
 			chainId,
 			poolAddress: net.poolAddress,
 			registryAddress: net.registryAddress,
-			domainAddress: net.domainAddress,
+			controllerAddress: net.controllerAddress,
 			artifacts: artifactPaths(),
 			cache: new BrowserCache(),
 			startBlock: net.startBlock,

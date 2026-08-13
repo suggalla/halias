@@ -118,6 +118,20 @@ export class Halias extends HaliasCore {
     const spendingBytes32 = this.keys!.spendingPubkey;
     const encBytes32      = BigInt(ethers.hexlify(this.keys!.encryption.publicKey));
 
+    // The commit-reveal secret, derived rather than random, so nothing has to survive
+    // between the two transactions. A random salt lives only in the memory of the session
+    // that committed: lose it — a refresh, a crash, a different device — and the commitment
+    // is unspendable and has to be remade. This one is recomputed from the wallet signature.
+    //
+    // Derived from the ROOT, not from the keys. The keys are already in the commitment, so a
+    // salt derived from them would add no entropy — anyone able to guess them could compute
+    // it too. The root is never published and never leaves the client, so the commitment
+    // stays hiding even if the keys are known in advance.
+    const salt = ethers.keccak256(ethers.concat([
+      ethers.toBeHex(this.derivationRoot, 32),
+      ethers.toBeHex(this.aliasHashOf(alias), 32),
+    ]));
+
     const nullifierKeyHash = poseidonHash([this.keys!.nullifierKey, 1n]);
     const fee = await this.domain.registrationFee() as bigint;
     const tx = opts.direct
@@ -125,7 +139,7 @@ export class Halias extends HaliasCore {
           this.domain, `${cleanAlias}.hls`, spendingBytes32, nullifierKeyHash, encBytes32, fee)
       : await contractRegister(
           this.domain, `${cleanAlias}.hls`, spendingBytes32, nullifierKeyHash, encBytes32,
-          fee, onStep);
+          fee, salt, onStep);
     return { txHash: await this.settle(tx) };
   }
 
@@ -797,9 +811,14 @@ export class Halias extends HaliasCore {
     const tempAliasHash = BigInt(ethers.keccak256(ethers.toUtf8Bytes(inviteName)));
     const registrationFee = await this.domain.registrationFee() as bigint;
 
+    // From the invite secret, for the same reason: whoever can create this registration
+    // already holds the secret, and nobody else can derive the salt from the public name.
+    const inviteSalt = ethers.keccak256(ethers.concat([
+      ethers.toBeHex(secret, 32), ethers.toUtf8Bytes(inviteName),
+    ]));
     const regTx = await contractRegister(
       this.domain, inviteName, temp.spendingPubkey,
-      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
+      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee, inviteSalt,
     );
     await regTx.wait();
     await this.refresh();
@@ -979,7 +998,7 @@ export class Halias extends HaliasCore {
     // packed word this contract has to split up. The pool pays the relayer its fee and
     // sends the remainder — exactly the registration fee — on to the domain.
     const params: TransactParams = {
-      recipient:    this.config.domainAddress,
+      recipient:    this.config.controllerAddress,
       relayerFee:   relayerFee > 0n ? { relayer, amount: relayerFee } : NO_RELAYER,
       externalData: encodeRegistration(registration),
     };
@@ -1017,7 +1036,7 @@ export class Halias extends HaliasCore {
           encryptedOutput1: "0x",
           proof: proofBytes,
           claim: {
-            domain: this.config.domainAddress,
+            domain: this.config.controllerAddress,
             registration: registrationTuple(registration),
             name: `${cleanAlias}.hls`,
           },

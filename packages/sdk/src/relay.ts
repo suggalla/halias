@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { buildTransactParams, getPool, getDomain } from "./contract";
+import { buildTransactParams, getPool, getController } from "./contract";
 
 /// Handing a signed withdrawal to someone else to submit.
 ///
@@ -297,7 +297,7 @@ function bind(payload: RelayPayload, runner: ethers.ContractRunner) {
   if (payload.kind === "claim") {
     const c = payload.claim!;
     return {
-      contract: getDomain(c.domain, runner),
+      contract: getController(c.domain, runner),
       method: "claim",
       args: [
         c.registration, payload.params,

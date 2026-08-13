@@ -104,7 +104,7 @@ export async function scanEvents(
   /// Also scanned, for {NamePublished} alone. The plaintext behind an aliasHash exists
   /// nowhere else: the hash is one-way, and a client that loses local storage cannot
   /// recover the name it registered without this. It was being published and never read.
-  domainAddress: string,
+  controllerAddress: string,
   fromBlock: number = 0,
   chunkSize: number = DEFAULT_CHUNK_SIZE,
   onProgress?: (pct: number) => void,
@@ -161,7 +161,7 @@ export async function scanEvents(
     // The final chunk ends at "latest", resolved by the node, so anything mined since the
     // block number was read is still picked up.
     const chunk = await provider.getLogs({
-      address: [poolAddress, registryAddress, domainAddress],
+      address: [poolAddress, registryAddress, controllerAddress],
       topics: [wanted],
       fromBlock: cur,
       toBlock: isLast ? "latest" : end,

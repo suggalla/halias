@@ -5,7 +5,7 @@ import { ensurePoseidon, verifyPoseidon } from "./poseidon";
 // Deploys the whole system.
 //
 // The three contracts depend on each other in a cycle — the pool reads the registry, the
-// domain writes to it and spends from the pool, and the registry must name its controller
+// controller writes to it and spends from the pool, and the registry must name its controller
 // before that contract exists. HaliasDeployer closes the loop on-chain in one constructor,
 // so this script has exactly one deployment step for them and no address bookkeeping.
 //
@@ -128,19 +128,19 @@ async function main() {
   // to fund a wallet, to re-check wiring — silently replaced a live pool. The old contracts
   // keep the funds and every registered alias, while the config and app move to an empty
   // deployment. Nothing reports it; the app simply comes up with no aliases.
-  const existing = cfg.pool && cfg.registry && cfg.domain
+  const existing = cfg.pool && cfg.registry && cfg.controller
     && (await ethers.provider.getCode(cfg.pool)) !== "0x";
 
-  let pool: string, registry: string, domain: string, startBlock: number;
+  let pool: string, registry: string, controller: string, startBlock: number;
   let deployerAddress: string = cfg.deployer ?? ethers.ZeroAddress;
 
   if (existing && !process.env.FORCE_REDEPLOY) {
-    ({ pool, registry, domain } = cfg as any);
+    ({ pool, registry, controller } = cfg as any);
     startBlock = cfg.startBlock ?? 0;
     console.log(`  HaliasDeployer     reusing  ${deployerAddress}`);
     console.log(`    -> HaliasRegistry         ${registry}`);
     console.log(`    -> HaliasPool             ${pool}`);
-    console.log(`    -> HaliasController           ${domain}`);
+    console.log(`    -> HaliasController           ${controller}`);
     console.log(`  (set FORCE_REDEPLOY=1 to replace them — this abandons existing aliases)`);
   } else {
     // One transaction. Either all three exist and are wired, or the deployment reverts —
@@ -153,13 +153,13 @@ async function main() {
 
     pool     = await deployerContract.pool();
     registry = await deployerContract.registry();
-    domain   = await deployerContract.domain();
+    controller   = await deployerContract.controller();
     deployerAddress = await deployerContract.getAddress();
 
     console.log(`  HaliasDeployer     deployed ${deployerAddress}`);
     console.log(`    -> HaliasRegistry         ${registry}`);
     console.log(`    -> HaliasPool             ${pool}`);
-    console.log(`    -> HaliasController           ${domain}`);
+    console.log(`    -> HaliasController           ${controller}`);
   }
 
   // Read the wiring back from chain rather than trusting the constructor. A deployment that
@@ -167,14 +167,14 @@ async function main() {
   // it, so it is worth the three calls.
   const poolC = await ethers.getContractAt("HaliasPool", pool);
   const regC  = await ethers.getContractAt("HaliasRegistry", registry);
-  const domC  = await ethers.getContractAt("HaliasController", domain);
+  const domC  = await ethers.getContractAt("HaliasController", controller);
 
   const checks: [string, string, string][] = [
-    ["registry.controller", await regC.controller(), domain],
+    ["registry.controller", await regC.controller(), controller],
     ["pool.registry",       await poolC.registry(),  registry],
-    ["domain.pool",         await domC.pool(),       pool],
-    ["domain.registry",     await domC.registry(),   registry],
-    ["domain.admin",        await domC.admin(),      admin],
+    ["controller.pool",         await domC.pool(),       pool],
+    ["controller.registry",     await domC.registry(),   registry],
+    ["controller.admin",        await domC.admin(),      admin],
   ];
   console.log("");
   for (const [label, got, want] of checks) {
@@ -189,7 +189,7 @@ async function main() {
     deployer: deployerAddress,
     // The three the SDK and app read. `halias` is deliberately absent: the monolith is gone,
     // and a stale key would let a client silently point at the wrong contract.
-    pool, registry, domain,
+    pool, registry, controller,
     admin,
     startBlock,
   });
@@ -198,9 +198,9 @@ async function main() {
 
   console.log(`\nRegistration fee: ${ethers.formatEther(await domC.registrationFee())} ETH`);
   console.log("Verify with:");
-  console.log(`  npx hardhat verify --network ${network} ${registry} ${domain}`);
+  console.log(`  npx hardhat verify --network ${network} ${registry} ${controller}`);
   console.log(`  npx hardhat verify --network ${network} ${pool} ${verifier} ${registry}`);
-  console.log(`  npx hardhat verify --network ${network} ${domain} ${pool} ${registry} ${admin}`);
+  console.log(`  npx hardhat verify --network ${network} ${controller} ${pool} ${registry} ${admin}`);
 }
 
 main().catch((e) => {

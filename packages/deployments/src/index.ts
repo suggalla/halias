@@ -59,7 +59,7 @@ export function getContractAddress(chainId: number): string {
 // `halias` will throw here rather than silently hand back the wrong contract — the pool
 // hashes its own address into paramsHash, so a wrong one produces proofs that verify
 // against nothing.
-function requireAddress(chainId: number, key: "pool" | "registry" | "domain"): string {
+function requireAddress(chainId: number, key: "pool" | "registry" | "controller"): string {
   const addr = (getDeployment(chainId) as Record<string, any>)[key];
   if (!addr) {
     throw new Error(
@@ -77,8 +77,8 @@ export function getRegistryAddress(chainId: number): string {
   return requireAddress(chainId, "registry");
 }
 
-export function getDomainAddress(chainId: number): string {
-  return requireAddress(chainId, "domain");
+export function getControllerAddress(chainId: number): string {
+  return requireAddress(chainId, "controller");
 }
 
 export function getStartBlock(chainId: number): number {

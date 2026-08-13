@@ -10,14 +10,14 @@ error PredictionMismatch(address predicted, address actual);
 /// @title  HaliasDeployer — brings the three contracts up in one transaction
 /// @notice Deploys {HaliasRegistry}, {HaliasPool} and {HaliasController} already wired to each
 ///         other, with every reference immutable.
-/// @dev    The three have a dependency cycle: the pool reads the registry, the domain writes
+/// @dev    The three have a dependency cycle: the pool reads the registry, the controller writes
 ///         to the registry and spends from the pool, and the registry has to name its
-///         controller — the domain — before that contract exists.
+///         controller — the controller — before that contract exists.
 ///
 ///         CREATE2 cannot break it. A CREATE2 address is
 ///         `keccak(0xff ++ factory ++ salt ++ keccak(initCode))` and `initCode` carries the
-///         ABI-encoded constructor arguments, so predicting the domain's address needs the
-///         pool and registry addresses, which need the domain's. The prediction is circular.
+///         ABI-encoded constructor arguments, so predicting the controller's address needs the
+///         pool and registry addresses, which need the controller's. The prediction is circular.
 ///
 ///         Plain CREATE is `keccak(rlp([sender, nonce]))` — no constructor arguments in it.
 ///         A contract's nonce starts at 1 and increments per deployment, so this constructor
@@ -32,22 +32,22 @@ error PredictionMismatch(address predicted, address actual);
 contract HaliasDeployer {
     HaliasRegistry public immutable registry;
     HaliasPool     public immutable pool;
-    HaliasController   public immutable domain;
+    HaliasController   public immutable controller;
 
     constructor(address transactVerifier, address admin) {
         // Third CREATE from this contract. Computed before any of them so the registry can
         // be constructed already knowing its controller.
-        address predictedDomain = _selfCreateAddress(3);
+        address predictedController = _selfCreateAddress(3);
 
-        registry = new HaliasRegistry(predictedDomain);                        // nonce 1
+        registry = new HaliasRegistry(predictedController);                        // nonce 1
         pool     = new HaliasPool(transactVerifier, address(registry));        // nonce 2
-        domain   = new HaliasController(address(pool), address(registry), admin);  // nonce 3
+        controller   = new HaliasController(address(pool), address(registry), admin);  // nonce 3
 
         // Cannot fail as written. It is here because if it ever does, the registry has
         // named a controller that will never exist and the whole deployment is inert —
         // which is worth reverting for rather than discovering after the fact.
-        if (address(domain) != predictedDomain) {
-            revert PredictionMismatch(predictedDomain, address(domain));
+        if (address(controller) != predictedController) {
+            revert PredictionMismatch(predictedController, address(controller));
         }
     }
 

@@ -132,7 +132,7 @@ async function bootstrap(aliasIndex = 0) {
   const { ethers } = await import("ethers");
   const { Halias }  = await import("./halias");
   const { FileCache } = await import("./cache");
-  const { getNetwork, getPoolAddress, getRegistryAddress, getDomainAddress, getStartBlock } =
+  const { getNetwork, getPoolAddress, getRegistryAddress, getControllerAddress, getStartBlock } =
     await import("halias-deployments");
 
   const PRIVATE_KEY = process.env.PRIVATE_KEY;
@@ -159,7 +159,7 @@ async function bootstrap(aliasIndex = 0) {
     chainId: CHAIN_ID,
     poolAddress:     getPoolAddress(CHAIN_ID),
     registryAddress: getRegistryAddress(CHAIN_ID),
-    domainAddress:   getDomainAddress(CHAIN_ID),
+    controllerAddress:   getControllerAddress(CHAIN_ID),
     startBlock: getStartBlock(CHAIN_ID),
     artifacts: {
       transactWasm: path.join(out, "transact_js", "transact.wasm"),
