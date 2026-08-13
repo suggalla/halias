@@ -27,6 +27,25 @@
 	--taskbar-h: 42px;
 	--titlebar-h: 32px;
 	--snap-preview: rgba(212, 160, 192, 0.15);
+
+	/* === SEMANTIC COLOUR ===
+	 *
+	 * Separate from the accent, and deliberately so: the accent says "this is the thing to
+	 * press", and it cannot also mean "this went well" without one of the two becoming
+	 * meaningless. Success used to render in the accent pink, which made a confirmation look
+	 * like a button and left green unused.
+	 *
+	 *   good     something succeeded, or value arriving
+	 *   bad      something failed, or is refused
+	 *   caution  reversible but worth reading twice, and value leaving
+	 *   info     neither good nor bad — a fact worth noticing
+	 *
+	 * Chosen to sit on the dark mauve ground rather than at full saturation, which would
+	 * fight the palette. */
+	--good: #8fd6a8;
+	--bad: #ff8a80;
+	--caution: #ffb27a;
+	--info: #8fb8ff;
 }
 
 /* === BASE === */

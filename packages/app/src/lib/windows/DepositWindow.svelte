@@ -185,7 +185,7 @@
 	.note { font-size: 0.78rem; line-height: 1.5; padding: 0.7rem 0.8rem;
 		border: 1px solid var(--border); border-left-width: 3px;
 		border-left-color: var(--accent); border-radius: 4px; opacity: 0.9; }
-	.note.warn { border-left-color: #ffb27a; }
+	.note.warn { border-left-color: var(--caution); }
 	strong { font-weight: 600; }
 	code { font-family: ui-monospace, monospace; }
 	.primary { padding: 0.55rem; }
@@ -194,7 +194,7 @@
 	.done h3 { margin: 0; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em;
 		color: var(--accent); font-weight: 600; }
 	.done .ghost { align-self: flex-start; }
-	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; line-height: 1.5; }
+	.err { color: var(--bad); font-size: 0.85rem; margin: 0; line-height: 1.5; }
 	@media (max-width: 30rem) {
 		.src { grid-template-columns: 1fr; gap: 0.1rem; }
 		dt { margin-top: 0.4rem; }

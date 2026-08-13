@@ -84,15 +84,15 @@
 	.facts li { display: flex; gap: 0.5rem; align-items: baseline; }
 	.y, .n { flex: none; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em;
 		font-weight: 700; width: 3.6rem; }
-	.y { color: var(--accent); }
-	.n { color: #ff8a80; }
-	.warn { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--accent-bright);
-		border-left: 2px solid var(--accent); padding-left: 0.6rem; }
+	.y { color: var(--good); }
+	.n { color: var(--bad); }
+	.warn { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--caution);
+		border-left: 2px solid var(--caution); padding-left: 0.6rem; }
 	textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.72rem;
 		line-height: 1.5; resize: vertical; word-break: break-all; }
 	.row { display: flex; gap: 0.5rem; }
 	.row .primary { flex: 1; padding: 0.55rem; }
 	.hint { font-size: 0.78rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
 	code { font-family: ui-monospace, monospace; }
-	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }
+	.err { color: var(--bad); font-size: 0.85rem; margin: 0; }
 </style>

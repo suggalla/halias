@@ -232,8 +232,8 @@
 	dd { margin: 0; overflow-wrap: anywhere; }
 	.mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
 	.good { color: var(--accent); }
-	.warn { color: #ffb27a; }
-	.warnText { color: #ffb27a; display: block; margin-top: 0.3rem; }
+	.warn { color: var(--caution); }
+	.warnText { color: var(--caution); display: block; margin-top: 0.3rem; }
 	.note { margin: 0; font-size: 0.78rem; color: var(--text-dim); line-height: 1.5; }
 	.delivery { display: flex; flex-direction: column; gap: 0.6rem; }
 	.check { display: flex; flex-direction: row; align-items: flex-start; gap: 0.5rem;
@@ -253,7 +253,7 @@
 	.actions .primary { flex: 1; }
 	.ghost.sm { padding: 0.35rem 0.8rem; font-size: 0.8rem; }
 	.ghost:hover:not(:disabled) { border-color: var(--accent); }
-	.err { color: #ff8a80; font-size: 0.8rem; margin: 0; }
+	.err { color: var(--bad); font-size: 0.8rem; margin: 0; }
 	@media (max-width: 30rem) {
 		dl { grid-template-columns: 1fr; gap: 0.1rem; }
 		dt { margin-top: 0.45rem; }

@@ -348,6 +348,6 @@
 	details { font-size: 0.8rem; opacity: 0.88; }
 	summary { cursor: pointer; opacity: 0.85; }
 	details textarea { margin-top: 0.5rem; }
-	.ok { color: var(--accent); font-size: 0.85rem; margin: 0; }
-	.err { color: #ff8a80; font-size: 0.85rem; margin: 0; }
+	.ok { color: var(--good); font-size: 0.85rem; margin: 0; }
+	.err { color: var(--bad); font-size: 0.85rem; margin: 0; }
 </style>
