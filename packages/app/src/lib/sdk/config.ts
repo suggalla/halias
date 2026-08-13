@@ -38,7 +38,10 @@ export const NETWORKS: Record<number, NetworkConfig> = {
 		blockExplorer: 'https://sepolia.etherscan.io',
 		poolAddress: (sepolia as any).pool,
 		registryAddress: (sepolia as any).registry,
-		controllerAddress: (sepolia as any).domain,
+		// `controller`, matching what deploy.ts writes. It read `domain` — the contract's name
+		// before the rename — so this was undefined for every deployment, isSplitDeployment
+		// rejected the network, and the app reported having no deployment at all.
+		controllerAddress: (sepolia as any).controller,
 		startBlock: (sepolia as any).startBlock ?? 0
 	}
 };
@@ -55,7 +58,7 @@ if (localhost?.pool) {
 		blockExplorer: '',
 		poolAddress: localhost.pool as string,
 		registryAddress: localhost.registry as string,
-		controllerAddress: localhost.domain as string,
+		controllerAddress: localhost.controller as string,
 		startBlock: (localhost.startBlock as number) ?? 0
 	};
 }
