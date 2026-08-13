@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { formatEther, parseEther, isAddress } from 'ethers';
-	import { wallet } from '../sdk/client.js';
 
 	// What the wallet cannot tell you.
 	//
@@ -10,9 +9,10 @@
 	// Confirming in the wallet is therefore confirming something you have not been shown,
 	// unless it is shown here first.
 	//
-	// Who broadcasts it is decided here too, rather than on the form. The form is what you are
-	// doing; this is how it gets there — and it has to be settled before Confirm either way,
-	// because the submitter and the fee are committed inside the proof.
+	// It reads and does not ask. Every choice — including who broadcasts and what they are
+	// paid — is made on the form, so this is a summary that can be checked in one pass and
+	// confirmed. A review that still takes input is not a review: the reader has to go back up
+	// and re-check what the numbers above meant after changing one below them.
 
 	let {
 		mode,
@@ -21,9 +21,9 @@
 		alias,
 		from,
 		canDelegate = false,
-		delegate = $bindable(false),
-		submitter = $bindable(''),
-		submitterFee = $bindable('0.01'),
+		delegate = false,
+		submitter = '',
+		submitterFee = '0.01',
 		busy = false,
 		onconfirm,
 		oncancel
@@ -42,9 +42,6 @@
 		oncancel: () => void;
 	} = $props();
 
-	let quote = $state<{ gasCost: bigint; gasPrice: bigint; suggested: bigint } | null>(null);
-	let estimating = $state(false);
-	let estimateError = $state<string | null>(null);
 
 	const feeWei = $derived.by(() => {
 		try {
@@ -64,21 +61,6 @@
 	// which looks circular. It is not: gas for `transact` is fixed work (one Groth16 verify,
 	// two Merkle proofs) and does not depend on the fee, so the cost of inclusion is knowable
 	// now and only the margin is a judgement call.
-	async function estimate() {
-		estimateError = null;
-		estimating = true;
-		try {
-			const { suggestRelayFee } = await import('halias-sdk');
-			const { provider } = wallet();
-			const q = await suggestRelayFee(provider, { marginPct: 20 });
-			quote = q;
-			submitterFee = formatEther(q.suggested);
-		} catch (e: any) {
-			estimateError = e?.shortMessage ?? e?.message ?? String(e);
-		} finally {
-			estimating = false;
-		}
-	}
 
 	const VERB = { deposit: 'Deposit', transfer: 'Transfer', withdraw: 'Withdraw' } as const;
 </script>
@@ -138,71 +120,6 @@
 		{/if}
 	</dl>
 
-	{#if canDelegate}
-		<section class="delivery">
-			<label class="check">
-				<input type="checkbox" bind:checked={delegate} disabled={busy} />
-				<span>
-					Submit with another account
-					<em>
-						A relayer, or another wallet of your own. Whoever sends it pays the gas and
-						collects the fee, so this one needs no ETH — and only their address appears
-						on chain.
-					</em>
-				</span>
-			</label>
-
-			{#if delegate}
-				<div class="sub">
-					<label>
-						<span>Submitting address</span>
-						<input bind:value={submitter} placeholder="0x…" disabled={busy} />
-					</label>
-					<label>
-						<span>Their fee (ETH)</span>
-						<input bind:value={submitterFee} inputmode="decimal" disabled={busy} />
-					</label>
-
-					<div class="est">
-						<button class="ghost sm" disabled={busy || estimating} onclick={estimate}>
-							{estimating ? 'Estimating…' : 'Estimate'}
-						</button>
-						{#if quote}
-							<span class="hint">
-								≈{Number(formatEther(quote.gasCost)).toFixed(5)} ETH of gas at
-								{Number(formatEther(quote.gasPrice * 1_000_000_000n)).toFixed(2)} gwei,
-								plus 20% for whoever submits.
-								{#if feeWei > 0n && feeWei < quote.gasCost}
-									<strong class="warnText">
-										This fee is below cost — a stranger would lose money and refuse.
-									</strong>
-								{/if}
-							</span>
-						{:else}
-							<span class="hint">
-								Gas for this call is a fixed ~2.56M regardless of the amount, so it can be
-								priced before the proof exists.
-							</span>
-						{/if}
-					</div>
-					{#if estimateError}<p class="err">{estimateError}</p>{/if}
-				</div>
-			{/if}
-		</section>
-	{/if}
-
-	{#if relayed}
-		<p class="note">
-			Nothing is broadcast. This produces a transaction for that address to submit — it is
-			worthless to anyone else, because the fee is payable only to them.
-		</p>
-	{:else}
-		<p class="note">
-			Your wallet will show a contract call it cannot interpret. The summary above is what
-			it actually does.
-		</p>
-	{/if}
-
 	<div class="actions">
 		<button class="ghost" disabled={busy} onclick={oncancel}>Back</button>
 		<button class="primary" disabled={busy} onclick={onconfirm}>
@@ -233,27 +150,10 @@
 	.mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
 	.good { color: var(--accent); }
 	.warn { color: var(--caution); }
-	.warnText { color: var(--caution); display: block; margin-top: 0.3rem; }
 	.note { margin: 0; font-size: 0.78rem; color: var(--text-dim); line-height: 1.5; }
-	.delivery { display: flex; flex-direction: column; gap: 0.6rem; }
-	.check { display: flex; flex-direction: row; align-items: flex-start; gap: 0.5rem;
-		cursor: pointer; }
-	.check input { margin-top: 0.15rem; }
-	.check span { font-size: 0.85rem; opacity: 0.9; }
-	.check em { display: block; font-style: normal; font-size: 0.78rem; color: var(--text-dim);
-		line-height: 1.5; margin-top: 0.15rem; }
-	.sub { display: flex; flex-direction: column; gap: 0.6rem; padding-left: 0.8rem;
-		border-left: 2px solid var(--border); }
-	.sub label { display: flex; flex-direction: column; gap: 0.25rem; }
-	.sub label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
-		color: var(--text-dim); }
-	.est { display: flex; gap: 0.6rem; align-items: flex-start; flex-wrap: wrap; }
-	.hint { font-size: 0.78rem; color: var(--text-dim); line-height: 1.5; flex: 1; min-width: 12rem; }
 	.actions { display: flex; gap: 0.5rem; }
 	.actions .primary { flex: 1; }
-	.ghost.sm { padding: 0.35rem 0.8rem; font-size: 0.8rem; }
 	.ghost:hover:not(:disabled) { border-color: var(--accent); }
-	.err { color: var(--bad); font-size: 0.8rem; margin: 0; }
 	@media (max-width: 30rem) {
 		dl { grid-template-columns: 1fr; gap: 0.1rem; }
 		dt { margin-top: 0.45rem; }

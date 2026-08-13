@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { formatEther, parseEther, isAddress } from 'ethers';
-	import { clientState, getClient, run, deselectAlias } from '../sdk/client.js';
+	import { clientState, getClient, run, deselectAlias, wallet } from '../sdk/client.js';
 	import PrivacyNote from './PrivacyNote.svelte';
 	import InviteWindow from './InviteWindow.svelte';
 	import ReviewStep from './ReviewStep.svelte';
@@ -55,6 +55,30 @@
 	let submitterFee = $state('0.01');
 	let blob = $state<string | null>(null);
 	let copied = $state<'blob' | 'link' | null>(null);
+
+	// Priced before the proof exists: gas for transact is fixed regardless of the amount, so a
+	// fee can be chosen up front rather than discovered afterwards.
+	let quote = $state<{ gasCost: bigint; gasPrice: bigint; suggested: bigint } | null>(null);
+	let estimating = $state(false);
+	let estimateError = $state<string | null>(null);
+	const feeWei = $derived.by(() => {
+		try { return parseEther(submitterFee.trim() || '0'); } catch { return 0n; }
+	});
+
+	async function estimate() {
+		estimateError = null;
+		estimating = true;
+		try {
+			const { suggestRelayFee } = await import('halias-sdk');
+			const q = await suggestRelayFee(wallet().provider, { marginPct: 20 });
+			quote = q;
+			submitterFee = formatEther(q.suggested);
+		} catch (e: any) {
+			estimateError = e?.shortMessage ?? e?.message ?? String(e);
+		} finally {
+			estimating = false;
+		}
+	}
 
 	const alias = $derived($clientState.selected);
 	const busy = $derived($clientState.status === 'syncing');
@@ -228,15 +252,55 @@
 					<input bind:value={amount} placeholder="0.1" inputmode="decimal" disabled={busy} />
 				</label>
 
-				<!-- The choice can be made here, but only as a choice. Address and fee live on the
-				     review step, where the estimate and the resulting numbers are in view. -->
+				<!-- Decided here, in full. It used to be a checkbox here and its address and fee on
+				     the review, which made the review a form — and a review that still takes input
+				     cannot be read in one pass and confirmed. -->
 				<label class="check">
 					<input type="checkbox" bind:checked={delegate} disabled={busy} />
 					<span>
 						Submit with another account
-						<em>Set the address and fee on the next step.</em>
+						<em>
+							A relayer, or another wallet of your own. Whoever sends it pays the gas and
+							collects the fee, so this alias needs no ETH — and only their address appears
+							on chain.
+						</em>
 					</span>
 				</label>
+
+				{#if delegate}
+					<div class="sub">
+						<label>
+							<span>Submitting address</span>
+							<input bind:value={submitter} placeholder="0x…" disabled={busy} />
+						</label>
+						<label>
+							<span>Their fee (ETH)</span>
+							<input bind:value={submitterFee} inputmode="decimal" disabled={busy} />
+						</label>
+						<div class="est">
+							<button class="ghost sm" disabled={busy || estimating} onclick={estimate}>
+								{estimating ? 'Estimating…' : 'Estimate'}
+							</button>
+							{#if quote}
+								<span class="hint">
+									≈{formatEther(quote.gasCost).slice(0, 7)} ETH of gas, plus 20% for whoever
+									submits.
+									{#if feeWei > 0n && feeWei < quote.gasCost}
+										<strong class="belowCost">
+											This fee is below cost — a stranger would lose money and refuse.
+										</strong>
+									{/if}
+								</span>
+							{:else}
+								<span class="hint">
+									Gas for this call is a fixed ~2.56M regardless of the amount, so it can be
+									priced before the proof exists.
+								</span>
+							{/if}
+						</div>
+						{#if estimateError}<p class="err">{estimateError}</p>{/if}
+					</div>
+				{/if}
 
 				<button class="primary" disabled={busy || !ready} onclick={toReview}>Review</button>
 
@@ -251,9 +315,9 @@
 				alias={label}
 				from={$clientState.address ?? ''}
 				canDelegate
-				bind:delegate
-				bind:submitter
-				bind:submitterFee
+				{delegate}
+				{submitter}
+				{submitterFee}
 				{busy}
 				onconfirm={confirm}
 				oncancel={() => (phase = 'form')}
@@ -341,6 +405,11 @@
 		cursor: pointer; }
 	.check input { margin-top: 0.15rem; }
 	.check span { text-transform: none; letter-spacing: 0; font-size: 0.85rem; opacity: 0.9; }
+	.sub { display: flex; flex-direction: column; gap: 0.5rem; padding-left: 0.75rem;
+		border-left: 2px solid var(--border); }
+	.est { display: flex; gap: 0.6rem; align-items: flex-start; flex-wrap: wrap; }
+	.ghost.sm { padding: 0.3rem 0.7rem; font-size: 0.78rem; }
+	.belowCost { display: block; color: var(--caution); margin-top: 0.25rem; }
 	.check em { display: block; font-style: normal; font-size: 0.78rem; color: var(--text-dim); }
 	.linkRow input { width: 100%; font-family: ui-monospace, monospace; font-size: 0.72rem;
 		background: var(--bg-input); color: inherit;
