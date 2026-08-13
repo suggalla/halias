@@ -16,7 +16,7 @@ import { ensurePoseidon, verifyPoseidon } from "./poseidon";
 // registration that cannot work. On-chain it is atomic.
 //
 // Env:
-//   ADMIN            admin for HaliasDomain (defaults to the deployer)
+//   ADMIN            admin for HaliasController (defaults to the deployer)
 //   VERIFIER         reuse an already-deployed TransactVerifier
 
 // Is `addr` running exactly this contract's code?
@@ -27,11 +27,11 @@ import { ensurePoseidon, verifyPoseidon } from "./poseidon";
 // the *wrong contract's* code. PoseidonT4 calls then execute PoseidonT3, every wiring check
 // in this script still passes because none of them hash anything, and the failure surfaces
 // later as a bare `require(false)` from the first registration.
-async function runsExactly(name: string, addr: string, libs?: any): Promise<boolean> {
+async function runsExactly(name: string, addr: string, _libs?: any): Promise<boolean> {
   const onChain = await ethers.provider.getCode(addr);
   if (onChain === "0x") return false;
   const artifact = await hre.artifacts.readArtifact(name);
-  let expected = artifact.deployedBytecode;
+  const expected = artifact.deployedBytecode;
   // Library placeholders are filled at link time, so compare only the unlinked prefix when
   // the artifact still carries them.
   if (expected.includes("__$")) return onChain.length === expected.length;
@@ -140,7 +140,7 @@ async function main() {
     console.log(`  HaliasDeployer     reusing  ${deployerAddress}`);
     console.log(`    -> HaliasRegistry         ${registry}`);
     console.log(`    -> HaliasPool             ${pool}`);
-    console.log(`    -> HaliasDomain           ${domain}`);
+    console.log(`    -> HaliasController           ${domain}`);
     console.log(`  (set FORCE_REDEPLOY=1 to replace them — this abandons existing aliases)`);
   } else {
     // One transaction. Either all three exist and are wired, or the deployment reverts —
@@ -159,7 +159,7 @@ async function main() {
     console.log(`  HaliasDeployer     deployed ${deployerAddress}`);
     console.log(`    -> HaliasRegistry         ${registry}`);
     console.log(`    -> HaliasPool             ${pool}`);
-    console.log(`    -> HaliasDomain           ${domain}`);
+    console.log(`    -> HaliasController           ${domain}`);
   }
 
   // Read the wiring back from chain rather than trusting the constructor. A deployment that
@@ -167,7 +167,7 @@ async function main() {
   // it, so it is worth the three calls.
   const poolC = await ethers.getContractAt("HaliasPool", pool);
   const regC  = await ethers.getContractAt("HaliasRegistry", registry);
-  const domC  = await ethers.getContractAt("HaliasDomain", domain);
+  const domC  = await ethers.getContractAt("HaliasController", domain);
 
   const checks: [string, string, string][] = [
     ["registry.controller", await regC.controller(), domain],

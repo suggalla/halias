@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { MerkleTree, PoolTrees } from "./merkle";
+import { PoolTrees } from "./merkle";
 import type { RegistryEntry, Output } from "./events";
 import type { OwnedEntry } from "./entry";
 

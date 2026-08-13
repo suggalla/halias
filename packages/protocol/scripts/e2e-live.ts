@@ -544,8 +544,8 @@ async function main() {
   await squatter.init();
 
   const domainAsSquatter = new ethers.Contract(cfg.domain, [
-    "function register(bytes32,bytes32,bytes32,bytes32,string,bytes32) external payable",
-    "function registrationCommitment(bytes32,bytes32,bytes32,bytes32,address,bytes32) external pure returns (bytes32)",
+    "function register(string,bytes32,bytes32,bytes32,bytes32) external payable",
+    "function registrationCommitment(string,bytes32,bytes32,bytes32,address,bytes32) external pure returns (bytes32)",
     "function registrationFee() external view returns (uint256)",
   ], squatterWallet);
 

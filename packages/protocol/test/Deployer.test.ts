@@ -39,7 +39,7 @@ describe("HaliasDeployer", function () {
 
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
-    domain   = await ethers.getContractAt("HaliasDomain",   await deployer.domain());
+    domain   = await ethers.getContractAt("HaliasController",   await deployer.domain());
   });
 
   it("closes the cycle on the real addresses", async function () {
@@ -97,7 +97,7 @@ describe("HaliasDeployer", function () {
     const fee = await domain.registrationFee();
 
     await expect(registerAlias(
-      domain, user, aliasHash, ethers.toBeHex(11n, 32), ethers.toBeHex(22n, 32), rand32(), name, fee,
+      domain, user, name, ethers.toBeHex(11n, 32), ethers.toBeHex(22n, 32), rand32(), fee,
     )).to.emit(domain, "NamePublished").withArgs(aliasHash, name);
 
     expect(await domain.ownerOf(BigInt(aliasHash))).to.equal(user.address);

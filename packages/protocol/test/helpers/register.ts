@@ -9,23 +9,24 @@ import { ethers } from "hardhat";
 export async function registerAlias(
   domain: any,
   signer: any,
-  aliasHash: string,
+  /// The plaintext, including the .hls suffix. The contract derives the alias hash from it;
+  /// there is no separate hash argument to disagree with it.
+  name: string,
   spendingPubkey: string,
   nullifierKeyHash: string,
   encryptionPubkey: string,
-  name: string,
   fee: bigint,
 ) {
   const d = domain.connect(signer);
   const salt = ethers.hexlify(ethers.randomBytes(32));
   const commitment = await d.registrationCommitment(
-    aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, signer.address, salt,
+    name, spendingPubkey, nullifierKeyHash, encryptionPubkey, signer.address, salt,
   );
-  await (await d.commit(commitment)).wait();
+  await (await d.commitRegistration(commitment)).wait();
   // Hardhat mines one block per transaction, so the commit itself does not satisfy
   // MIN_COMMIT_AGE — the reveal would land in the very next block. One empty block does.
   await ethers.provider.send("evm_mine", []);
-  return d.register(aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, name, salt, { value: fee });
+  return d.register(name, spendingPubkey, nullifierKeyHash, encryptionPubkey, salt, { value: fee });
 }
 
 /// Sign an owner-authorised action so someone else can submit and pay for it.

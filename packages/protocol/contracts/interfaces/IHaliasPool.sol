@@ -60,7 +60,7 @@ struct TransactParams {
     bool       outputsEmpty;
 }
 
-// Exactly what {HaliasDomain} calls, and nothing else. The pool's read API is richer, but a
+// Exactly what {HaliasController} calls, and nothing else. The pool's read API is richer, but a
 // member here is a member the domain could call, and the domain has no business reading the
 // pool's tree or nullifier set. Clients use the full ABI directly.
 interface IHaliasPool {

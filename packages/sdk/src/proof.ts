@@ -3,7 +3,7 @@ import { randomBytes, toHex } from "./random";
 import { poseidonHash } from "./crypto";
 import { computeNullifier, POOL_LEVELS } from "./entry";
 
-// @ts-ignore — snarkjs ships no types.
+// @ts-expect-error — snarkjs ships no types.
 import * as snarkjs from "snarkjs";
 
 export interface ArtifactPaths {

@@ -22,6 +22,7 @@ error CommitTooNew();
 error CommitExpired();
 error CommitmentPending();
 error NameDoesNotMatchAlias();
+error EmptyName();
 error InsufficientFees();
 
 // Claim
@@ -43,7 +44,7 @@ error NotSignedByOwner();
 // Pool
 error OnlyPoolMaySendETH();
 
-/// @title  HaliasDomain — who owns the names
+/// @title  HaliasController — who owns the names
 /// @notice Mints an alias to an owner, takes the registration fee, and is the only address
 ///         permitted to write to {HaliasRegistry}.
 /// @dev    This contract holds the admin key. That is precisely why it holds no user funds:
@@ -61,7 +62,7 @@ error OnlyPoolMaySendETH();
 ///         declares it non-virtual and routes it through the 4-argument overload, which does
 ///         revert. That is a property of the dependency rather than of this code, so it is
 ///         pinned by a test instead — see "disables plain ERC-721 transfer and approval".
-contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
+contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     using Address for address payable;
 
     IHaliasPool     public immutable pool;
@@ -236,7 +237,12 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
     ///
     ///         An expired one can be replaced, which is how a caller recovers from letting
     ///         a commitment go stale.
-    function commit(bytes32 commitment) external {
+    /// @notice First of the two transactions a registration takes. Reserves the right to
+    ///         reveal a name later without saying which name.
+    /// @dev    Named for what it commits to rather than just `commit`: this contract also
+    ///         takes claims, offers and acceptances, and none of those go through here.
+    ///         Pairs with {registrationCommitment}, which builds the hash.
+    function commitRegistration(bytes32 commitment) external {
         uint256 prev = commitments[commitment];
         if (prev != 0 && block.timestamp <= _commitTime(prev) + MAX_COMMIT_AGE) {
             revert CommitmentPending();
@@ -255,7 +261,7 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
     /// @notice The commitment for a registration. Derive it here rather than reimplementing
     ///         the encoding, so a caller cannot commit to something they cannot reveal.
     function registrationCommitment(
-        bytes32 aliasHash,
+        string calldata name,
         bytes32 spendingPubkey,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey,
@@ -263,7 +269,7 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
         bytes32 salt
     ) public pure returns (bytes32) {
         return keccak256(abi.encode(
-            aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, owner, salt
+            aliasToHash(name), spendingPubkey, nullifierKeyHash, encryptionPubkey, owner, salt
         ));
     }
 
@@ -271,31 +277,66 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
     /// @param  name  The plaintext behind `aliasHash`, or "" to keep it off chain.
     /// @param  salt  The salt used in the matching {commit}.
     function register(
-        bytes32 aliasHash,
+        string calldata name,
         bytes32 spendingPubkey,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey,
-        string calldata name,
         bytes32 salt
     ) external payable nonReentrant {
-        if (msg.value != registrationFee) revert WrongRegistrationFee();
-
         bytes32 c = registrationCommitment(
-            aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, msg.sender, salt
+            name, spendingPubkey, nullifierKeyHash, encryptionPubkey, msg.sender, salt
         );
         uint256 madeAt = commitments[c];
         if (madeAt == 0)                                            revert NoCommitment();
         if (block.number    < _commitBlock(madeAt) + MIN_COMMIT_AGE) revert CommitTooNew();
         if (block.timestamp > _commitTime(madeAt)  + MAX_COMMIT_AGE) revert CommitExpired();
-        // One-shot: consumed here so a commitment cannot be replayed, and the refund makes
-        // the two-transaction flow cheaper than it looks.
+        // One-shot: consumed here so the slot is reclaimed and the same tuple can be
+        // committed again immediately. Replay is already impossible — the commitment binds
+        // the name, and re-registering it reverts as taken.
         delete commitments[c];
 
+        _takeFeeAndRecord(name, spendingPubkey, nullifierKeyHash, encryptionPubkey);
+    }
+
+    /// @notice Register in one transaction, with no commitment.
+    /// @dev    Front-runnable wherever the mempool is public, and profitably so: the name
+    ///         travels in this call's calldata, so anyone watching can register it first
+    ///         with *their own* keys and receive every payment afterwards intended for
+    ///         whoever asked for it. That is what {register}'s two-step flow exists to
+    ///         prevent, and it is why the SDK uses that path by default.
+    ///
+    ///         This is the right call only where the mempool is not public — an encrypted
+    ///         or threshold-decrypted chain, or a private inclusion channel. It is left
+    ///         permanently available rather than gated because these contracts cannot be
+    ///         upgraded and the registry's controller is immutable: a switch would have to
+    ///         be an admin power, and the deployment that needs this path may not exist yet.
+    ///
+    ///         Even then the guarantee is narrower than it looks. An encrypted mempool hides
+    ///         a transaction from public observers, not necessarily from whoever decrypts
+    ///         and builds the block.
+    function registerDirect(
+        string calldata name,
+        bytes32 spendingPubkey,
+        bytes32 nullifierKeyHash,
+        bytes32 encryptionPubkey
+    ) external payable nonReentrant {
+        _takeFeeAndRecord(name, spendingPubkey, nullifierKeyHash, encryptionPubkey);
+    }
+
+    /// @dev Everything the two registration paths share. They differ only in what they
+    ///      require *before* this: a matured commitment, or nothing.
+    function _takeFeeAndRecord(
+        string calldata name,
+        bytes32 spendingPubkey,
+        bytes32 nullifierKeyHash,
+        bytes32 encryptionPubkey
+    ) private {
+        if (msg.value != registrationFee) revert WrongRegistrationFee();
         accumulatedFees += msg.value;
 
         _record(Registration({
             owner:            msg.sender,
-            aliasHash:        aliasHash,
+            aliasHash:        aliasToHash(name),
             spendingPubkey:   spendingPubkey,
             nullifierKeyHash: nullifierKeyHash,
             encryptionPubkey: encryptionPubkey
@@ -394,6 +435,18 @@ contract HaliasDomain is ERC721, EIP712, ReentrancyGuard {
         if (keccak256(bytes(name)) != aliasHash) revert NameDoesNotMatchAlias();
         emit NamePublished(aliasHash, name);
     }
+
+    /// @notice The alias hash a name registers under. Exposed so a client derives it from
+    ///         the same code the contract uses rather than reimplementing keccak over the
+    ///         same bytes and discovering the disagreement at registration.
+    /// @dev    An empty name is rejected here rather than silently registering under
+    ///         `keccak("")` — a single fixed hash that exactly one alias could ever occupy,
+    ///         and which would look like an ordinary "alias taken" to everyone after.
+    function aliasToHash(string calldata name) public pure returns (bytes32) {
+        if (bytes(name).length == 0) revert EmptyName();
+        return keccak256(bytes(name));
+    }
+
 
     // ── Alias maintenance ──────────────────────────────────────────────────────
 

@@ -17,7 +17,7 @@ const pendingLeafFor = (r: any) =>
     1n,
   ]), 32);
 
-// HaliasDomain — names, ownership, fees, and the claim path.
+// HaliasController — names, ownership, fees, and the claim path.
 //
 // The claim path is why this file exists. In the monolith, registering out of a pool note
 // did `_mint(msg.sender, ...)`, which on a relayed claim is the *relayer* — so a relayer
@@ -38,10 +38,20 @@ const REG_TUPLE =
 
 const withdrawOf = (amount: bigint) => FIELD_PRIME - amount;
 const rand32     = () => ethers.keccak256(ethers.randomBytes(32));
+
+let nameSeq = 0;
+/// A fresh alias name and the hash the contract derives from it.
+///
+/// Registrations used to pass a random hash with no name. The hash comes from the name now,
+/// so a test wanting a particular hash has to start from a name.
+const freshName = (): { name: string; h: string } => {
+  const name = `t${nameSeq++}x${Math.floor(Math.random() * 1e9)}.hls`;
+  return { name, h: ethers.keccak256(ethers.toUtf8Bytes(name)) };
+};
 // dataHash is a Poseidon leaf input, so it has to land inside the scalar field.
 const randField  = () => ethers.toBeHex(BigInt(rand32()) % FIELD_PRIME, 32);
 
-describe("HaliasDomain", function () {
+describe("HaliasController", function () {
   this.timeout(120000);
 
   before(async function () {
@@ -116,7 +126,7 @@ describe("HaliasDomain", function () {
       .deploy(domainAddr);
     pool = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs }))
       .deploy(verifier, await registry.getAddress());
-    domain = await (await ethers.getContractFactory("HaliasDomain"))
+    domain = await (await ethers.getContractFactory("HaliasController"))
       .deploy(await pool.getAddress(), await registry.getAddress(), admin.address);
 
     expect(await domain.getAddress()).to.equal(domainAddr);
@@ -129,7 +139,7 @@ describe("HaliasDomain", function () {
   // ── Construction ────────────────────────────────────────────────────────────
 
   it("rejects any zero dependency", async function () {
-    const F = await ethers.getContractFactory("HaliasDomain");
+    const F = await ethers.getContractFactory("HaliasController");
     const a = await registry.getAddress();
     await expect(F.deploy(ethers.ZeroAddress, a, admin.address)).to.be.revertedWithCustomError(F, "ZeroDependency");
     await expect(F.deploy(poolAddr, ethers.ZeroAddress, admin.address)).to.be.revertedWithCustomError(F, "ZeroDependency");
@@ -146,8 +156,8 @@ describe("HaliasDomain", function () {
 
   describe("register", function () {
     it("mints to the payer and writes the registry", async function () {
-      const h = rand32();
-      await (await registerAlias(domain, user, h, PK, NKH, ENC, "", FEE)).wait();
+      const { name: hName, h } = freshName();
+      await (await registerAlias(domain, user, hName, PK, NKH, ENC, FEE)).wait();
 
       expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
       expect(await registry.isRegistered(h)).to.equal(true);
@@ -155,32 +165,55 @@ describe("HaliasDomain", function () {
     });
 
     it("requires exactly the registration fee", async function () {
-      await expect(registerAlias(domain, user, rand32(), PK, NKH, ENC, "", FEE - 1n))
+      await expect(registerAlias(domain, user, freshName().name, PK, NKH, ENC, FEE - 1n))
         .to.be.revertedWithCustomError(domain, "WrongRegistrationFee");
-      await expect(registerAlias(domain, user, rand32(), PK, NKH, ENC, "", FEE + 1n))
+      await expect(registerAlias(domain, user, freshName().name, PK, NKH, ENC, FEE + 1n))
         .to.be.revertedWithCustomError(domain, "WrongRegistrationFee");
     });
 
-    it("publishes a name only when it matches the hash", async function () {
+    it("always publishes the name, since the hash is derived from it", async function () {
+      // There is no longer a way to register a name without publishing it, and no separate
+      // hash argument that could disagree with it. Recovering an alias after losing local
+      // storage depends on this: aliasHash is one-way and registration is the only moment
+      // the plaintext can be supplied.
       const name = "alice.hls";
       const h = ethers.keccak256(ethers.toUtf8Bytes(name));
-      await expect(registerAlias(domain, user, h, PK, NKH, ENC, name, FEE))
+      await expect(registerAlias(domain, user, name, PK, NKH, ENC, FEE))
         .to.emit(domain, "NamePublished").withArgs(h, name);
-
-      await expect(registerAlias(domain, user, rand32(), PK, NKH, ENC, "bob.hls", FEE))
-        .to.be.revertedWithCustomError(domain, "NameDoesNotMatchAlias");
+      expect(await domain.aliasToHash(name)).to.equal(h);
     });
 
-    it("leaves the name off chain when none is given", async function () {
-      const h = rand32();
-      await expect(registerAlias(domain, user, h, PK, NKH, ENC, "", FEE))
-        .to.not.emit(domain, "NamePublished");
+    it("registers in one transaction through the direct path", async function () {
+      // No commitment, no maturity wait. The trade is stated at the function: the name is in
+      // the calldata, so on a public mempool this is front-runnable — which is exactly what
+      // the two-step path exists to prevent.
+      const { name, h } = freshName();
+      await expect(domain.connect(user).registerDirect(name, PK, NKH, ENC, { value: FEE }))
+        .to.emit(domain, "NamePublished").withArgs(h, name);
+      expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
+    });
+
+    it("charges the direct path the same fee, and refuses a name already taken", async function () {
+      const { name } = freshName();
+      await expect(domain.connect(user).registerDirect(name, PK, NKH, ENC, { value: FEE - 1n }))
+        .to.be.revertedWithCustomError(domain, "WrongRegistrationFee");
+      await (await domain.connect(user).registerDirect(name, PK, NKH, ENC, { value: FEE })).wait();
+      // Both paths write through the same core, so taken-ness is enforced once, not twice.
+      await expect(domain.connect(other).registerDirect(name, PK, NKH, ENC, { value: FEE }))
+        .to.be.revertedWithCustomError(registry, "AliasTaken");
+    });
+
+    it("rejects an empty name rather than registering under keccak(\"\")", async function () {
+      // That is one fixed hash, so exactly one alias could ever hold it and every attempt
+      // after would read as an ordinary "alias taken".
+      await expect(registerAlias(domain, user, "", PK, NKH, ENC, FEE))
+        .to.be.revertedWithCustomError(domain, "EmptyName");
     });
 
     it("refuses an alias that is already taken, minting nothing", async function () {
-      const h = rand32();
-      await (await registerAlias(domain, user, h, PK, NKH, ENC, "", FEE)).wait();
-      await expect(registerAlias(domain, other, h, PK, NKH, ENC, "", FEE))
+      const { name: hName, h } = freshName();
+      await (await registerAlias(domain, user, hName, PK, NKH, ENC, FEE)).wait();
+      await expect(registerAlias(domain, other, hName, PK, NKH, ENC, FEE))
         .to.be.revertedWithCustomError(registry, "AliasTaken");
       expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
     });
@@ -300,8 +333,8 @@ describe("HaliasDomain", function () {
       const p = await claimParams(r);
 
       // Three unrelated writes land first — one of each kind that touches a leaf.
-      const other1 = rand32();
-      await (await registerAlias(domain, other, other1, PK, NKH, ENC, "", FEE)).wait();
+      const { name: other1Name, h: other1 } = freshName();
+      await (await registerAlias(domain, other, other1Name, PK, NKH, ENC, FEE)).wait();
       await (await domain.connect(other).updateAliasData(other1, randField(), 0n, "0x")).wait();
       await (await domain.connect(other).offerAlias(other1, user.address, 0n, "0x")).wait();
       await (await acceptAliasAs(domain, user, other1, PK, NKH, ENC)).wait();
@@ -361,8 +394,8 @@ describe("HaliasDomain", function () {
     });
 
     it("only the controller may arm an insertion", async function () {
-      const h = rand32();
-      await (await registerAlias(domain, user, h, PK, NKH, ENC, "", FEE)).wait();
+      const { name: hName, h } = freshName();
+      await (await registerAlias(domain, user, hName, PK, NKH, ENC, FEE)).wait();
       await expect(registry.connect(user).armPendingLeaf(h))
         .to.be.revertedWithCustomError(registry, "NotController");
     });
@@ -370,10 +403,11 @@ describe("HaliasDomain", function () {
 
   describe("alias maintenance", function () {
     let h: string;
+    let hName: string;
 
     beforeEach(async function () {
-      h = rand32();
-      await (await registerAlias(domain, user, h, PK, NKH, ENC, "", FEE)).wait();
+      ({ name: hName, h } = freshName());
+      await (await registerAlias(domain, user, hName, PK, NKH, ENC, FEE)).wait();
     });
 
     it("only the owner may act, when no signature is supplied", async function () {
@@ -523,7 +557,7 @@ describe("HaliasDomain", function () {
     });
 
     it("cannot withdraw more than it took in fees", async function () {
-      await (await registerAlias(domain, user, rand32(), PK, NKH, ENC, "", FEE)).wait();
+      await (await registerAlias(domain, user, freshName().name, PK, NKH, ENC, FEE)).wait();
       await expect(domain.withdrawFees(admin.address, FEE + 1n))
         .to.be.revertedWithCustomError(domain, "InsufficientFees");
       await expect(domain.withdrawFees(admin.address, FEE)).to.not.be.reverted;
@@ -542,9 +576,9 @@ describe("HaliasDomain", function () {
     it("a changed fee applies to the next registration", async function () {
       const newFee = ethers.parseEther("0.05");
       await (await domain.setRegistrationFee(newFee)).wait();
-      await expect(registerAlias(domain, user, rand32(), PK, NKH, ENC, "", FEE))
+      await expect(registerAlias(domain, user, freshName().name, PK, NKH, ENC, FEE))
         .to.be.revertedWithCustomError(domain, "WrongRegistrationFee");
-      await expect(registerAlias(domain, user, rand32(), PK, NKH, ENC, "", newFee))
+      await expect(registerAlias(domain, user, freshName().name, PK, NKH, ENC, newFee))
         .to.not.be.reverted;
     });
 
@@ -575,17 +609,17 @@ describe("HaliasDomain", function () {
       // re-commit someone else's in the same block as their reveal, pushing madeAt forward
       // and failing the reveal with CommitTooNew — repeatable indefinitely for gas.
       const [, victim, attacker] = await ethers.getSigners();
-      const h = rand32();
+      const { name: hName, h } = freshName();
       const salt = rand32();
-      const c = await domain.registrationCommitment(h, PK, NKH, ENC, victim.address, salt);
+      const c = await domain.registrationCommitment(hName, PK, NKH, ENC, victim.address, salt);
 
-      await (await domain.connect(victim).commit(c)).wait();
-      await expect(domain.connect(attacker).commit(c))
+      await (await domain.connect(victim).commitRegistration(c)).wait();
+      await expect(domain.connect(attacker).commitRegistration(c))
         .to.be.revertedWithCustomError(domain, "CommitmentPending");
 
       // The victim's reveal still lands.
       await ethers.provider.send("evm_mine", []);
-      await (await domain.connect(victim).register(h, PK, NKH, ENC, "", salt, { value: FEE })).wait();
+      await (await domain.connect(victim).register(hName, PK, NKH, ENC, salt, { value: FEE })).wait();
       expect(await domain.ownerOf(BigInt(h))).to.equal(victim.address);
     });
 
@@ -593,13 +627,13 @@ describe("HaliasDomain", function () {
       // Exactly the position a mempool front-runner is in: they learn the name only when the
       // reveal appears, so any commitment they make is this block's.
       const [, user] = await ethers.getSigners();
-      const h = rand32();
+      const { name: hName, h } = freshName();
       const salt = rand32();
-      const c = await domain.registrationCommitment(h, PK, NKH, ENC, user.address, salt);
+      const c = await domain.registrationCommitment(hName, PK, NKH, ENC, user.address, salt);
 
       await ethers.provider.send("evm_setAutomine", [false]);
-      await domain.connect(user).commit(c);
-      const reveal = await domain.connect(user).register(h, PK, NKH, ENC, "", salt, { value: FEE });
+      await domain.connect(user).commitRegistration(c);
+      const reveal = await domain.connect(user).register(hName, PK, NKH, ENC, salt, { value: FEE });
       await ethers.provider.send("evm_mine", []);
       await ethers.provider.send("evm_setAutomine", [true]);
 
@@ -609,28 +643,28 @@ describe("HaliasDomain", function () {
 
     it("lets an expired commitment be replaced", async function () {
       const [, user] = await ethers.getSigners();
-      const h = rand32();
+      const { name: hName, h } = freshName();
       const salt = rand32();
-      const c = await domain.registrationCommitment(h, PK, NKH, ENC, user.address, salt);
+      const c = await domain.registrationCommitment(hName, PK, NKH, ENC, user.address, salt);
 
-      await (await domain.connect(user).commit(c)).wait();
+      await (await domain.connect(user).commitRegistration(c)).wait();
       // Seconds, not blocks — MAX_COMMIT_AGE bounds a duration, so advance time rather than
       // mining 86,401 blocks to reach it sideways.
       await time.increase(Number(await domain.MAX_COMMIT_AGE()) + 1);
 
-      await expect(domain.connect(user).commit(c)).to.not.be.reverted;
+      await expect(domain.connect(user).commitRegistration(c)).to.not.be.reverted;
     });
 
     it("refuses a reveal whose commitment has expired", async function () {
       const [, user] = await ethers.getSigners();
-      const h = rand32();
+      const { name: hName, h } = freshName();
       const salt = rand32();
-      const c = await domain.registrationCommitment(h, PK, NKH, ENC, user.address, salt);
+      const c = await domain.registrationCommitment(hName, PK, NKH, ENC, user.address, salt);
 
-      await (await domain.connect(user).commit(c)).wait();
+      await (await domain.connect(user).commitRegistration(c)).wait();
       await time.increase(Number(await domain.MAX_COMMIT_AGE()) + 1);
 
-      await expect(domain.connect(user).register(h, PK, NKH, ENC, "", salt, { value: FEE }))
+      await expect(domain.connect(user).register(hName, PK, NKH, ENC, salt, { value: FEE }))
         .to.be.revertedWithCustomError(domain, "CommitExpired");
     });
 
@@ -641,25 +675,25 @@ describe("HaliasDomain", function () {
       // is the very one the victim needed. The victim's own commit reverts and their
       // registration still succeeds.
       const [, victim, attacker] = await ethers.getSigners();
-      const h = rand32();
+      const { name: hName, h } = freshName();
       const salt = rand32();
-      const c = await domain.registrationCommitment(h, PK, NKH, ENC, victim.address, salt);
+      const c = await domain.registrationCommitment(hName, PK, NKH, ENC, victim.address, salt);
 
       // Attacker front-runs with the identical hash.
-      await (await domain.connect(attacker).commit(c)).wait();
+      await (await domain.connect(attacker).commitRegistration(c)).wait();
 
       // Victim's own commit now reverts — harmless, the commitment is already live.
-      await expect(domain.connect(victim).commit(c))
+      await expect(domain.connect(victim).commitRegistration(c))
         .to.be.revertedWithCustomError(domain, "CommitmentPending");
 
       // The attacker cannot use what they created: register recomputes the commitment with
       // msg.sender, so theirs hashes to something that was never committed.
       await ethers.provider.send("evm_mine", []);
-      await expect(domain.connect(attacker).register(h, PK, NKH, ENC, "", salt, { value: FEE }))
+      await expect(domain.connect(attacker).register(hName, PK, NKH, ENC, salt, { value: FEE }))
         .to.be.revertedWithCustomError(domain, "NoCommitment");
 
       // The victim registers normally.
-      await (await domain.connect(victim).register(h, PK, NKH, ENC, "", salt, { value: FEE })).wait();
+      await (await domain.connect(victim).register(hName, PK, NKH, ENC, salt, { value: FEE })).wait();
       expect(await domain.ownerOf(BigInt(h))).to.equal(victim.address);
     });
 
@@ -667,13 +701,13 @@ describe("HaliasDomain", function () {
       // _record makes msg.sender the owner. Without the sender in the commitment, copying a
       // reveal verbatim would take the alias while the victim kept the keys.
       const [, victim, attacker] = await ethers.getSigners();
-      const h = rand32();
+      const { name: hName, h } = freshName();
       const salt = rand32();
-      const c = await domain.registrationCommitment(h, PK, NKH, ENC, victim.address, salt);
-      await (await domain.connect(victim).commit(c)).wait();
+      const c = await domain.registrationCommitment(hName, PK, NKH, ENC, victim.address, salt);
+      await (await domain.connect(victim).commitRegistration(c)).wait();
       await ethers.provider.send("evm_mine", []);
 
-      await expect(domain.connect(attacker).register(h, PK, NKH, ENC, "", salt, { value: FEE }))
+      await expect(domain.connect(attacker).register(hName, PK, NKH, ENC, salt, { value: FEE }))
         .to.be.revertedWithCustomError(domain, "NoCommitment");
     });
   });

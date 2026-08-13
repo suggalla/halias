@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
-import { MerkleTree, PoolTrees } from "./merkle";
-import { buildEntry, computeNullifier, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS } from "./entry";
+import { PoolTrees } from "./merkle";
+import { buildEntry, OwnedEntry, POOL_LEVELS } from "./entry";
 import { decodeOutputBlob, tryDecryptOutput, poseidonHash } from "./crypto";
 
 export const TRANSACT_ABI = [

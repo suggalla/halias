@@ -1,0 +1,47 @@
+{
+  "extends": "solhint:recommended",
+  "rules": {
+    "compiler-version": [
+      "error",
+      "0.8.28"
+    ],
+    "func-visibility": [
+      "error",
+      {
+        "ignoreConstructors": true
+      }
+    ],
+    "max-line-length": [
+      "error",
+      120
+    ],
+    "no-unused-vars": "error",
+    "state-visibility": "error",
+    "avoid-tx-origin": "error",
+    "check-send-result": "error",
+    "multiple-sends": "error",
+    "no-complex-fallback": "error",
+    "no-empty-blocks": "error",
+    "gas-custom-errors": "error",
+    "avoid-low-level-calls": "error",
+    "reentrancy": "error",
+    "no-inline-assembly": "off",
+    "not-rely-on-time": "off",
+    "reason-string": "off",
+    "one-contract-per-file": "off",
+    "no-global-import": "off",
+    "ordering": "off",
+    "use-natspec": "off",
+    "gas-increment-by-one": "off",
+    "gas-strict-inequalities": "off",
+    "gas-struct-packing": "off",
+    "gas-indexed-events": "off",
+    "gas-small-strings": "off",
+    "gas-length-in-loops": "off",
+    "gas-multitoken1155": "off",
+    "func-named-parameters": "off",
+    "immutable-vars-naming": "off",
+    "var-name-mixedcase": "off",
+    "foundry-test-functions": "off"
+  }
+}
