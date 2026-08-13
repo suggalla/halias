@@ -35,20 +35,16 @@ abstract contract SMTRegistry {
     // changing hands on the slot they already hold. At 32 levels it is unreachable anyway.
     uint32 public constant REGISTRY_LEVELS = 32;
 
-    // How long a superseded root stays acceptable. A sender must refresh their registry view
-    // at least this often; keys replaced by a handover stop receiving after at most this long.
+    // How long a superseded root stays acceptable, and so how long replaced keys keep
+    // receiving after a handover.
     //
-    // Seconds, not blocks. The bounded property is time, and a block count only expresses
-    // that on one chain — 7200 blocks is a day on mainnet and four hours on a two-second L2,
-    // so the guarantee would quietly change meaning with the deployment target. Validator
-    // drift of a few seconds is irrelevant at this scale.
+    // Seconds, not blocks: a block count means a day on mainnet and four hours on a
+    // two-second L2, so the guarantee would change meaning with the deployment target.
     //
-    // An hour, matching World ID. The window's only job is to cover the gap between reading
-    // a root and being included, and proving takes seconds to minutes even in a browser.
-    // Everything beyond that is exposure bought for nothing, because it is paid on the far
-    // side: for this long after a handover, a sender on a superseded root pays the previous
-    // holder's keys. It also bounds prepared-but-unsubmitted transactions — a relay blob
-    // older than this is rejected and must be rebuilt, which is a retry rather than a loss.
+    // An hour, matching World ID. Its only job is to cover reading a root and being included,
+    // and proving takes seconds to minutes; anything beyond that is exposure bought for
+    // nothing. It also bounds prepared relay blobs, which are rejected once older and must be
+    // rebuilt — a retry, not a loss.
     uint256 public constant REGISTRY_ROOT_MAX_AGE = 1 hours;
 
     bytes32 internal smtRoot;   // read via getRegistryRoot()
@@ -61,13 +57,11 @@ abstract contract SMTRegistry {
     mapping(bytes32 => uint32) public aliasSlot;
     uint32 public nextAliasSlot;
 
-    // _smtNodes[level][nodePath] = node hash (0 = empty/unset, use _smtZeros[level])
+    // _smtNodes[level][nodePath], 0 meaning empty — use TreeZeros.zeros(level).
     //
-    // An array of mappings rather than a mapping of mappings. The level is dense and bounded
-    // at compile time while nodePath is genuinely sparse, so only the inner dimension needs
-    // hashing: the compiler reaches level `i` by adding to a base slot, where a nested mapping
-    // would keccak twice per access. This tree is walked REGISTRY_LEVELS deep with two node
-    // reads per level, so the difference is paid on every registration.
+    // An array of mappings, not a mapping of mappings: the level is dense and bounded at
+    // compile time, so only nodePath needs hashing. A nested mapping would keccak twice per
+    // access, on two reads per level of every registration.
     mapping(uint256 => bytes32)[REGISTRY_LEVELS] private _smtNodes;
 
     function _initSMT() internal {
@@ -80,13 +74,11 @@ abstract contract SMTRegistry {
         // like any other when something supersedes it.
     }
 
-    // Leaf hash: Poseidon(aliasKey, value, 1) — circomlib SMTHash1.
-    // Internal node hash: Poseidon(left, right) — circomlib SMTHash2.
+    // Leaf: Poseidon(aliasKey, value, 1) — circomlib SMTHash1. Node: Poseidon(left, right).
     //
-    // Identity and position are separate. The leaf commits to aliasKey, so the circuit
-    // still proves "this alias holds these keys"; the path follows the slot assigned on
-    // first registration, which is what makes collisions impossible rather than merely
-    // expensive. A rotation reuses the alias's existing slot and updates in place.
+    // Identity and position are separate: the leaf commits to aliasKey while the path follows
+    // the slot assigned at first registration, which makes collisions impossible rather than
+    // merely expensive. A rotation reuses the alias's slot and updates in place.
     function _smtUpdate(bytes32 aliasHash, bytes32 value) internal {
         uint256 key = uint256(aliasHash) % FIELD_PRIME;
 
@@ -118,16 +110,10 @@ abstract contract SMTRegistry {
                 current = bytes32(PoseidonT3.hash([uint256(current), uint256(sibling)]));
             }
         }
-        // Stamp the OUTGOING root with the moment it stopped being current, not the
-        // incoming one with the moment it was created.
-        //
-        // Stamping at creation means the window is consumed while the root is still
-        // current — which is free grace nobody needs, since `root == smtRoot` accepts it
-        // unconditionally — and leaves nothing for afterwards. On a quiet registry a root
-        // current for longer than REGISTRY_ROOT_MAX_AGE is born already expired: a sender
-        // who read it, built a proof, and submitted seconds later fails the moment anyone
-        // else registers. Proof generation takes seconds to minutes, so that window has to
-        // start when the root is superseded. World ID's requireValidRoot does the same.
+        // Stamp the OUTGOING root, not the incoming one. Stamping at creation spends the
+        // window while the root is still current — which needs no grace, since `root ==
+        // smtRoot` is accepted unconditionally — so on a quiet registry a root would be born
+        // already expired. World ID's requireValidRoot does the same.
         registryRootSeenAt[smtRoot] = block.timestamp;
         smtRoot = current;
     }
