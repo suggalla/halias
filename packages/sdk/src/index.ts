@@ -20,7 +20,7 @@ export type { Output, RegistryEntry, ScanResult } from "./events";
 
 export {
   getPool, getRegistry, getController,
-  transact, register, updateAliasData, offerAlias, cancelOffer, acceptAlias, lookupAlias, claim,
+  transact, register, acceptAlias, lookupAlias, claim,
   signUpdateAliasData, signOfferAlias, signCancelOffer,
   computeParamsHash, encodeRegistration, buildTransactParams,
   ZERO_TRANSACT_PARAMS, NO_RELAYER,

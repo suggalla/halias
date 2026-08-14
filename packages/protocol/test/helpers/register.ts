@@ -16,17 +16,23 @@ export async function registerAlias(
   nullifierKeyHash: string,
   encryptionPubkey: string,
   fee: bigint,
+  /// Who ends up holding the name. Defaults to the sender, which is what most tests mean —
+  /// a client passes a key derived from its own phrase instead, so the alias is not tied to
+  /// whichever wallet paid.
+  owner?: string,
 ) {
   const d = domain.connect(signer);
   const salt = ethers.hexlify(ethers.randomBytes(32));
+  const holder = owner ?? signer.address;
   const commitment = await d.registrationCommitment(
-    name, spendingPubkey, nullifierKeyHash, encryptionPubkey, signer.address, salt,
+    name, spendingPubkey, nullifierKeyHash, encryptionPubkey, holder, salt,
   );
   await (await d.commitRegistration(commitment)).wait();
   // Hardhat mines one block per transaction, so the commit itself does not satisfy
   // MIN_COMMIT_AGE — the reveal would land in the very next block. One empty block does.
   await ethers.provider.send("evm_mine", []);
-  return d.register(name, spendingPubkey, nullifierKeyHash, encryptionPubkey, salt, { value: fee });
+  return d.register(name, spendingPubkey, nullifierKeyHash, encryptionPubkey, holder, salt,
+                    { value: fee });
 }
 
 /// Sign an owner-authorised action so someone else can submit and pay for it.
@@ -62,6 +68,31 @@ export async function signOwnerAction(
     { aliasHash, ...fields, nonce: opts.nonce ?? await domain.aliasNonce(aliasHash), deadline },
   );
   return { deadline, signature };
+}
+
+/// Perform an owner action the way the contract now requires: signed, submitted by anyone.
+///
+/// There is no unsigned path any more — the owner of an alias is a key derived from a
+/// recovery phrase, which holds no ETH and cannot send a transaction. These wrap the
+/// signature so a test reads as "the owner did X" rather than as EIP-712 plumbing.
+export async function offerAliasAs(
+  domain: any, owner: any, aliasHash: string, to: string, submitter?: any,
+) {
+  const { deadline, signature } = await signOwnerAction(domain, owner, "OfferAlias", aliasHash, { to });
+  return domain.connect(submitter ?? owner).offerAlias(aliasHash, to, deadline, signature);
+}
+
+export async function cancelOfferAs(domain: any, owner: any, aliasHash: string, submitter?: any) {
+  const { deadline, signature } = await signOwnerAction(domain, owner, "CancelOffer", aliasHash, {});
+  return domain.connect(submitter ?? owner).cancelOffer(aliasHash, deadline, signature);
+}
+
+export async function updateAliasDataAs(
+  domain: any, owner: any, aliasHash: string, dataHash: string, submitter?: any,
+) {
+  const { deadline, signature } =
+    await signOwnerAction(domain, owner, "UpdateAliasData", aliasHash, { dataHash });
+  return domain.connect(submitter ?? owner).updateAliasData(aliasHash, dataHash, deadline, signature);
 }
 
 /// Complete an offered transfer: the recipient signs, anyone may submit.

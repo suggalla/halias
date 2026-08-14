@@ -62,9 +62,9 @@ export const REGISTRY_ABI = [
 ];
 
 export const CONTROLLER_ABI = [
-  "function register(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 salt) external payable",
+  "function register(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner, bytes32 salt) external payable",
   "function aliasToHash(string name) external pure returns (bytes32)",
-  "function registerDirect(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey) external payable",
+  "function registerDirect(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner) external payable",
   "function commitRegistration(bytes32 commitment) external",
   "function registrationCommitment(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner, bytes32 salt) external pure returns (bytes32)",
   "function MIN_COMMIT_AGE() external view returns (uint256)",
@@ -225,9 +225,12 @@ export async function registerDirect(
   nullifierKeyHash: bigint,
   encryptionPubkey: bigint,
   fee: bigint,
+  /// Who will hold the name — the client's derived owner address, not the payer.
+  owner: string,
 ): Promise<ethers.ContractTransactionResponse> {
   return domain.registerDirect(
-    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey), { value: fee },
+    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey), owner,
+    { value: fee },
   );
 }
 
@@ -241,6 +244,9 @@ export async function register(
   nullifierKeyHash: bigint,
   encryptionPubkey: bigint,
   fee: bigint,
+  /// Who will hold the name. Derived from the client's own phrase, not the wallet paying —
+  /// so the alias belongs to the keys rather than to whichever account happened to send this.
+  owner: string,
   /// The commit-reveal secret. Derived by the caller rather than random here — see
   /// {Halias-register} — so that the reveal needs nothing carried over from the commit.
   salt: string,
@@ -249,8 +255,6 @@ export async function register(
   /// which leaves the user staring at a second unexplained prompt.
   onStep?: (step: "commit" | "register") => void,
 ): Promise<ethers.ContractTransactionResponse> {
-  const owner = await (domain.runner as ethers.Signer).getAddress();
-
   const commitment = await domain.registrationCommitment(
     name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey),
     owner, salt,
@@ -290,7 +294,7 @@ export async function register(
   // from the transaction we just mined is exact and costs no extra call.
   onStep?.("register");
   return domain.register(
-    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey), salt,
+    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey), owner, salt,
     // Nonce from the commit when we sent one; otherwise let ethers resolve it, since no
     // second send is racing it.
     commitTx ? { value: fee, nonce: commitTx.nonce + 1 } : { value: fee },
@@ -305,13 +309,15 @@ export async function register(
 // accepting with fresh ones, which replaces the spending pubkey too.
 
 /// The contract reads an empty signature as "the sender is the owner".
-const NO_SIGNATURE = "0x";
 
 /// A signed action: the authority, and a submission anyone can pay for.
 export interface SignedAction {
   signature: string;
   deadline:  bigint;
-  submit:    (submitter?: ethers.Signer) => Promise<ethers.ContractTransactionResponse>;
+  /// `nonce` pins the submitter's transaction nonce, for the one caller that sends two
+  /// transactions back to back with no proof between them — see {Halias-sweepAndOffer}.
+  /// Awaiting a receipt is not enough to make ethers resolve the next one correctly.
+  submit:    (submitter?: ethers.Signer, nonce?: number) => Promise<ethers.ContractTransactionResponse>;
 }
 
 async function eip712Domain(domain: ethers.Contract) {
@@ -336,7 +342,7 @@ async function signAliasAction(
   aliasHash: bigint,
   types: Record<string, { name: string; type: string }[]>,
   fields: Record<string, unknown>,
-  send: (deadline: bigint, signature: string, d: ethers.Contract) => Promise<ethers.ContractTransactionResponse>,
+  send: (deadline: bigint, signature: string, d: ethers.Contract, nonce?: number) => Promise<ethers.ContractTransactionResponse>,
   opts: { deadlineSeconds?: number } = {},
 ): Promise<SignedAction> {
   const deadline = BigInt(Math.floor(Date.now() / 1000) + (opts.deadlineSeconds ?? 3600));
@@ -349,18 +355,12 @@ async function signAliasAction(
   return {
     signature,
     deadline,
-    submit: (submitter?: ethers.Signer) =>
-      send(deadline, signature, submitter ? domain.connect(submitter) as ethers.Contract : domain),
+    submit: (submitter?: ethers.Signer, nonce?: number) =>
+      send(deadline, signature,
+           submitter ? domain.connect(submitter) as ethers.Contract : domain, nonce),
   };
 }
 
-export async function updateAliasData(
-  domain: ethers.Contract,
-  aliasHash: bigint,
-  newDataHash: bigint,
-): Promise<ethers.ContractTransactionResponse> {
-  return domain.updateAliasData(h32(aliasHash), h32(newDataHash), 0n, NO_SIGNATURE);
-}
 
 export async function signUpdateAliasData(
   domain: ethers.Contract,
@@ -383,20 +383,6 @@ export async function signUpdateAliasData(
   );
 }
 
-/// Offer an alias. Nothing moves until the recipient accepts with keys they control.
-export async function offerAlias(
-  domain: ethers.Contract,
-  aliasHash: bigint,
-  to: string,
-  /// Pass when a transaction from the same account was just mined. Awaiting the receipt is
-  /// not enough — `getTransactionCount(_, "pending")` has been observed lagging `"latest"` by
-  /// one, so ethers resolves a nonce that is already spent and the send is rejected as
-  /// "nonce too low". Same fix as {register}'s commit-then-reveal pair.
-  nonce?: number,
-): Promise<ethers.ContractTransactionResponse> {
-  return domain.offerAlias(h32(aliasHash), to, 0n, NO_SIGNATURE,
-                           nonce === undefined ? {} : { nonce });
-}
 
 export async function signOfferAlias(
   domain: ethers.Contract,
@@ -414,21 +400,13 @@ export async function signOfferAlias(
       { name: "deadline",  type: "uint256" },
     ] },
     { aliasHash: h32(aliasHash), to },
-    (deadline, signature, d) => d.offerAlias(h32(aliasHash), to, deadline, signature),
+    (deadline, signature, d, nonce) =>
+      d.offerAlias(h32(aliasHash), to, deadline, signature,
+                   nonce === undefined ? {} : { nonce }),
     opts,
   );
 }
 
-export async function cancelOffer(
-  domain: ethers.Contract,
-  aliasHash: bigint,
-  /// Same reason as {offerAlias}: an awaited receipt does not guarantee the node's pending
-  /// nonce has caught up, and offering then cancelling is the natural back-to-back pair.
-  nonce?: number,
-): Promise<ethers.ContractTransactionResponse> {
-  return domain.cancelOffer(h32(aliasHash), 0n, NO_SIGNATURE,
-                            nonce === undefined ? {} : { nonce });
-}
 
 export async function signCancelOffer(
   domain: ethers.Contract,

@@ -1,6 +1,9 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { registerAlias, acceptAliasAs, signOwnerAction } from "./helpers/register";
+import {
+  registerAlias, acceptAliasAs, signOwnerAction,
+  offerAliasAs, cancelOfferAs, updateAliasDataAs,
+} from "./helpers/register";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { aliasHashToKey } from "./helpers/smt";
@@ -202,18 +205,18 @@ describe("HaliasController", function () {
       // the calldata, so on a public mempool this is front-runnable — which is exactly what
       // the two-step path exists to prevent.
       const { name, h } = freshName();
-      await expect(domain.connect(user).registerDirect(name, PK, NKH, ENC, { value: FEE }))
+      await expect(domain.connect(user).registerDirect(name, PK, NKH, ENC, user.address, { value: FEE }))
         .to.emit(domain, "NamePublished").withArgs(h, name);
       expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
     });
 
     it("charges the direct path the same fee, and refuses a name already taken", async function () {
       const { name } = freshName();
-      await expect(domain.connect(user).registerDirect(name, PK, NKH, ENC, { value: FEE - 1n }))
+      await expect(domain.connect(user).registerDirect(name, PK, NKH, ENC, user.address, { value: FEE - 1n }))
         .to.be.revertedWithCustomError(domain, "WrongRegistrationFee");
-      await (await domain.connect(user).registerDirect(name, PK, NKH, ENC, { value: FEE })).wait();
+      await (await domain.connect(user).registerDirect(name, PK, NKH, ENC, user.address, { value: FEE })).wait();
       // Both paths write through the same core, so taken-ness is enforced once, not twice.
-      await expect(domain.connect(other).registerDirect(name, PK, NKH, ENC, { value: FEE }))
+      await expect(domain.connect(other).registerDirect(name, PK, NKH, ENC, user.address, { value: FEE }))
         .to.be.revertedWithCustomError(registry, "AliasTaken");
     });
 
@@ -349,8 +352,8 @@ describe("HaliasController", function () {
       // Three unrelated writes land first — one of each kind that touches a leaf.
       const { name: other1Name, h: other1 } = freshName();
       await (await registerAlias(domain, other, other1Name, PK, NKH, ENC, FEE)).wait();
-      await (await domain.connect(other).updateAliasData(other1, randField(), 0n, "0x")).wait();
-      await (await domain.connect(other).offerAlias(other1, user.address, 0n, "0x")).wait();
+      await (await updateAliasDataAs(domain, other, other1, randField())).wait();
+      await (await offerAliasAs(domain, other, other1, user.address)).wait();
       await (await acceptAliasAs(domain, user, other1, PK, NKH, ENC)).wait();
 
       // The prepared claim still goes through: its root is superseded but known, and the
@@ -424,18 +427,26 @@ describe("HaliasController", function () {
       await (await registerAlias(domain, user, hName, PK, NKH, ENC, FEE)).wait();
     });
 
-    it("only the owner may act, when no signature is supplied", async function () {
-      await expect(domain.connect(other).updateAliasData(h, rand32(), 0n, "0x"))
-        .to.be.revertedWithCustomError(domain, "NotAliasOwner");
-      await expect(domain.connect(other).offerAlias(h, other.address, 0n, "0x"))
-        .to.be.revertedWithCustomError(domain, "NotAliasOwner");
-      await expect(domain.connect(other).cancelOffer(h, 0n, "0x"))
-        .to.be.revertedWithCustomError(domain, "NotAliasOwner");
-      await expect(domain.connect(user).updateAliasData(h, randField(), 0n, "0x")).to.not.be.reverted;
+    it("only the owner's signature authorises anything", async function () {
+      // There is no sender-based path left: the owner of an alias is a key derived from a
+      // recovery phrase, which holds no ETH and can only sign. So a stranger fails by
+      // signing wrongly rather than by being the wrong caller.
+      await expect(updateAliasDataAs(domain, other, h, randField()))
+        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+      await expect(offerAliasAs(domain, other, h, other.address))
+        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+      await expect(cancelOfferAs(domain, other, h))
+        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+      await expect(updateAliasDataAs(domain, user, h, randField())).to.not.be.reverted;
+    });
+
+    it("refuses an action with no signature at all", async function () {
+      await expect(domain.connect(user).offerAlias(h, other.address, 1n << 40n, "0x"))
+        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
     });
 
     it("an offer moves nothing until it is accepted", async function () {
-      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
+      await (await offerAliasAs(domain, user, h, other.address)).wait();
       // The seller still owns it and still receives to it — there is no in-transit state.
       expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
       expect((await registry.aliases(h)).spendingPubkey).to.equal(PK);
@@ -448,23 +459,23 @@ describe("HaliasController", function () {
       // received every payment. Authority is the recipient's signature now, and because it is
       // a signature rather than msg.sender, a relayer can pay for inclusion.
       const newPk = ethers.toBeHex(66n, 32);
-      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
+      await (await offerAliasAs(domain, user, h, other.address)).wait();
       await (await acceptAliasAs(domain, other, h, newPk, ethers.toBeHex(77n, 32),
                                  ethers.toBeHex(88n, 32), user)).wait();
 
       expect(await domain.ownerOf(BigInt(h))).to.equal(other.address);
       expect((await registry.aliases(h)).spendingPubkey).to.equal(newPk);
       // The old owner can no longer act on it.
-      await expect(domain.connect(user).updateAliasData(h, rand32(), 0n, "0x"))
-        .to.be.revertedWithCustomError(domain, "NotAliasOwner");
+      await expect(updateAliasDataAs(domain, user, h, randField()))
+        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
     });
 
     it("a second offer replaces the first, which can no longer be taken", async function () {
       // The UI warns about this, so it had better be true. There is one pending owner, not a
       // queue: offering again overwrites, and the earlier recipient is left holding an offer
       // that names them and no longer exists.
-      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
-      await (await domain.connect(user).offerAlias(h, claimer.address, 0n, "0x")).wait();
+      await (await offerAliasAs(domain, user, h, other.address)).wait();
+      await (await offerAliasAs(domain, user, h, claimer.address)).wait();
       expect(await domain.pendingAliasOwner(h)).to.equal(claimer.address);
 
       await expect(acceptAliasAs(domain, other, h, PK, NKH, ENC))
@@ -475,7 +486,7 @@ describe("HaliasController", function () {
     });
 
     it("cannot be accepted by anyone but the address it was offered to", async function () {
-      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
+      await (await offerAliasAs(domain, user, h, other.address)).wait();
       await expect(acceptAliasAs(domain, claimer, h, PK, NKH, ENC))
         .to.be.revertedWithCustomError(domain, "NotOfferedToSigner");
       expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
@@ -487,7 +498,7 @@ describe("HaliasController", function () {
     });
 
     it("an accepted offer cannot be accepted twice", async function () {
-      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
+      await (await offerAliasAs(domain, user, h, other.address)).wait();
       await (await acceptAliasAs(domain, other, h, PK, NKH, ENC)).wait();
       // The offer is consumed, not merely satisfied — otherwise a second acceptance would
       // reinstall keys on an alias its new owner now controls.
@@ -497,8 +508,8 @@ describe("HaliasController", function () {
 
     it("keeps the alias in its slot across every mutation", async function () {
       const slot = await registry.aliasSlot(h);
-      await (await domain.connect(user).updateAliasData(h, randField(), 0n, "0x")).wait();
-      await (await domain.connect(user).offerAlias(h, other.address, 0n, "0x")).wait();
+      await (await updateAliasDataAs(domain, user, h, randField())).wait();
+      await (await offerAliasAs(domain, user, h, other.address)).wait();
       await (await acceptAliasAs(domain, other, h, PK, NKH, ENC)).wait();
       expect(await registry.aliasSlot(h)).to.equal(slot);
     });
@@ -513,7 +524,7 @@ describe("HaliasController", function () {
 
     it("rotates every key by offering the alias to yourself", async function () {
       const newPk = ethers.toBeHex(0x1111n, 32);
-      await (await domain.connect(user).offerAlias(h, user.address, 0n, "0x")).wait();
+      await (await offerAliasAs(domain, user, h, user.address)).wait();
       await (await acceptAliasAs(domain, user, h, newPk, ethers.toBeHex(0x2222n, 32),
                                  ethers.toBeHex(0x3333n, 32))).wait();
       expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
@@ -559,7 +570,7 @@ describe("HaliasController", function () {
       // else to submit afterwards.
       const { deadline, signature } =
         await signOwnerAction(domain, user, "OfferAlias", h, { to: other.address });
-      await (await domain.connect(user).updateAliasData(h, randField(), 0n, "0x")).wait();
+      await (await updateAliasDataAs(domain, user, h, randField())).wait();
       await expect(domain.connect(other).offerAlias(h, other.address, deadline, signature))
         .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
     });
@@ -569,7 +580,7 @@ describe("HaliasController", function () {
       // unregistered alias — so the zero check has to be explicit rather than left to the
       // signature comparison.
       const missing = rand32();
-      await expect(domain.connect(user).offerAlias(missing, other.address, 0n, "0x"))
+      await expect(offerAliasAs(domain, user, missing, other.address))
         .to.be.revertedWithCustomError(domain, "NotAliasOwner");
       await expect(domain.connect(user).offerAlias(missing, other.address, 1n << 40n, "0xdeadbeef"))
         .to.be.revertedWithCustomError(domain, "NotAliasOwner");
@@ -669,7 +680,7 @@ describe("HaliasController", function () {
 
       // The victim's reveal still lands.
       await ethers.provider.send("evm_mine", []);
-      await (await domain.connect(victim).register(hName, PK, NKH, ENC, salt, { value: FEE })).wait();
+      await (await domain.connect(victim).register(hName, PK, NKH, ENC, victim.address, salt, { value: FEE })).wait();
       expect(await domain.ownerOf(BigInt(h))).to.equal(victim.address);
     });
 
@@ -683,7 +694,7 @@ describe("HaliasController", function () {
 
       await ethers.provider.send("evm_setAutomine", [false]);
       await domain.connect(user).commitRegistration(c);
-      const reveal = await domain.connect(user).register(hName, PK, NKH, ENC, salt, { value: FEE });
+      const reveal = await domain.connect(user).register(hName, PK, NKH, ENC, user.address, salt, { value: FEE });
       await ethers.provider.send("evm_mine", []);
       await ethers.provider.send("evm_setAutomine", [true]);
 
@@ -714,7 +725,7 @@ describe("HaliasController", function () {
       await (await domain.connect(user).commitRegistration(c)).wait();
       await time.increase(Number(await domain.MAX_COMMIT_AGE()) + 1);
 
-      await expect(domain.connect(user).register(hName, PK, NKH, ENC, salt, { value: FEE }))
+      await expect(domain.connect(user).register(hName, PK, NKH, ENC, user.address, salt, { value: FEE }))
         .to.be.revertedWithCustomError(domain, "CommitExpired");
     });
 
@@ -736,29 +747,36 @@ describe("HaliasController", function () {
       await expect(domain.connect(victim).commitRegistration(c))
         .to.be.revertedWithCustomError(domain, "CommitmentPending");
 
-      // The attacker cannot use what they created: register recomputes the commitment with
-      // msg.sender, so theirs hashes to something that was never committed.
+      // The attacker cannot turn it into a name of their own: the owner is inside the
+      // commitment, so naming themselves hashes to something never committed.
       await ethers.provider.send("evm_mine", []);
-      await expect(domain.connect(attacker).register(hName, PK, NKH, ENC, salt, { value: FEE }))
+      await expect(domain.connect(attacker).register(hName, PK, NKH, ENC, attacker.address, salt, { value: FEE }))
         .to.be.revertedWithCustomError(domain, "NoCommitment");
 
       // The victim registers normally.
-      await (await domain.connect(victim).register(hName, PK, NKH, ENC, salt, { value: FEE })).wait();
+      await (await domain.connect(victim).register(hName, PK, NKH, ENC, victim.address, salt, { value: FEE })).wait();
       expect(await domain.ownerOf(BigInt(h))).to.equal(victim.address);
     });
 
-    it("binds the sender, so a copied reveal cannot mint to the copier", async function () {
-      // _record makes msg.sender the owner. Without the sender in the commitment, copying a
-      // reveal verbatim would take the alias while the victim kept the keys.
+    it("binds the owner, so a copied reveal cannot mint to the copier", async function () {
+      // The owner is a parameter now rather than msg.sender, so this is what stops a reveal
+      // being copied out of the mempool and redirected. It is committed to, so changing it
+      // changes the hash — an attacker can only reveal the registration the victim intended.
       const [, victim, attacker] = await ethers.getSigners();
-      const { name: hName } = freshName();
+      const { name: hName, h } = freshName();
       const salt = rand32();
       const c = await domain.registrationCommitment(hName, PK, NKH, ENC, victim.address, salt);
       await (await domain.connect(victim).commitRegistration(c)).wait();
       await ethers.provider.send("evm_mine", []);
 
-      await expect(domain.connect(attacker).register(hName, PK, NKH, ENC, salt, { value: FEE }))
+      // Naming themselves: never committed.
+      await expect(domain.connect(attacker).register(hName, PK, NKH, ENC, attacker.address, salt, { value: FEE }))
         .to.be.revertedWithCustomError(domain, "NoCommitment");
+
+      // Copying it verbatim does work, and is worth nothing: the attacker pays the fee and
+      // the victim gets the alias. Front-running a reveal is a donation, not a theft.
+      await (await domain.connect(attacker).register(hName, PK, NKH, ENC, victim.address, salt, { value: FEE })).wait();
+      expect(await domain.ownerOf(BigInt(h))).to.equal(victim.address);
     });
   });
 

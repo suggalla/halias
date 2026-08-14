@@ -699,11 +699,13 @@ async function main() {
   // and encryption keys but never the spending pubkey, so the one compromise that loses funds
   // was the one it could not answer. Fresh keys mean a client at a different derivation index,
   // and offer/accept replaces all three.
-  // A second derivation index on the same wallet: fresh keys, same owner. One signature
-  // produces every index, so this costs the user nothing extra.
+  // A second derivation index on the same phrase: fresh keys, and a fresh owner address too.
+  // The owner is derived per index now, so rotating hands the alias to the *next index's*
+  // owner rather than back to one wallet — which is what keeps two aliases of one phrase from
+  // sharing an address in public state.
   const rotated = mk(aliceWallet as any, 1);
   await rotated.init(1);
-  await alice.offerAlias(aliceName, aliceWallet.address);
+  await alice.offerAlias(aliceName, rotated.ownerAddress);
 
   // Signed AFTER the offer, not before: every authorised action on an alias bumps its nonce,
   // so a signature produced first is already stale by the time it is submitted. The contract
@@ -730,8 +732,10 @@ async function main() {
   eq("the spending pubkey actually changed — what updateKeys could not do",
      (await registryContract.aliases(aliceKey)).spendingPubkey,
      ethers.toBeHex((rotated as any).keys.spendingPubkey, 32));
-  eq("the alias is still owned by the same address",
-     await controllerContract.ownerOf(BigInt(aliceKey)), aliceWallet.address);
+  eq("the alias is owned by the rotated index's own key",
+     await controllerContract.ownerOf(BigInt(aliceKey)), rotated.ownerAddress);
+  check("and that owner is not any wallet in this test",
+        rotated.ownerAddress.toLowerCase() !== aliceWallet.address.toLowerCase());
   // In-place update is the whole reason this is an SMT: the alias must keep its slot, or
   // every sender holding a proof against its position breaks.
   eq("rotation keeps the alias in its slot",
@@ -739,14 +743,17 @@ async function main() {
 
   // dataHash must be a field element — the registry rejects anything at or above p,
   // because Poseidon reduces silently and two records would otherwise share a leaf.
+  // `rotated`, not `alice`. Rotation moved both the registry keys and the owner to index 1,
+  // so index 0 is a stale client for this alias in every sense — which is the point of a
+  // rotation and worth exercising rather than working around.
   const dataHash = BigInt(ethers.keccak256(ethers.randomBytes(32))) % FIELD_PRIME;
-  await alice.updateAliasData(aliceName, dataHash);
+  await rotated.updateAliasData(aliceName, dataHash);
   eq("updateAliasData is committed to the registry",
      (await registryContract.aliases(ethers.keccak256(ethers.toUtf8Bytes(`${aliceName}.hls`)))).dataHash,
      ethers.toBeHex(dataHash, 32));
 
   let rejectedOutOfField = false;
-  try { await alice.updateAliasData(aliceName, FIELD_PRIME); } catch { rejectedOutOfField = true; }
+  try { await rotated.updateAliasData(aliceName, FIELD_PRIME); } catch { rejectedOutOfField = true; }
   check("an out-of-field dataHash is rejected", rejectedOutOfField);
 
   // ── transfer ──────────────────────────────────────────────────────────────
@@ -758,13 +765,13 @@ async function main() {
   await heirClient.init();
   const aliceAliasHash = ethers.keccak256(ethers.toUtf8Bytes(`${aliceName}.hls`));
 
-  await alice.offerAlias(aliceName, heirWallet.address);
+  await rotated.offerAlias(aliceName, heirClient.ownerAddress);
   eq("an offer moves nothing on its own",
-     await controllerContract.ownerOf(BigInt(aliceAliasHash)), aliceWallet.address);
+     await controllerContract.ownerOf(BigInt(aliceAliasHash)), rotated.ownerAddress);
 
   // Withdrawing an offer, before covering the path where it is taken up. An offer that
   // cannot be revoked is a standing option written against the owner.
-  await alice.cancelOffer(aliceName);
+  await rotated.cancelOffer(aliceName);
   eq("a cancelled offer leaves no pending owner",
      await controllerContract.pendingAliasOwner(aliceAliasHash), ethers.ZeroAddress);
   // Prepared, then submitted — because `prepare` only signs an EIP-712 message off chain and
@@ -789,7 +796,7 @@ async function main() {
   check("but redeeming it after the cancel is rejected", staleRejected);
 
   // Re-offer, so the rest of this section runs against a live offer.
-  await alice.offerAlias(aliceName, heirWallet.address);
+  await rotated.offerAlias(aliceName, heirClient.ownerAddress);
 
   // The heir has no ETH. They sign; the relayer pays — the whole reason authority is a
   // signature rather than msg.sender.
@@ -809,7 +816,9 @@ async function main() {
   )).wait();
 
   eq("the alias NFT moved to the new owner",
-     await controllerContract.ownerOf(BigInt(aliceAliasHash)), heirWallet.address);
+     await controllerContract.ownerOf(BigInt(aliceAliasHash)), heirClient.ownerAddress);
+  check("and the new owner is a derived key, not the heir's wallet",
+        heirClient.ownerAddress.toLowerCase() !== heirWallet.address.toLowerCase());
   eq("and the registry now holds the recipient's own key",
      (await registryContract.aliases(aliceAliasHash)).spendingPubkey,
      ethers.toBeHex(heirKeys.spendingPubkey, 32));
@@ -819,7 +828,7 @@ async function main() {
   // would leave both parties able to act.
   let formerOwnerRejected = false;
   try {
-    await alice.updateAliasData(aliceName, 1n);
+    await rotated.updateAliasData(aliceName, 1n);
   } catch { formerOwnerRejected = true; }
   check("the previous owner can no longer act on it", formerOwnerRejected);
 
@@ -831,13 +840,13 @@ async function main() {
   // and the handover replaced it with the heir's. So value left behind is not merely
   // forgotten, it is stranded. This asserts the protocol behaviour that a UI rule depends on;
   // without it that rule is a claim about code nobody checked.
-  await alice.refresh();
-  const strandedBalance = (await alice.balance()).total;
+  await rotated.refresh();
+  const strandedBalance = (await rotated.balance()).total;
   if (strandedBalance > 0n) {
     let strandedSpendRejected = false;
     let why = "";
     try {
-      await alice.withdraw(aliceWallet.address, ethers.formatEther(strandedBalance / 2n));
+      await rotated.withdraw(aliceWallet.address, ethers.formatEther(strandedBalance / 2n));
     } catch (e: any) { strandedSpendRejected = true; why = e.message; }
     check("notes left in a handed-over alias can no longer be spent", strandedSpendRejected,
           strandedSpendRejected ? why.slice(0, 46) : "the spend succeeded");
@@ -914,7 +923,7 @@ async function main() {
   // empty — and the handover still waits on the recipient's own keys.
   eq("the alias is offered but still bob's until accepted",
      await controllerContract.ownerOf(BigInt(ethers.keccak256(ethers.toUtf8Bytes(`${bobName}.hls`)))),
-     bobWallet.address);
+     bob.ownerAddress);
   eq("with the offer recorded",
      await controllerContract.pendingAliasOwner(ethers.keccak256(ethers.toUtf8Bytes(`${bobName}.hls`))),
      sweepHeir.address);

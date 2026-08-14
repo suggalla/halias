@@ -14,6 +14,10 @@ export interface InviteKeys {
   blinding:              bigint;
   encryption:            { privateKey: Uint8Array; publicKey: Uint8Array };
   encryptionPubkeyField: bigint;
+  /// Holds the temporary alias an invite registers. Derived from the secret like everything
+  /// else here, so the inviter's own wallet does not appear as the owner of a throwaway
+  /// account — which would tie them to the invite in public state.
+  ownerAddress:          string;
 }
 
 export function deriveInviteKeys(secret: bigint): InviteKeys {
@@ -28,6 +32,9 @@ export function deriveInviteKeys(secret: bigint): InviteKeys {
   const encPriv    = ethers.getBytes(ethers.keccak256(ethers.concat([secretBytes, new Uint8Array([2])])));
   const encKeypair = nacl.box.keyPair.fromSecretKey(encPriv);
 
+  // Ownership key: domain byte 0x03, matching the wallet path.
+  const ownerPriv = ethers.keccak256(ethers.concat([secretBytes, new Uint8Array([3])]));
+
   return {
     spendingPrivKey,
     viewingPrivKey,
@@ -37,6 +44,7 @@ export function deriveInviteKeys(secret: bigint): InviteKeys {
     blinding,
     encryption:            { privateKey: encPriv, publicKey: encKeypair.publicKey },
     encryptionPubkeyField: BigInt(ethers.hexlify(encKeypair.publicKey)),
+    ownerAddress:          ethers.computeAddress(ownerPriv),
   };
 }
 
