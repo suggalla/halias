@@ -1004,11 +1004,23 @@ export class Halias extends HaliasCore {
     // must prove membership — so it needs a name like any other alias.
     //
     // Derived from the secret rather than random, and through a hash rather than directly:
-    // deterministic means it can be recomputed instead of remembered, and hashing means
-    // publishing the name does not publish the secret that spends the note. The prefix marks
-    // it as machinery in the directory; a user alias cannot collide, since those are
-    // validated lowercase alphanumeric and this contains a hyphen.
-    const inviteName = `invite-${ethers.keccak256(ethers.toBeHex(secret, 32)).slice(2, 18)}.hls`;
+    // deterministic means the claimer recomputes it instead of being sent it, and hashing
+    // means publishing the name does not publish the secret that spends the note.
+    //
+    // What stops someone registering the name first is the derivation, not the prefix. The
+    // name carries 64 bits of keccak(secret), so squatting a *particular* invite means
+    // guessing them — and the inviter registers it in the same flow that generates the
+    // secret, so there is no window in which anyone else could know it.
+    //
+    // The prefix is a label, not a namespace: `invite-…` is a perfectly valid user alias
+    // (hyphens are allowed), and nothing here treats the prefix as meaningful. Anyone may
+    // register one; they simply cannot register *this* one.
+    // 128 bits of it, not 64. The old width was a birthday bound: two invites collide with
+    // even odds at around 2^32 of them, and the loser's registration reverts as taken. It
+    // failed safely, but only because it failed loudly. At 128 bits the bound is 2^64, which
+    // is past anything this will ever see, and the label still fits the 63-character
+    // convention the rest of the namespace keeps — the whole hash would not.
+    const inviteName = `invite-${ethers.keccak256(ethers.toBeHex(secret, 32)).slice(2, 34)}.hls`;
     const tempAliasHash = BigInt(ethers.keccak256(ethers.toUtf8Bytes(inviteName)));
     const registrationFee = await this.domain.registrationFee() as bigint;
 

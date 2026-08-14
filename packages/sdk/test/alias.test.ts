@@ -42,10 +42,18 @@ describe("alias normalisation", () => {
     expect(normalizeAlias("  alice  ")).to.equal("alice");
   });
 
-  it("allows interior hyphens but not leading or trailing ones", () => {
-    expect(normalizeAlias("my-alias-1")).to.equal("my-alias-1");
+  it("allows letters and digits, and nothing else", () => {
+    expect(normalizeAlias("myalias1")).to.equal("myalias1");
+    // Hyphens were allowed once. They are not, because `alice-bank` and `alicebank` are two
+    // names that survive being spoken as one — and because excluding them puts `invite-…`,
+    // the name an invite registers, out of reach of any user alias.
+    expect(isValidAlias("my-alias")).to.equal(false);
     expect(isValidAlias("-alice")).to.equal(false);
     expect(isValidAlias("alice-")).to.equal(false);
+    expect(isValidAlias("invite-0123456789abcdef")).to.equal(false);
+    // Unicode never was, and is what a homoglyph attack needs.
+    expect(isValidAlias("аlice")).to.equal(false);   // Cyrillic а
+    expect(isValidAlias("alice_bank")).to.equal(false);
   });
 
   it("bounds the length", () => {
@@ -55,7 +63,7 @@ describe("alias normalisation", () => {
   });
 
   it("is idempotent — normalising twice changes nothing", () => {
-    for (const input of ["Alice.HLS", "  my-alias.hls.hls  ", "x9"]) {
+    for (const input of ["Alice.HLS", "  myalias.hls.hls  ", "x9"]) {
       const once = normalizeAlias(input);
       expect(normalizeAlias(once)).to.equal(once);
     }

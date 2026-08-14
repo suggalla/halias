@@ -469,8 +469,10 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///      address the failure it exists for — and the plaintext exists nowhere else, since
     ///      `aliasHash` is one-way.
     ///
-    ///      Empty is accepted for an alias that has no name at all: an invite account, whose
-    ///      hash is random rather than derived from anything. It is deliberately NOT a
+    ///      Empty is accepted for an alias with no name to publish. The SDK never sends one —
+    ///      an invite account is named `invite-<64 bits of keccak(secret)>`, so even machinery
+    ///      is resolvable from chain — but the contract does not require a name, because
+    ///      requiring one would mean requiring a preimage that may not exist. It is deliberately NOT a
     ///      privacy setting, and the client no longer offers it as one. Withholding the name
     ///      of a *named* alias hides very little — the hash is public in the registration
     ///      event either way, so any name short enough to type falls to a wordlist — while
@@ -481,6 +483,15 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         emit NamePublished(aliasHash, name);
     }
 
+    /// @dev    No charset rule is enforced here. `name` is any non-empty byte string whose
+    ///         keccak matches the alias hash, so two names that *look* alike register as two
+    ///         different aliases and both are valid. Restricting to lowercase alphanumerics
+    ///         and hyphens is a client convention (see `normalizeAlias`), which means a
+    ///         hand-rolled caller can register a homoglyph of someone else's name.
+    ///
+    ///         That is deliberate: the contract cannot know which scripts a display layer
+    ///         renders confusably, and encoding a charset here would freeze one answer into
+    ///         an immutable contract. The defence belongs where names are shown.
     /// @notice The alias hash a name registers under. Exposed so a client derives it from
     ///         the same code the contract uses rather than reimplementing keccak over the
     ///         same bytes and discovering the disagreement at registration.
