@@ -1,5 +1,14 @@
 # Security review: the split, against `Halias.sol`
 
+
+> **Point-in-time record, 2026-08.** Kept as written; the code has moved since. Changes that
+> post-date this pass and that it therefore does not cover: note keys now come from a BIP-39
+> recovery phrase rather than a `personal_sign` signature; an alias is owned by a secp256k1
+> key derived from that phrase rather than by the registering wallet, so `msg.sender`
+> authorises no owner action at all; and signature verification, deadline and nonce bump are
+> unified in `_consumeAuthorization`. See
+> [keys-and-authorization.md](keys-and-authorization.md) for the current design.
+
 Internal review, not a substitute for an external audit. Two passes, because they find
 different things.
 
@@ -13,7 +22,7 @@ being correct. This is where `HaliasDeployer`, the reshaped claim, the payee and
 helpers, and the circuit/contract boundary get examined, and where the one property below
 that both implementations share was found.
 
-Covered: `HaliasPool`, `HaliasRegistry`, `HaliasDomain`, `HaliasDeployer` against
+Covered: `HaliasPool`, `HaliasRegistry`, `HaliasController`, `HaliasDeployer` against
 `Halias.sol`.
 
 **Result: four findings, all fixed.** Two were real and demonstrated — an out-of-field
@@ -41,7 +50,7 @@ That subtraction is the only thing standing between the admin and every user's E
 collateral, because both sat at the same address. It is correct — and it is a runtime check
 that had to be written, reviewed, and kept correct forever.
 
-In the split there is nothing to check. `rescueToken` lives on `HaliasDomain`, which never
+In the split there is nothing to check. `rescueToken` lives on `HaliasController`, which never
 holds collateral; `HaliasPool` has no rescue function, no admin, and no owner. The guard did
 not move, it stopped being necessary. That is the difference between "the admin is
 restricted from taking user funds" and "the admin cannot address them."
@@ -128,7 +137,7 @@ Present in the monolith too, which is exactly why the differential pass could no
 
 Checked and cleared:
 
-- **Cross-contract reentrancy.** `HaliasDomain.claim` → `pool.transact` → `sendValue` to a
+- **Cross-contract reentrancy.** `HaliasController.claim` → `pool.transact` → `sendValue` to a
   relayer-controlled contract hands an attacker control mid-claim. Both contracts carry
   `nonReentrant`, the pool's checks all complete before any transfer, and the domain's
   `accumulatedFees` is credited from a measured balance delta afterwards. See the low
@@ -140,7 +149,7 @@ Checked and cleared:
   `transfer(address,uint256)`, so rescuing the alias tokens out was impossible), then deleted
   outright before release: it insured against tokens sent to a contract that never holds any,
   in exchange for an admin-reachable path an auditor has to rule out. Tokens sent to
-  `HaliasDomain` are now stuck, which is the right outcome for value it was never meant to
+  `HaliasController` are now stuck, which is the right outcome for value it was never meant to
   receive.
 - **Deployment front-running.** `HaliasDeployer`'s initcode includes `admin`, so an attacker
   redeploying it verbatim produces identical, correctly-wired contracts; changing the admin

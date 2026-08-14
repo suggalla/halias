@@ -85,7 +85,7 @@ not attach.
 paid to an identified person. It was a fact the government used, and it is the single
 clearest way in which Halias is not "just published software."
 
-**`HaliasDomain` has an admin key.** *Van Loon* protected contracts nobody controls. The
+**`HaliasController` has an admin key.** *Van Loon* protected contracts nobody controls. The
 Pool qualifies; the Domain explicitly does not, by design. Anything reachable from that key
 is arguably yours to answer for.
 
@@ -117,7 +117,7 @@ absent — which is a property to keep deliberately, not to discover later.
 exists. That inability is a legal asset, not a gap — see the closing section.
 
 **The admin is confined to the contract holding no user funds.** Six `onlyAdmin` functions,
-all on `HaliasDomain`. `HaliasPool` and `HaliasRegistry` have none; the registry's
+all on `HaliasController`. `HaliasPool` and `HaliasRegistry` have none; the registry's
 `onlyController` names the domain contract, not a person. Nothing reachable from the admin
 key can address a user's collateral.
 
@@ -142,7 +142,7 @@ calls. The pool stays unable to discriminate, which is the property worth protec
 1. Does `registrationFee` collected by an admin key make me a money services business under
    FinCEN's 2019 guidance, given the pool itself is non-custodial and the fee buys a name
    rather than a transfer?
-2. Does *Van Loon* protection extend to `HaliasPool` specifically, given `HaliasDomain` —
+2. Does *Van Loon* protection extend to `HaliasPool` specifically, given `HaliasController` —
    which I do control — is the contract that calls it?
 3. Is there a structure that separates me from the fee revenue (burn, DAO, foundation)
    without creating worse problems?
@@ -165,7 +165,7 @@ calls. The pool stays unable to discriminate, which is the property worth protec
    response to abuse is exactly the sequence that looked bad for Tornado.
 3. **Reconsider the fee and the admin key.** They are the strongest facts against you and
    they buy comparatively little. Burning the fee, or removing it, would make
-   `HaliasDomain` nearly as defensible as the pool.
+   `HaliasController` nearly as defensible as the pool.
 4. **Do not host the front end yourself.** Static build, IPFS, no operated domain.
 5. **Write the compliance posture down before launch** — screening at the front end, a
    published policy, a documented response process. Contemporaneous records that you thought

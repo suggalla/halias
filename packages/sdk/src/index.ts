@@ -29,7 +29,7 @@ export type { TransactParams, RelayerFee, Registration } from "./contract";
 
 export { Halias } from "./halias";
 export { normalizeAlias, fullAlias, isValidAlias, InvalidAliasError, AliasTakenError } from "./alias";
-export { encodeRelayBlob, decodeRelayBlob, quoteRelay, submitRelay, suggestRelayFee, TRANSACT_GAS, EXIT_GAS, gasFor } from "./relay";
+export { encodeRelayBlob, decodeRelayBlob, quoteRelay, submitRelay, suggestRelayFee } from "./relay";
 export type { RelayPayload, RelayQuote } from "./relay";
 export type { HistoryEntry, PrivacyContext } from "./halias";
 export type { HaliasConfig, DepositResult, SendResult, WithdrawResult, BalanceResult, LookupResult } from "./halias";

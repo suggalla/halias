@@ -2,7 +2,7 @@
 
 What is covered, what is not, and the gap that matters before anyone else runs this.
 
-All four boundaries are covered — **220 tests**. `scripts/e2e-live.ts` closed the last gap
+All four boundaries are covered — **376 checks**: 179 hardhat, 86 SDK, 111 e2e-live. `scripts/e2e-live.ts` closed the last gap
 and found eight real SDK bugs doing it, one of them permanent fund loss.
 
 ## Coverage by layer
@@ -11,12 +11,12 @@ The system has four boundaries, and a bug at each one fails differently.
 
 | Boundary | Covered by | Tests |
 |---|---|---|
-| Contracts alone | `Pool`, `HaliasRegistry`, `HaliasDomain`, `Deployer`, `RootHistory` | 104 |
+| Contracts alone | `Pool`, `HaliasRegistry`, `HaliasController`, `Deployer`, `RootHistory` | 104 |
 | Circuit ↔ contracts | `E2E` (real verifier), `Alignment` | 18 |
 | SDK internals | `packages/sdk/test/sdk.test.ts` | 44 |
 | SDK ↔ contracts | `scripts/e2e-live.ts` | 46 |
 
-130 protocol tests and 44 SDK tests pass. `e2e-live.ts` is not part of either suite — it
+179 protocol tests and 86 SDK tests pass. `e2e-live.ts` is not part of either suite — it
 needs a running node and real proving artifacts — and passes against a local node in ~25s.
 
 ### Contracts alone
@@ -26,7 +26,7 @@ a proof is valid. That is the right trade — it makes it cheap to exercise ever
 path — but it means a green suite here says nothing about the circuit.
 
 No mocks beyond the verifier. `Pool.test.ts` runs against a real `HaliasRegistry` with a
-signer standing in as controller; `HaliasDomain.test.ts` and `Deployer.test.ts` run against
+signer standing in as controller; `HaliasController.test.ts` and `Deployer.test.ts` run against
 the real pool and registry. Nothing stubs a dependency the split created.
 
 ### Circuit ↔ contracts

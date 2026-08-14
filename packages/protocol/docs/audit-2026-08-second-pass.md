@@ -1,5 +1,14 @@
 # Security review — second pass
 
+
+> **Point-in-time record, 2026-08.** Kept as written; the code has moved since. Changes that
+> post-date this pass and that it therefore does not cover: note keys now come from a BIP-39
+> recovery phrase rather than a `personal_sign` signature; an alias is owned by a secp256k1
+> key derived from that phrase rather than by the registering wallet, so `msg.sender`
+> authorises no owner action at all; and signature verification, deadline and nonce bump are
+> unified in `_consumeAuthorization`. See
+> [keys-and-authorization.md](keys-and-authorization.md) for the current design.
+
 Covers what the first pass (`audit-2026-08.md`) could not: the changes made since it was
 written. Those are the F1 circuit fix and its transient-storage arming, the offer/accept
 handover, the dual-mode owner authorisation, the removal of `updateKeys`/`rotateKeys`, and the
