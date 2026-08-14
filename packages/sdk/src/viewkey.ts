@@ -31,6 +31,7 @@ export interface ViewKeys {
 }
 
 const PREFIX = "hvk1";
+const ZERO_KEY = "0x" + "00".repeat(32);
 const BODY_BYTES = 96;   // 32 pubkey + 32 viewing + 32 x25519
 
 /// The view-only half of a key set. The spending key is not included and cannot be recovered
@@ -58,6 +59,10 @@ export function keysFromViewKeys(v: ViewKeys): HaliasKeys {
       privateKey: v.encryptionPrivKey,
       publicKey: nacl.box.keyPair.fromSecretKey(v.encryptionPrivKey).publicKey,
     },
+    // No ownership key either, and for the same reason as the spending key: a viewer must not
+    // be able to offer the alias away. It is derived from the alias seed, which a view key
+    // deliberately does not carry.
+    owner: { privateKey: ZERO_KEY, address: ethers.ZeroAddress },
   };
 }
 

@@ -20,6 +20,23 @@ export interface HaliasKeys {
   viewingPrivKey: bigint;   // private circuit witness
   nullifierKey: bigint;     // Poseidon(viewingPrivKey) — nk: baked into commitments + nullifiers
   encryption: NaclKeypair;  // X25519 keypair for NaCl box output encryption
+  /// secp256k1, and the only key here that is an Ethereum key at all. It holds the alias NFT
+  /// and signs the three operations that need its owner — offering it, cancelling an offer,
+  /// setting its dataHash — as EIP-712, so it never sends a transaction and never needs gas.
+  ///
+  /// Derived per alias, not per wallet. One owner address across every alias would publish
+  /// exactly the link separate keys exist to avoid: `ownerOf` is public, so a shared owner
+  /// would tie all of someone's aliases together on chain.
+  ///
+  /// This is what decouples an identity from any EOA. The name used to be held by whichever
+  /// wallet paid to register it, which put a real address next to the alias in public state
+  /// and meant switching wallets left the name behind.
+  owner: OwnerKey;
+}
+
+export interface OwnerKey {
+  privateKey: string;   // 0x-prefixed, secp256k1
+  address: string;      // what ownerOf returns for this alias
 }
 
 // Domain tag for per-alias seeds. Three inputs, so it cannot collide with the two-input
@@ -48,10 +65,10 @@ export function poseidonHash(inputs: bigint[]): bigint {
 /// across every name an EOA owns. One signature still unlocks all of them, so the prompt
 /// count does not change.
 ///
-/// This does NOT make aliases unlinkable on its own — `HaliasController.ownerOf` still names
-/// the same EOA for each. Separating those requires holding them from different addresses;
-/// see multi-alias-flow.md. What it does fix is note separation: distinct balances,
-/// distinct decryption, and no shared key in the registry.
+/// Aliases from one root are unlinkable on chain: each has its own spending key in the
+/// registry and its own owner address on the NFT, and neither is shared. Holding them from
+/// different wallets is no longer what separates them — see multi-alias-flow.md, which
+/// predates the ownership key.
 ///
 /// The root comes from a {SeedSource} — see seed.ts. It is deliberately unrelated to the
 /// wallet that broadcasts, so no signature can reproduce it.
@@ -69,12 +86,18 @@ export function deriveKeysFromRoot(root: bigint, aliasIndex: number = 0): Halias
   );
   const encKeypair = nacl.box.keyPair.fromSecretKey(encPriv);
 
+  // Alias-ownership key: domain byte 0x03. Separate from every key above, so holding one
+  // reveals nothing about the others — a view key carries the viewing half and cannot sign
+  // an ownership action, and this cannot decrypt a note.
+  const ownerPriv = ethers.keccak256(ethers.concat([seedBytes, new Uint8Array([3])]));
+
   return {
     spendingPrivKey,
     spendingPubkey: poseidonHash([spendingPrivKey]),
     viewingPrivKey,
     nullifierKey:   poseidonHash([viewingPrivKey]),
     encryption:     { privateKey: encPriv, publicKey: encKeypair.publicKey },
+    owner:          { privateKey: ownerPriv, address: ethers.computeAddress(ownerPriv) },
   };
 }
 

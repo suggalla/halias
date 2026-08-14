@@ -85,8 +85,8 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         commitment is already MIN_COMMIT_AGE blocks old and a would-be front-runner
     ///         cannot manufacture one in the past.
     ///
-    ///         `msg.sender` is bound into the commitment for a second reason: without it, the
-    ///         reveal itself is stealable. `_record` makes `msg.sender` the owner, so copying
+    ///         The owner is bound into the commitment for a second reason: without it, the
+    ///         reveal itself is stealable. `_record` mints to that owner, so copying
     ///         a reveal verbatim would mint the alias to the copier while the victim keeps
     ///         the keys. Binding the sender makes a copied reveal hash to a commitment that
     ///         does not exist.
@@ -167,20 +167,26 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         _;
     }
 
-    /// @dev Authorises an action reserved to an alias's owner, in either of the two ways an
-    ///      owner can express intent.
+    /// @dev Authorises an action reserved to an alias's owner. A signature is the only way to
+    ///      express that intent — `msg.sender` is never consulted.
     ///
-    ///      An empty signature means the owner is submitting the transaction themselves, so
-    ///      `msg.sender` is the authority and there is nothing to replay. A non-empty one
-    ///      means anyone may submit it and the owner's EIP-712 signature is the authority —
-    ///      which is the point: an owner recovering from a compromised key is exactly the
-    ///      person least likely to hold ETH, and rotation is exactly what they need to do.
-    ///      {SignatureChecker} accepts EOAs and ERC-1271 contracts alike.
+    ///      There used to be a second path: an empty signature meant the owner was submitting
+    ///      the transaction themselves. It is gone because the owner is no longer an account
+    ///      anyone transacts from. A client derives its owner key from its recovery phrase, so
+    ///      that key holds no ETH and cannot pay for a transaction — it can only ever sign,
+    ///      while some funded wallet submits. Keeping a sender-based path would have meant
+    ///      keeping the assumption that owning a name and paying for gas are the same account,
+    ///      which is exactly the coupling this removes.
     ///
-    ///      The nonce is bumped on **both** paths, so the rule is one sentence: any
-    ///      authorised action on an alias invalidates every signature outstanding for it. An
-    ///      owner who signs an offer and then changes their mind by acting directly does not
-    ///      leave the old signature live for someone to submit afterwards.
+    ///      What it buys: `ownerOf` no longer names a wallet anyone uses, so it stops tying a
+    ///      real address to an alias in public state; an owner recovering from a compromised
+    ///      key needs no ETH; and an alias moves between wallets without moving at all.
+    ///
+    ///      {SignatureChecker} accepts EOAs and ERC-1271 contracts alike, so an alias held by
+    ///      a smart account still works.
+    ///
+    ///      The nonce is bumped on every authorised action, so the rule is one sentence: any
+    ///      authorised action on an alias invalidates every signature outstanding for it.
     function _authorizeOwner(
         bytes32 aliasHash,
         bytes32 structHash,
@@ -194,21 +200,18 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         address owner = _ownerOf(uint256(aliasHash));
         if (owner == address(0)) revert NotAliasOwner();
 
-        if (signature.length != 0) {
-            if (block.timestamp > deadline) revert AuthorizationExpired();
-            if (!SignatureChecker.isValidSignatureNow(owner, _hashTypedDataV4(structHash), signature)) {
-                revert NotSignedByOwner();
-            }
-        } else if (msg.sender != owner) {
-            revert NotAliasOwner();
+        if (block.timestamp > deadline) revert AuthorizationExpired();
+        if (!SignatureChecker.isValidSignatureNow(owner, _hashTypedDataV4(structHash), signature)) {
+            revert NotSignedByOwner();
         }
 
         unchecked { aliasNonce[aliasHash]++; }
         return owner;
     }
 
-    /// @dev `_admin` is explicit rather than `msg.sender`: this deploys through CREATE2, so
-    ///      `msg.sender` is the factory. A previous deployment set admin to the factory and
+    /// @dev `_admin` is explicit rather than `msg.sender`: this deploys through
+    ///      {HaliasDeployer}, so `msg.sender` is that contract. A previous deployment set
+    ///      admin to the deployer and
     ///      stranded every admin function permanently.
     constructor(address _pool, address _registry, address _admin)
         ERC721("Halias Alias", "HLS") EIP712("Halias", "1")
@@ -276,15 +279,24 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     /// @notice Register an alias, paying the fee from your own balance.
     /// @param  name  The plaintext behind `aliasHash`, or "" to keep it off chain.
     /// @param  salt  The salt used in the matching {commit}.
+    /// @param  owner The address that will hold the name. Not `msg.sender`: a client derives
+    ///         this from its own recovery phrase, so the name travels with the keys rather
+    ///         than with whichever wallet happened to pay. `ownerOf` then reveals an address
+    ///         that never transacts, instead of publicly tying a real EOA to the alias.
+    ///
+    ///         It is bound into the commitment, so naming someone else's address cannot be
+    ///         forced on them by front-running a reveal: the commitment a victim published
+    ///         does not match one with a different owner in it.
     function register(
         string calldata name,
         bytes32 spendingPubkey,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey,
+        address owner,
         bytes32 salt
     ) external payable nonReentrant {
         bytes32 c = registrationCommitment(
-            name, spendingPubkey, nullifierKeyHash, encryptionPubkey, msg.sender, salt
+            name, spendingPubkey, nullifierKeyHash, encryptionPubkey, owner, salt
         );
         uint256 madeAt = commitments[c];
         if (madeAt == 0)                                            revert NoCommitment();
@@ -295,7 +307,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         // the name, and re-registering it reverts as taken.
         delete commitments[c];
 
-        _takeFeeAndRecord(name, spendingPubkey, nullifierKeyHash, encryptionPubkey);
+        _takeFeeAndRecord(name, spendingPubkey, nullifierKeyHash, encryptionPubkey, owner);
     }
 
     /// @notice Register in one transaction, with no commitment.
@@ -318,9 +330,10 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         string calldata name,
         bytes32 spendingPubkey,
         bytes32 nullifierKeyHash,
-        bytes32 encryptionPubkey
+        bytes32 encryptionPubkey,
+        address owner
     ) external payable nonReentrant {
-        _takeFeeAndRecord(name, spendingPubkey, nullifierKeyHash, encryptionPubkey);
+        _takeFeeAndRecord(name, spendingPubkey, nullifierKeyHash, encryptionPubkey, owner);
     }
 
     /// @dev Everything the two registration paths share. They differ only in what they
@@ -329,13 +342,18 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         string calldata name,
         bytes32 spendingPubkey,
         bytes32 nullifierKeyHash,
-        bytes32 encryptionPubkey
+        bytes32 encryptionPubkey,
+        address owner
     ) private {
         if (msg.value != registrationFee) revert WrongRegistrationFee();
         accumulatedFees += msg.value;
 
+        // `owner`, not `msg.sender`. Whoever pays need not be whoever holds the name, which is
+        // what lets a client own its aliases with a key derived from its phrase and lets a
+        // relayer pay for a registration without acquiring it. `_record` rejects the zero
+        // address, so an omitted owner fails rather than minting to nobody.
         _record(Registration({
-            owner:            msg.sender,
+            owner:            owner,
             aliasHash:        aliasToHash(name),
             spendingPubkey:   spendingPubkey,
             nullifierKeyHash: nullifierKeyHash,

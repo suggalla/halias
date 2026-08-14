@@ -15,9 +15,9 @@ import {
   transact as contractTransact,
   register as contractRegister,
   registerDirect as contractRegisterDirect,
-  updateAliasData as contractUpdateAliasData,
-  offerAlias as contractOfferAlias,
-  cancelOffer as contractCancelOffer,
+  signOfferAlias as contractSignOfferAlias,
+  signCancelOffer as contractSignCancelOffer,
+  signUpdateAliasData as contractSignUpdateAliasData,
   acceptAlias as contractAcceptAlias,
   lookupAlias as contractLookupAlias,
   claim as contractClaim,
@@ -152,10 +152,11 @@ export class Halias extends HaliasCore {
     const fee = await this.domain.registrationFee() as bigint;
     const tx = opts.direct
       ? await contractRegisterDirect(
-          this.domain, `${cleanAlias}.hls`, spendingBytes32, nullifierKeyHash, encBytes32, fee)
+          this.domain, `${cleanAlias}.hls`, spendingBytes32, nullifierKeyHash, encBytes32,
+          fee, this.keys!.owner.address)
       : await contractRegister(
           this.domain, `${cleanAlias}.hls`, spendingBytes32, nullifierKeyHash, encBytes32,
-          fee, salt, onStep);
+          fee, this.keys!.owner.address, salt, onStep);
     return { txHash: await this.settle(tx) };
   }
 
@@ -723,24 +724,33 @@ export class Halias extends HaliasCore {
     return this.namesByAlias.get(aliasHash) ?? null;
   }
 
-  async myAliases(): Promise<{ aliasHash: string; slot: number; name: string | null }[]> {
+  /// Aliases these keys control.
+  ///
+  /// Matched by spending pubkey against the registry, not by asking who holds the NFT. Since
+  /// the owner is derived from the phrase and never transacts, "who owns it" is no longer a
+  /// question the connected wallet can answer — and it was never the question a wallet list
+  /// wanted. Ownership travels alongside for the three operations that need it.
+  async myAliases(): Promise<
+    { aliasHash: string; slot: number; name: string | null; owner: string | null }[]
+  > {
     this.ensureInit();
     await this.ensureSync();
-    const me = await this.config.signer.getAddress();
-    const owned: { aliasHash: string; slot: number; name: string | null }[] = [];
-    for (const e of this.registryEntries) {
-      try {
-        const owner = await this.domain.ownerOf(BigInt(e.aliasHash)) as string;
-        if (owner.toLowerCase() === me.toLowerCase()) {
-          owned.push({
-            aliasHash: e.aliasHash,
-            slot: e.registrySlot,
-            name: this.namesByAlias.get(e.aliasHash) ?? null,
-          });
-        }
-      } catch { /* burned or unowned */ }
-    }
-    return owned;
+    const hash = this.aliasHashByPubkey.get(this.keys!.spendingPubkey);
+    if (hash === undefined) return [];
+
+    const h = "0x" + hash.toString(16).padStart(64, "0");
+    const entry = this.registryEntries.find(
+      (e) => e.aliasHash.toLowerCase() === h.toLowerCase(),
+    );
+    let owner: string | null = null;
+    try { owner = await this.domain.ownerOf(hash) as string; } catch { /* burned */ }
+
+    return [{
+      aliasHash: entry?.aliasHash ?? h,
+      slot: entry?.registrySlot ?? 0,
+      name: this.namesByAlias.get(entry?.aliasHash ?? h) ?? null,
+      owner,
+    }];
   }
 
   async lookup(alias: string): Promise<LookupResult> {
@@ -789,15 +799,16 @@ export class Halias extends HaliasCore {
   async offerAliasByHash(aliasHash: bigint, to: string): Promise<{ txHash: string }> {
     this.ensureInit();
     this.ensureSpendable();
-    const tx = await contractOfferAlias(this.domain, aliasHash, to, await this.nextNonce());
-    return { txHash: await this.settle(tx) };
+    const signed = await contractSignOfferAlias(this.domain, aliasHash, to, await this.ownerSigner(aliasHash));
+    return { txHash: await this.settle(await signed.submit(this.config.signer, await this.nextNonce())) };
   }
 
   async cancelOffer(alias: string): Promise<{ txHash: string }> {
     this.ensureInit();
     this.ensureSpendable();
-    const tx = await contractCancelOffer(this.domain, this.aliasHashOf(alias), await this.nextNonce());
-    return { txHash: await this.settle(tx) };
+    const signed = await contractSignCancelOffer(
+      this.domain, this.aliasHashOf(alias), await this.ownerSigner(this.aliasHashOf(alias)));
+    return { txHash: await this.settle(await signed.submit(this.config.signer, await this.nextNonce())) };
   }
 
   /// Accept an alias offered to this client, installing keys derived at `aliasIndex`.
@@ -832,7 +843,7 @@ export class Halias extends HaliasCore {
         nullifierKeyHash: this.myNullifierKeyHash(),
         encryptionPubkey: BigInt(ethers.hexlify(keys.encryption.publicKey)),
       },
-      this.config.signer,
+      await this.acceptingSigner(aliasHash),
       { deadlineSeconds: opts.deadlineSeconds },
     );
 
@@ -850,10 +861,69 @@ export class Halias extends HaliasCore {
   async updateAliasData(alias: string, newDataHash: bigint): Promise<{ txHash: string }> {
     this.ensureInit();
     this.ensureSpendable();
-    const aliasHash = this.aliasHashOf(alias);
+    const signed = await contractSignUpdateAliasData(
+      this.domain, this.aliasHashOf(alias), newDataHash,
+      await this.ownerSigner(this.aliasHashOf(alias)));
+    return { txHash: await this.settle(await signed.submit(this.config.signer, await this.nextNonce())) };
+  }
 
-    const tx = await contractUpdateAliasData(this.domain, aliasHash, newDataHash);
-    return { txHash: await this.settle(tx) };
+  /// Whichever key the offer on `aliasHash` was actually made to.
+  ///
+  /// An offer names an address, and the acceptance has to be signed by that address — so this
+  /// picks between the derived owner key for this index and the connected wallet by asking
+  /// the contract which one is pending, rather than assuming.
+  private async acceptingSigner(aliasHash: bigint): Promise<ethers.Signer> {
+    const pending = ((await this.domain.pendingAliasOwner(
+      ethers.toBeHex(aliasHash, 32))) as string).toLowerCase();
+    const wallet = (await this.config.signer.getAddress()).toLowerCase();
+
+    // Only an offer naming the connected wallet needs that wallet to sign; everything else
+    // is signed by this index's derived owner key, which is what an offer to "you" names.
+    //
+    // Deliberately does not refuse when nothing is pending. Preparing a signature is an
+    // offline act and legitimately outlives the offer it was written against — that is how a
+    // cancellation is enforced, at redemption rather than at signing, and refusing here would
+    // hide the case instead of testing it.
+    if (pending === wallet) return this.config.signer;
+    return new ethers.Wallet(this.keys!.owner.privateKey, this.config.provider);
+  }
+
+  /// The address an offer should name for this client to be able to accept it.
+  ///
+  /// The derived owner of this alias index — so handing an alias to a different index of the
+  /// same phrase, which is how keys are rotated, names an address that changes with the index.
+  get ownerAddress(): string {
+    this.ensureInit();
+    return this.keys!.owner.address;
+  }
+
+  /// Whichever key can authorise an owner action on `aliasHash`.
+  ///
+  /// Normally the derived one: it is what registration names, it holds no ETH, and it only
+  /// ever signs — the connected wallet submits and pays, which is why the name is not tied to
+  /// whichever wallet that happens to be.
+  ///
+  /// But an alias can be handed to any address, including an ordinary EOA, so the derived key
+  /// is not the owner by assumption. Resolved against the chain, falling back to the connected
+  /// wallet when that is the holder, and refusing outright when neither is — which is a far
+  /// better answer than a signature that recovers to nobody and reverts as NotSignedByOwner.
+  private async ownerSigner(aliasHash: bigint): Promise<ethers.Signer> {
+    const derived = this.keys!.owner.address.toLowerCase();
+    let owner: string;
+    try {
+      owner = ((await this.domain.ownerOf(aliasHash)) as string).toLowerCase();
+    } catch {
+      throw new Error("That alias is not registered");
+    }
+    if (owner === derived) {
+      return new ethers.Wallet(this.keys!.owner.privateKey, this.config.provider);
+    }
+    const wallet = (await this.config.signer.getAddress()).toLowerCase();
+    if (owner === wallet) return this.config.signer;
+    throw new Error(
+      `This alias is owned by ${owner}, which is neither its derived owner key nor the ` +
+      `connected wallet — nothing here can authorise the change`,
+    );
   }
 
   /// Empty an alias, then offer it on.
@@ -883,20 +953,20 @@ export class Halias extends HaliasCore {
       e.amount > 0n &&
       !this.spentNullifiers.has(computeNullifier(keys.nullifierKey, e.treeNumber, e.leafIndex))
     );
-    let lastNonce: number | undefined;
     for (const entry of unspent) {
       const result = await this.withdraw(recipientAddress, ethers.formatEther(entry.amount));
       sweepTxHashes.push(result.txHash);
-      lastNonce = (await this.config.provider.getTransaction(result.txHash))?.nonce;
     }
 
-    // Chained from the sweep we just mined rather than resolved by ethers. Sweeping and
-    // offering are the only two sends in this SDK with no proof between them, and a proof is
-    // what usually gives the provider's view time to catch up.
-    const tx = await contractOfferAlias(
+    // The nonce is ethers' to resolve again. This used to be chained from the sweep, because
+    // sweeping and offering were two sends with nothing between them and the provider's view
+    // of the pending nonce lagged. Signing the offer now reads the owner and the alias nonce
+    // first, which is the delay that hack was standing in for — and a hard-coded nonce is
+    // worse than none once anything else can land in between.
+    const signed = await contractSignOfferAlias(
       this.domain, this.aliasHashOf(alias), newOwner,
-      lastNonce === undefined ? undefined : lastNonce + 1,
-    );
+      await this.ownerSigner(this.aliasHashOf(alias)));
+    const tx = await signed.submit(this.config.signer, await this.nextNonce());
     return { sweepTxHashes, offerTxHash: await this.settle(tx) };
   }
 
@@ -942,7 +1012,8 @@ export class Halias extends HaliasCore {
     ]));
     const regTx = await contractRegister(
       this.domain, inviteName, temp.spendingPubkey,
-      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee, inviteSalt,
+      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
+      temp.ownerAddress, inviteSalt,
     );
     await regTx.wait();
     await this.refresh();
