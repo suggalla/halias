@@ -75,6 +75,7 @@ export const CONTROLLER_ABI = [
   "function acceptAlias(bytes32 aliasHash, bytes32 newSpendingPubkey, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey, uint256 deadline, bytes signature) external",
   "function pendingAliasOwner(bytes32) external view returns (address)",
   "function aliasNonce(bytes32) external view returns (uint256)",
+  "function aliasAuth(bytes32 aliasHash) external view returns (address owner, address pendingOwner, uint256 nonce)",
   "event AliasOffered(bytes32 indexed aliasHash, address indexed from, address indexed to)",
   // Both halves, so a client tracking pending offers can see one withdrawn as well as made.
   "event AliasOfferCancelled(bytes32 indexed aliasHash)",
@@ -343,12 +344,15 @@ async function signAliasAction(
   types: Record<string, { name: string; type: string }[]>,
   fields: Record<string, unknown>,
   send: (deadline: bigint, signature: string, d: ethers.Contract, nonce?: number) => Promise<ethers.ContractTransactionResponse>,
-  opts: { deadlineSeconds?: number } = {},
+  opts: { deadlineSeconds?: number; nonce?: bigint } = {},
 ): Promise<SignedAction> {
   const deadline = BigInt(Math.floor(Date.now() / 1000) + (opts.deadlineSeconds ?? 3600));
   const value = {
     ...fields,
-    nonce: await domain.aliasNonce(h32(aliasHash)) as bigint,
+    // Supplied by the caller when it has already read it — every caller here resolves the
+    // signer through aliasAuth first, which returns the nonce alongside. Fetched only when
+    // nobody passed one, so a direct user of this function still works.
+    nonce: opts.nonce ?? (await domain.aliasNonce(h32(aliasHash)) as bigint),
     deadline,
   };
   const signature = await (owner as any).signTypedData(await eip712Domain(domain), types, value);
@@ -367,7 +371,7 @@ export async function signUpdateAliasData(
   aliasHash: bigint,
   newDataHash: bigint,
   owner: ethers.Signer,
-  opts: { deadlineSeconds?: number } = {},
+  opts: { deadlineSeconds?: number; nonce?: bigint } = {},
 ): Promise<SignedAction> {
   return signAliasAction(
     domain, owner, aliasHash,
@@ -389,7 +393,7 @@ export async function signOfferAlias(
   aliasHash: bigint,
   to: string,
   owner: ethers.Signer,
-  opts: { deadlineSeconds?: number } = {},
+  opts: { deadlineSeconds?: number; nonce?: bigint } = {},
 ): Promise<SignedAction> {
   return signAliasAction(
     domain, owner, aliasHash,
@@ -412,7 +416,7 @@ export async function signCancelOffer(
   domain: ethers.Contract,
   aliasHash: bigint,
   owner: ethers.Signer,
-  opts: { deadlineSeconds?: number } = {},
+  opts: { deadlineSeconds?: number; nonce?: bigint } = {},
 ): Promise<SignedAction> {
   return signAliasAction(
     domain, owner, aliasHash,
@@ -437,7 +441,7 @@ export async function acceptAlias(
   aliasHash: bigint,
   keys: { spendingPubkey: bigint; nullifierKeyHash: bigint; encryptionPubkey: bigint },
   recipient: ethers.Signer,
-  opts: { deadlineSeconds?: number } = {},
+  opts: { deadlineSeconds?: number; nonce?: bigint } = {},
 ): Promise<{ signature: string; deadline: bigint; submit: (submitter?: ethers.Signer) => Promise<ethers.ContractTransactionResponse> }> {
   const to = await recipient.getAddress();
   const deadline = BigInt(Math.floor(Date.now() / 1000) + (opts.deadlineSeconds ?? 3600));
@@ -460,7 +464,9 @@ export async function acceptAlias(
     nullifierKeyHash: h32(keys.nullifierKeyHash),
     encryptionPubkey: h32(keys.encryptionPubkey),
     to,
-    nonce:    await domain.aliasNonce(h32(aliasHash)) as bigint,
+    // From the caller when it already read it — {Halias-acceptOffer} resolves the signer
+    // through aliasAuth, which returns the nonce with it.
+    nonce:    opts.nonce ?? (await domain.aliasNonce(h32(aliasHash)) as bigint),
     deadline,
   };
   const signature = await (recipient as any).signTypedData(domainData, types, value);

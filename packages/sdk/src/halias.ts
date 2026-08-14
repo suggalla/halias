@@ -799,15 +799,18 @@ export class Halias extends HaliasCore {
   async offerAliasByHash(aliasHash: bigint, to: string): Promise<{ txHash: string }> {
     this.ensureInit();
     this.ensureSpendable();
-    const signed = await contractSignOfferAlias(this.domain, aliasHash, to, await this.ownerSigner(aliasHash));
+    const auth = await this.ownerSigner(aliasHash);
+    const signed = await contractSignOfferAlias(this.domain, aliasHash, to, auth.signer,
+                                                { nonce: auth.nonce });
     return { txHash: await this.settle(await signed.submit(this.config.signer, await this.nextNonce())) };
   }
 
   async cancelOffer(alias: string): Promise<{ txHash: string }> {
     this.ensureInit();
     this.ensureSpendable();
+    const auth = await this.ownerSigner(this.aliasHashOf(alias));
     const signed = await contractSignCancelOffer(
-      this.domain, this.aliasHashOf(alias), await this.ownerSigner(this.aliasHashOf(alias)));
+      this.domain, this.aliasHashOf(alias), auth.signer, { nonce: auth.nonce });
     return { txHash: await this.settle(await signed.submit(this.config.signer, await this.nextNonce())) };
   }
 
@@ -835,6 +838,7 @@ export class Halias extends HaliasCore {
     this.ensureInit();
     this.ensureSpendable();
     const keys = this.keys!;
+    const accepting = await this.acceptingSigner(aliasHash);
     const accepted = await contractAcceptAlias(
       this.domain,
       aliasHash,
@@ -843,8 +847,8 @@ export class Halias extends HaliasCore {
         nullifierKeyHash: this.myNullifierKeyHash(),
         encryptionPubkey: BigInt(ethers.hexlify(keys.encryption.publicKey)),
       },
-      await this.acceptingSigner(aliasHash),
-      { deadlineSeconds: opts.deadlineSeconds },
+      accepting.signer,
+      { deadlineSeconds: opts.deadlineSeconds, nonce: accepting.nonce },
     );
 
     if (opts.prepare) {
@@ -861,9 +865,9 @@ export class Halias extends HaliasCore {
   async updateAliasData(alias: string, newDataHash: bigint): Promise<{ txHash: string }> {
     this.ensureInit();
     this.ensureSpendable();
+    const auth = await this.ownerSigner(this.aliasHashOf(alias));
     const signed = await contractSignUpdateAliasData(
-      this.domain, this.aliasHashOf(alias), newDataHash,
-      await this.ownerSigner(this.aliasHashOf(alias)));
+      this.domain, this.aliasHashOf(alias), newDataHash, auth.signer, { nonce: auth.nonce });
     return { txHash: await this.settle(await signed.submit(this.config.signer, await this.nextNonce())) };
   }
 
@@ -872,9 +876,9 @@ export class Halias extends HaliasCore {
   /// An offer names an address, and the acceptance has to be signed by that address — so this
   /// picks between the derived owner key for this index and the connected wallet by asking
   /// the contract which one is pending, rather than assuming.
-  private async acceptingSigner(aliasHash: bigint): Promise<ethers.Signer> {
-    const pending = ((await this.domain.pendingAliasOwner(
-      ethers.toBeHex(aliasHash, 32))) as string).toLowerCase();
+  private async acceptingSigner(aliasHash: bigint): Promise<{ signer: ethers.Signer; nonce: bigint }> {
+    const [, pendingRaw, nonce] = await this.aliasAuth(aliasHash);
+    const pending = pendingRaw.toLowerCase();
     const wallet = (await this.config.signer.getAddress()).toLowerCase();
 
     // Only an offer naming the connected wallet needs that wallet to sign; everything else
@@ -884,8 +888,14 @@ export class Halias extends HaliasCore {
     // offline act and legitimately outlives the offer it was written against — that is how a
     // cancellation is enforced, at redemption rather than at signing, and refusing here would
     // hide the case instead of testing it.
-    if (pending === wallet) return this.config.signer;
-    return new ethers.Wallet(this.keys!.owner.privateKey, this.config.provider);
+    if (pending === wallet) return { signer: this.config.signer, nonce };
+    return { signer: new ethers.Wallet(this.keys!.owner.privateKey, this.config.provider), nonce };
+  }
+
+  /// Who must sign for this alias, and with what nonce — one call rather than three.
+  private async aliasAuth(aliasHash: bigint): Promise<[string, string, bigint]> {
+    const r = await this.domain.aliasAuth(ethers.toBeHex(aliasHash, 32));
+    return [r[0] as string, r[1] as string, r[2] as bigint];
   }
 
   /// The address an offer should name for this client to be able to accept it.
@@ -907,19 +917,16 @@ export class Halias extends HaliasCore {
   /// is not the owner by assumption. Resolved against the chain, falling back to the connected
   /// wallet when that is the holder, and refusing outright when neither is — which is a far
   /// better answer than a signature that recovers to nobody and reverts as NotSignedByAuthority.
-  private async ownerSigner(aliasHash: bigint): Promise<ethers.Signer> {
-    const derived = this.keys!.owner.address.toLowerCase();
-    let owner: string;
-    try {
-      owner = ((await this.domain.ownerOf(aliasHash)) as string).toLowerCase();
-    } catch {
-      throw new Error("That alias is not registered");
-    }
-    if (owner === derived) {
-      return new ethers.Wallet(this.keys!.owner.privateKey, this.config.provider);
+  private async ownerSigner(aliasHash: bigint): Promise<{ signer: ethers.Signer; nonce: bigint }> {
+    const [ownerRaw, , nonce] = await this.aliasAuth(aliasHash);
+    const owner = ownerRaw.toLowerCase();
+    if (owner === ethers.ZeroAddress) throw new Error("That alias is not registered");
+
+    if (owner === this.keys!.owner.address.toLowerCase()) {
+      return { signer: new ethers.Wallet(this.keys!.owner.privateKey, this.config.provider), nonce };
     }
     const wallet = (await this.config.signer.getAddress()).toLowerCase();
-    if (owner === wallet) return this.config.signer;
+    if (owner === wallet) return { signer: this.config.signer, nonce };
     throw new Error(
       `This alias is owned by ${owner}, which is neither its derived owner key nor the ` +
       `connected wallet — nothing here can authorise the change`,
@@ -963,9 +970,9 @@ export class Halias extends HaliasCore {
     // of the pending nonce lagged. Signing the offer now reads the owner and the alias nonce
     // first, which is the delay that hack was standing in for — and a hard-coded nonce is
     // worse than none once anything else can land in between.
+    const auth = await this.ownerSigner(this.aliasHashOf(alias));
     const signed = await contractSignOfferAlias(
-      this.domain, this.aliasHashOf(alias), newOwner,
-      await this.ownerSigner(this.aliasHashOf(alias)));
+      this.domain, this.aliasHashOf(alias), newOwner, auth.signer, { nonce: auth.nonce });
     const tx = await signed.submit(this.config.signer, await this.nextNonce());
     return { sweepTxHashes, offerTxHash: await this.settle(tx) };
   }

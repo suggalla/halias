@@ -557,6 +557,28 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         emit AliasOffered(aliasHash, owner, to);
     }
 
+    /// @notice Everything needed to authorise an action on `aliasHash`, in one call.
+    /// @dev    A client cannot sign without knowing who has to sign and what nonce to carry,
+    ///         and reading those separately costs two sequential round-trips before a
+    ///         signature can even be produced. This is not new state — it reads what the three
+    ///         mappings already hold — it exists so a client depends on one call rather than
+    ///         three, and stores none of it.
+    ///
+    ///         Deliberately read rather than remembered: a client that tracked the nonce
+    ///         itself would need durable state that survives a reinstall, stays correct across
+    ///         two devices holding the same phrase, and desyncs the moment anyone submits a
+    ///         relayed action on its behalf.
+    /// @return owner        Who must sign an owner action. Zero if the alias is unregistered.
+    /// @return pendingOwner Who must sign an acceptance. Zero if nothing is offered.
+    /// @return nonce        What either signature must carry.
+    function aliasAuth(bytes32 aliasHash) external view returns (
+        address owner,
+        address pendingOwner,
+        uint256 nonce
+    ) {
+        return (_ownerOf(uint256(aliasHash)), pendingAliasOwner[aliasHash], aliasNonce[aliasHash]);
+    }
+
     /// @notice Withdraw an outstanding offer.
     function cancelOffer(
         bytes32 aliasHash,
