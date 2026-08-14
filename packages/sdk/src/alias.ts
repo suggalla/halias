@@ -9,15 +9,22 @@
 
 /// Characters an alias may contain, after the suffix is stripped.
 ///
-/// Deliberately narrow. A name is what someone reads off a screen and types into a payment
-/// form, so the cost of two names that look alike is money sent to the wrong person. ASCII
-/// letters, digits and interior hyphens keep that risk to shapes a reader can actually
-/// distinguish; permitting unicode would reopen homoglyph attacks that no amount of care at
-/// the contract layer can catch.
-const VALID = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+/// Deliberately narrow: ASCII letters and digits, nothing else.
+///
+/// A name is what someone reads off a screen, hears on a phone, and types into a payment
+/// form, so the cost of two names that look or sound alike is money sent to the wrong person.
+/// Unicode would reopen homoglyph attacks outright. Hyphens were allowed and are not any
+/// more: `alice-bank` and `alicebank` are two names that survive being spoken as one, which
+/// is the same failure in a quieter form.
+///
+/// Excluding them also makes `invite-…` unavailable to a user alias rather than merely
+/// improbable, so the machinery an invite registers cannot be confused with anyone's name by
+/// any client using this function. The contract enforces no charset — it cannot know what a
+/// display layer renders confusably — so this is the layer that decides.
+const VALID = /^[a-z0-9]+$/;
 
 const MIN_LENGTH = 1;
-const MAX_LENGTH = 63;   // one DNS label, so a name is never awkward to display or speak
+const MAX_LENGTH = 63;   // one DNS label's worth, so a name is never awkward to display or speak
 
 export class InvalidAliasError extends Error {}
 
