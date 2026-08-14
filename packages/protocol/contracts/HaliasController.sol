@@ -403,7 +403,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         The proof therefore carries the insertion. It proves against the root from
     ///         *before* this registration — on chain, and inside the freshness window — and
     ///         derives the tree that results from adding the claimer's leaf. The registry
-    ///         write comes first only so {armPendingLeaf} can read the leaf back out of
+    ///         write comes first only so {authorizePendingLeaf} can read the leaf back out of
     ///         stored state rather than trusting an argument.
     ///
     ///         Arming is what stops this being a hole. Without it a prover on the ordinary
@@ -424,7 +424,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         if (p.tokenAddress != address(0)) revert ClaimMustBeETH();
 
         _record(r, name);
-        registry.armPendingLeaf(r.aliasHash);
+        registry.authorizePendingLeaf(r.aliasHash);
 
         // The pool settles both destinations: the relayer is paid its fee directly, and
         // whatever is left over arrives here. Nothing about the relayer is this contract's

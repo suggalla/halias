@@ -77,7 +77,7 @@ describe("HaliasRegistry", function () {
         (f: any) => f.type === "function" && !["view", "pure"].includes(f.stateMutability),
       ).map((f: any) => f.name).sort();
       expect(mutating).to.deep.equal(
-        ["armPendingLeaf", "clearPendingLeaf", "reassign", "register", "setDataHash"]);
+        ["authorizePendingLeaf", "clearPendingLeaf", "reassign", "register", "setDataHash"]);
     });
 
     it("matches the off-chain empty root", async function () {

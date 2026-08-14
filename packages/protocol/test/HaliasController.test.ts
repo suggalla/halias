@@ -389,7 +389,7 @@ describe("HaliasController", function () {
         .to.be.revertedWithCustomError(pool, "PendingLeafNotArmed");
     });
 
-    it("does not leave the arming set for a later transaction", async function () {
+    it("does not leave the authorisation set for a later transaction", async function () {
       // Transient storage, so it cannot outlive the transaction that set it. If it were
       // persistent, the next ordinary transact would have to carry a stale leaf or revert.
       await initPoseidon();
@@ -413,7 +413,7 @@ describe("HaliasController", function () {
     it("only the controller may arm an insertion", async function () {
       const { name: hName, h } = freshName();
       await (await registerAlias(domain, user, hName, PK, NKH, ENC, FEE)).wait();
-      await expect(registry.connect(user).armPendingLeaf(h))
+      await expect(registry.connect(user).authorizePendingLeaf(h))
         .to.be.revertedWithCustomError(registry, "NotController");
     });
   });
