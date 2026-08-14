@@ -29,13 +29,17 @@
 	//
 	// null means the list itself, which is where the screen opens: landing pre-armed on
 	// "transfer" put the most destructive action under the cursor by default.
-	const ACTIONS: { id: Mode; label: string; blurb: string }[] = [
+	const ACTIONS: { id: Mode; label: string; blurb: string; needsOwner?: boolean }[] = [
 		{ id: 'transfer',  label: 'Send',      blurb: 'Pay another alias from this one. Amounts stay hidden.' },
 		{ id: 'deposit',   label: 'Add funds', blurb: 'Move ETH from a wallet into this alias.' },
 		{ id: 'withdraw',  label: 'Withdraw',  blurb: 'Move ETH out to an ordinary address.' },
 		{ id: 'invite',    label: 'Invite',    blurb: 'Create a funded link for someone with no alias yet.' },
 		{ id: 'ownership', label: 'Transfer alias ownership',
-		  blurb: 'Hand this alias to a new owner, or sell it.' },
+		  blurb: 'Hand this alias to a new owner, or sell it.',
+		  // The only action that needs the name's owner. Spending never does — the pool checks
+		  // a proof, not an NFT — so an alias held by another of your addresses still sends and
+		  // receives here.
+		  needsOwner: true },
 		{ id: 'viewkey',   label: 'View-only key',
 		  blurb: 'Let someone read this alias without being able to spend from it.' },
 	];
@@ -224,9 +228,17 @@
 			<ul class="actions">
 				{#each ACTIONS as a (a.id)}
 					<li>
-						<button class="action" disabled={busy} onclick={() => setMode(a.id)}>
+						<button
+							class="action"
+							disabled={busy || (a.needsOwner && !alias?.ownedHere)}
+							onclick={() => setMode(a.id)}
+						>
 							<span class="an">{a.label}</span>
-							<span class="ab">{a.blurb}</span>
+							<span class="ab">
+								{a.needsOwner && !alias?.ownedHere
+									? `The name is held by ${alias?.owner ?? 'another address'}, so only that account can hand it on. Sending and receiving still work here.`
+									: a.blurb}
+							</span>
 						</button>
 					</li>
 				{/each}
@@ -383,6 +395,8 @@
 		border: 1px solid var(--border); border-radius: 8px; text-align: left;
 		transition: border-color 0.15s, background 0.15s; }
 	.action:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-titlebar); }
+	.action:disabled { opacity: 0.55; }
+	.action:disabled .ab { overflow-wrap: anywhere; }
 	.an { font-size: 0.9rem; font-weight: 700; color: var(--text-bright); }
 	.ab { font-size: 0.76rem; color: var(--text-dim); line-height: 1.45; }
 	.form { display: flex; flex-direction: column; gap: 0.6rem; }

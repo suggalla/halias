@@ -652,34 +652,64 @@ export class Halias extends HaliasCore {
   ///
   /// Static because it enumerates identities rather than acting as one — a client is bound
   /// to a single alias.
+  /// Every alias this root can act as, whether or not the connected address owns the name.
+  ///
+  /// Enumerated by key, not by ownership. It used to list what `ownerOf` said the wallet held
+  /// and then match indices to it, which tied the answer to one EOA — switch accounts and
+  /// aliases you can still spend from vanished. Ownership and spending are separate powers:
+  /// only updateAliasData, offerAlias and cancelOffer check the NFT, while the pool checks
+  /// nullifiers, roots and a proof that your spending key is the one registered here.
+  ///
+  /// So the question this answers is "which aliases do these keys control", which is what a
+  /// wallet list is for. `owner` is reported alongside so a caller can tell that the *name* is
+  /// held elsewhere and disable the three operations that need it.
+  ///
+  /// An alias that has been handed over does not appear: the registry holds the new owner's
+  /// key, so nothing here matches it. Nor does one merely offered and not yet accepted.
   static async discoverAliases(
     config: HaliasConfig,
     maxIndex: number = 32,
     root?: bigint,
-  ): Promise<{ aliasHash: string; slot: number; name: string | null; index: number | null; root: bigint }[]> {
-    // Pass `root` on any call after the first. Without it every enumeration signs again,
-    // and enumeration happens after each registration.
+  ): Promise<{
+    aliasHash: string; slot: number; name: string | null;
+    index: number | null; owner: string | null; root: bigint;
+  }[]> {
+    // Pass `root` on any call after the first. Without it every enumeration re-stretches the
+    // phrase, and enumeration happens after each registration.
     const probe = new Halias(config);
     await probe.init(0, root);
+    await probe.ensureSync();
     const derived = probe.derivationRoot;
-    const owned = await probe.myAliases();
-    if (owned.length === 0) return [];   // caller already has `derived` if it passed one in
 
-    // spendingPubkey -> index. Derived from the root the probe already obtained, so this
-    // loop costs no signatures — deriving per index from the signer would ask the wallet
-    // `maxIndex` times over.
-    const byPubkey = new Map<bigint, number>();
+    const found: {
+      aliasHash: string; slot: number; name: string | null;
+      index: number | null; owner: string | null; root: bigint;
+    }[] = [];
+
     for (let i = 0; i < maxIndex; i++) {
-      byPubkey.set(deriveKeysFromRoot(derived, i).spendingPubkey, i);
-    }
+      // Derived from the root the probe already obtained, so this loop costs nothing beyond
+      // hashing — deriving per index from a seed source would re-run PBKDF2 `maxIndex` times.
+      const pubkey = deriveKeysFromRoot(derived, i).spendingPubkey;
+      const aliasHash = probe.aliasHashByPubkey.get(pubkey);
+      if (aliasHash === undefined) continue;
 
-    return owned.map((a) => {
+      const h = "0x" + aliasHash.toString(16).padStart(64, "0");
       const entry = probe.registryEntries.find(
-        (e) => e.aliasHash.toLowerCase() === a.aliasHash.toLowerCase(),
+        (e) => e.aliasHash.toLowerCase() === h.toLowerCase(),
       );
-      const index = entry ? byPubkey.get(entry.spendingPubkey) : undefined;
-      return { ...a, index: index ?? null, root: derived };
-    });
+      let owner: string | null = null;
+      try { owner = await probe.domain.ownerOf(aliasHash) as string; } catch { /* burned */ }
+
+      found.push({
+        aliasHash: entry?.aliasHash ?? h,
+        slot: entry?.registrySlot ?? 0,
+        name: probe.namesByAlias.get(entry?.aliasHash ?? h) ?? null,
+        index: i,
+        owner,
+        root: derived,
+      });
+    }
+    return found;
   }
 
   /// The plaintext registered under an aliasHash, if one was published.
