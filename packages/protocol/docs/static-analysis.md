@@ -214,7 +214,9 @@ cd ~/tools/EcneProject && julia +1.8 --project=. -e 'using Pkg; Pkg.instantiate(
 
 ## Findings
 
-Reports as generated live in [`reports/`](reports/). The triage below is the part worth reading;
+Raw tool output is not committed — it is pinned to line numbers and goes stale on the next
+edit, which is worse than absent because it reads as current. Regenerate it with the commands
+above. The triage below is the part worth keeping;
 re-running the tools reproduces the raw reports but not the reasoning.
 
 ### Circuits — circomspect (5 warnings)
@@ -272,7 +274,7 @@ the ones where truncation *is* the definition (CREATE2 taking the low 20 bytes o
 where the narrowing is deliberate packing (`uint64(block.timestamp)`).
 
 **Reentrancy: state change after external call** (Slither ID-5, Aderyn H-3, 5 instances) — three
-in `HaliasDomain.claim`, two in `HaliasPool.transact`. Both functions are `nonReentrant`, both
+in `HaliasController.claim`, two in `HaliasPool.transact`. Both functions are `nonReentrant`, both
 call only `pool` and `registry`, and both of those are immutable and set at construction, so
 there is no attacker-controlled callee. In `claim` the flagged write is `accumulatedFees +=
 received`, where `received` is *measured* as a balance delta and then checked against

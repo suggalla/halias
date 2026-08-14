@@ -72,7 +72,7 @@ export interface RelayPayload {
 /// Deliberately under the contract's REGISTRY_ROOT_MAX_AGE rather than equal to it: a blob
 /// that is inside the window when quoted but outside it when mined wastes the submitter's
 /// gas, and the margin covers inclusion.
-export const RELAY_MAX_AGE_SECONDS = 45 * 60;
+const RELAY_MAX_AGE_SECONDS = 45 * 60;
 
 export function encodeRelayBlob(p: RelayPayload): string {
   if (p.builtAt === undefined) p = { ...p, builtAt: Math.floor(Date.now() / 1000) };
@@ -227,10 +227,6 @@ export const TRANSACT_GAS = 1_600_000n;
 /// verification plus two nullifier writes, neither of which depends on tree depth.
 export const EXIT_GAS = 400_000n;
 
-/// The a-priori cost of whatever this payload does.
-export function gasFor(payload: Pick<RelayPayload, "params">): bigint {
-  return payload.params.outputsEmpty ? EXIT_GAS : TRANSACT_GAS;
-}
 
 /// Suggest a fee before the proof exists.
 ///

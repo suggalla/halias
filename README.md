@@ -24,7 +24,7 @@ No existing protocol can do this. Railgun can't add it without adopting a naming
 
 ```
 ┌─────────────────────────────┐        ┌──────────────────────────────────┐
-│  HaliasDomain (ERC-721)     │ writes │  HaliasRegistry                  │
+│  HaliasController (ERC-721)     │ writes │  HaliasRegistry                  │
 │  Names, ownership, fee      ├───────►│  aliasHash → pubkeys + dataHash  │
 │  The only admin key         │        │  An SMT the circuit proves into  │
 │  Holds no user funds        │        │  One writer, no admin            │
@@ -47,7 +47,7 @@ No existing protocol can do this. Railgun can't add it without adopting a naming
 Registry and pool are tightly coupled at the *circuit* level and deliberately separate at the
 *contract* level. The circuit spans both; the addresses do not. That is what lets the pool
 say there is no key that can move your money, and have it be checkable by reading one file —
-the admin lives on `HaliasDomain`, which holds nothing but registration revenue.
+the admin lives on `HaliasController`, which holds nothing but registration revenue.
 
 All three are deployed already wired by `HaliasDeployer`, in one transaction. Their
 dependencies form a cycle — the pool reads the registry, the domain writes to it, and the
@@ -105,7 +105,7 @@ settles both destinations, so no paymaster, sponsor, or deposit is involved.
 |---|---|---|
 | **HaliasPool.sol** | **Locked-Ready** | Custody, note commitments, nullifiers, `transact`. One mutating function, no admin, no owner, no upgrade path. |
 | **HaliasRegistry.sol** | **Locked-Ready** | The alias SMT and the roots the pool proves against. In-place key rotation. One immutable writer, no admin. |
-| **HaliasDomain.sol** | **Locked-Ready** | Names, ERC-721 ownership, registration fee, admin. Holds no user funds. |
+| **HaliasController.sol** | **Locked-Ready** | Names, ERC-721 ownership, registration fee, admin. Holds no user funds. |
 | **HaliasDeployer.sol** | **Locked-Ready** | Brings all three up wired in one transaction, breaking their dependency cycle without a post-deploy setter. |
 | **transact.circom** | **Locked-Ready** | Unified circuit (2-in/2-out). Spans identity and money layers. Untouched by the split — no new ceremony. |
 | **SDK** | **Active** | TypeScript library for proof generation, event scanning, and key management. |

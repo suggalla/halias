@@ -1,105 +1,88 @@
-# Halias Protocol
+# halias-protocol
 
-Halias is a privacy-preserving identity and asset protocol on Ethereum. It combines ERC-721 aliases (names) with a shielded pool to enable private transfers and withdrawals.
+Contracts, circuits and ceremony tooling. What the protocol *is* and why is in the
+[repository README](../../README.md); this covers building and testing it.
 
-## Architecture
+## Contracts
 
-Three contracts, deployed wired together in one transaction by `HaliasDeployer`. The split
+Three, deployed already wired together in one transaction by `HaliasDeployer`. The split
 exists so the contract holding every user's funds has no admin key anywhere near it.
 
 ```
-HaliasDomain ──writes──> HaliasRegistry <──reads── HaliasPool
-     │                                                  ▲
-     └───────────────── calls transact ─────────────────┘
+HaliasController ──writes──> HaliasRegistry <──reads── HaliasPool
+   names, ERC-721,              aliasHash →              notes, nullifiers,
+   fee, admin key               keys + dataHash          the only ETH
 ```
 
-- **HaliasPool**: custody, note commitments, nullifiers, and `transact`. **One mutating
-  function, no admin, no owner, no upgrade path** — once deployed there is no key that can
-  pause, drain, redirect or rescue, including for the deployer.
-- **HaliasRegistry**: a **Sparse Merkle Tree** of alias keys and the roots the pool proves
-  against. Supports in-place key rotation, so a sender holding a proof against an alias's
-  position stays valid across rotations. One immutable writer, no admin.
-- **HaliasDomain**: names, ERC-721 ownership, the registration fee, and the admin key. Holds
-  no user funds — its entire balance is registration revenue.
-- **Invite Claims**: `HaliasDomain.claim` registers an alias and pays the fee straight out of
-  a funded pool note, so a new user needs no ETH of their own. The registration is bound into
-  the proof, so a relayer that submits a claim cannot mint the alias to itself.
-- **Relayer Fee**: a first-class field bound inside the proof, reimbursing whoever broadcasts
-  a transaction and letting a user with no ETH pay for inclusion out of their own shielded
-  funds. No paymaster, sponsor or deposit, and no dependency on any account-abstraction
-  standard.
-- **Local-First Web App**: A stateless PWA that derives keys and generates ZK proofs entirely in the browser, so no sensitive data reaches a server.
+- **HaliasPool** — the shielded pool. Holds every deposit, verifies one Groth16 proof per
+  transaction, and has no admin function of any kind. Nothing can reach the funds but a proof.
+- **HaliasRegistry** — a sparse Merkle tree of alias → keys, with one writer and no admin.
+  In-place updates, so an alias keeps its slot through a key rotation or a handover.
+- **HaliasController** — names, ownership, the registration fee and the only admin key.
+  Holds no user funds.
 
-## Status
+## Build
 
-Implemented: the three-contract split with atomic deployment, the SMT registry with in-place
-key rotation, ETH and ERC-20 shielded transfers, invite claims, and the relayer fee. The
-`transact` circuit is frozen — none of the split touched it, so no new ceremony is required.
-
-143 protocol tests and 44 SDK tests, including real Groth16 proofs end to end against the
-split. Reviewed internally and against audited comparable systems: four findings, all fixed.
-See [contract-split.md](docs/contract-split.md),
-[security-audit.md](docs/security-audit.md) and
-[prior-art-review.md](docs/prior-art-review.md).
-
-`Halias.sol`, the pre-split monolith, is still present and is what the current Sepolia
-deployment runs. `scripts/deploy.ts` still targets it and is the last thing blocking its
-removal.
-
-Not yet done, and both gate mainnet: the trusted setup is currently a single self-generated
-ceremony with a `--dev` phase 2, which must be replaced by a multi-party ceremony over a
-public Powers of Tau file; and the contracts have not had an external audit.
-
-## Roadmap
-
-### 1. Stealth Manifestation & Bootstrapping
-Halias functions as a **Personal Stealth Network**, allowing users to manifest untraceable on-chain presence.
-- **Unlinked EOA Bootstrapping**: Fund brand-new, 0-ETH accounts directly from the shielded pool, breaking public on-chain links. The relayer fee already provides the trustless half of this; the remainder is client work.
-- **Hardware-Enclave Onboarding**: Seedless wallet creation using the device's Secure Enclave (WebAuthn/Passkeys), so keys are biometric-locked and unextractable. Today keys derive from an EIP-191 `personal_sign`, which works with any EVM wallet.
-
-### 2. Halias Attestation Toolkit (HAT)
-A library of standardized ZK-circuits for common identity and compliance statements:
-- **Proof of Humanity**: Integrated attestations for Worldcoin, Gitcoin Passport, etc.
-- **Social Binding**: DNS/OAuth-based proofs linking `hls` names to real-world identities.
-- **Private Compliance**: Non-membership proofs against community-governed blacklists (PPOI).
-- **Financial Status**: Private proofs of on-chain activity (e.g., "Maintains > 1 ETH balance" without revealing exact balance).
-
-### 3. Extensibility & Composability
-- **Standardized Public Signals**: Ensuring all verifier versions output consistent identity anchors for 3rd-party contract consumption.
-- **Plug-and-Play Verifiers**: Allowing the protocol to support new asset types (NFTs, RWA) and complex identity requirements over time.
-
-## Development
-
-### Open Source & Governance
-Halias is committed to being a transparent, community-driven public good. 
-- **License**: Core circuits and contracts are GPL-3.0; SDKs and tooling are MIT.
-- **Reproducible Builds**: All ZK artifacts (WASM/ZKEY) are deterministically generated from the source code.
-- **Public Ceremony**: The production proving key will come from a multi-party ceremony with published transcripts, so no single party can forge proofs.
-- **Modular Contribution**: The Halias Attestation Toolkit (HAT) is open for community-designed schemas and verifiers.
-
-### Documents
-
-- [docs/contract-split.md](docs/contract-split.md) — the three-contract design, the
-  deployment dependency cycle and how it is broken, phasing, and next steps.
-- [docs/security-audit.md](docs/security-audit.md) — standalone and differential review
-  against the monolith. Four findings, all fixed.
-- [docs/prior-art-review.md](docs/prior-art-review.md) — checked against Semaphore and
-  World ID. Both real bugs in the latest review came from there, not from re-reading our
-  own contracts.
-- [docs/test-plan.md](docs/test-plan.md) — coverage by layer, the one gap that matters
-  (SDK ↔ contracts), and the conventions the suites follow.
-- [docs/legal-considerations.md](docs/legal-considerations.md) — Tornado Cash and Railgun
-  precedent, where Halias differs, and questions for counsel.
-
-### Build
 ```bash
-npx hardhat compile
+npm run compile          # contracts
+npm run circuits:build   # compile the circuit, run the ceremony, export the verifier
 ```
 
-### Test
+The circuit artifacts are gitignored — they are 40MB+ and the proving key is generated, not
+authored. `npm run circuits:build` reproduces them, but note that a locally generated proving
+key will not match a deployed verifier: the verifier contract is exported *from* the key.
+
+## Test
+
 ```bash
-npx hardhat test
+npm run test:hardhat     # contracts and circuits, in-process
+npm run test:fuzz        # Foundry fuzzing
 ```
 
-### ZK Setup
-See [src/README.md](src/README.md) for details on running the ceremony and exporting verifiers.
+`scripts/e2e-live.ts` is the only suite that exercises the SDK against a real node over RPC —
+chunked `eth_getLogs`, gas estimation, receipt polling. It is what catches the class of bug
+the in-process suites cannot see:
+
+```bash
+npx hardhat node                                          # terminal 1
+npx hardhat run scripts/deploy.ts --network localhost
+RPC_URL=http://127.0.0.1:8545 npx hardhat run scripts/e2e-live.ts --network localhost
+```
+
+## Before deploying
+
+```bash
+npx hardhat run scripts/preflight.ts --network <net>   # right chain, funded, nothing already live
+npx hardhat run scripts/gasbench.ts --network localhost # gas for the two hot paths
+```
+
+## Static analysis
+
+Slither, Aderyn, circomspect and Picus are wired up. Raw output is not committed — it pins
+line numbers and goes stale on the next edit. Regenerate with `npm run analyze`; the triage
+that is worth reading lives in [docs/static-analysis.md](docs/static-analysis.md).
+
+## Documents
+
+- [keys-and-authorization.md](docs/keys-and-authorization.md) — every key, what it
+  authorises, how an action is authorised when the signer is not the payer, and the replay
+  protection on each write path.
+- [key-management.md](docs/key-management.md) — where the recovery phrase comes from, how it
+  is stored, and what recovery means.
+- [multi-tree-pool.md](docs/multi-tree-pool.md) — why the pool is a sequence of trees and how
+  the global index works.
+- [test-plan.md](docs/test-plan.md) — coverage by layer and the conventions the suites follow.
+- [static-analysis.md](docs/static-analysis.md) — what each tool found and which findings are
+  real.
+- [prior-art-review.md](docs/prior-art-review.md) — checked against Semaphore and World ID.
+- [security-audit.md](docs/security-audit.md), [audit-2026-08.md](docs/audit-2026-08.md),
+  [audit-2026-08-second-pass.md](docs/audit-2026-08-second-pass.md) — internal review passes.
+  Point-in-time records; each states what it covered.
+- [legal-considerations.md](docs/legal-considerations.md) — Tornado Cash and Railgun
+  precedent, and where halias differs.
+
+## Ceremony
+
+See [src/README.md](src/README.md). The current proving key comes from a single-contributor
+`--dev` ceremony, which is fine for a testnet and **not fine for real funds** — a multi-party
+ceremony over a public Powers of Tau file is a prerequisite for mainnet.

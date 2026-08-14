@@ -164,7 +164,7 @@ Then:
 
 - `HaliasPool.transact` requires `pendingLeaf == 0`. The ordinary path cannot insert
   anything, and its behaviour is bit-for-bit what it is today.
-- `HaliasDomain.claim` supplies `pendingLeaf = leafOf(r)`, computed by the domain from `r` —
+- `HaliasController.claim` supplies `pendingLeaf = leafOf(r)`, computed by the domain from `r` —
   which `externalData` already binds. The prover never chooses it; a prover who lies about it
   produces a proof whose public signal disagrees with what the domain passes, and the
   verifier rejects.
