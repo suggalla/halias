@@ -60,10 +60,16 @@ export interface AliasSummary {
 	aliasHash: string;
 	slot: number;
 	name: string | null;
-	/// Which derivation index unlocks it. null means this address owns the alias but the
-	/// unlocked phrase cannot derive its keys, so it cannot send or receive — the wallet
-	/// screen leaves those out of the list rather than showing something unusable.
+	/// Which derivation index unlocks it. Never null now that aliases are found by key.
 	index: number | null;
+	/// Who holds the name. Ownership and spending are separate: only offering the alias,
+	/// cancelling an offer and setting its dataHash need the NFT, so an alias owned by another
+	/// address of yours still receives and still spends — it just cannot be handed on from
+	/// here. Null when nobody owns it.
+	owner: string | null;
+	/// Whether the connected wallet is that owner, and so whether the three name operations
+	/// are available.
+	ownedHere: boolean;
 	balance: bigint;
 }
 
@@ -435,6 +441,10 @@ export async function connectViewOnly(): Promise<void> {
 			slot: self?.slot ?? 0,
 			name: self?.name?.replace(/\.hls$/i, '') ?? null,
 			index: 0,
+			// A view key says nothing about who owns the name, and a viewer could not act on it
+			// either way.
+			owner: null,
+			ownedHere: false,
 			balance
 		};
 		clientState.update((s) => ({
@@ -602,6 +612,9 @@ export async function loadAliases(): Promise<void> {
 	await refreshWalletBalance();
 	const { Halias } = await import('halias-sdk');
 	const found = await Halias.discoverAliases(baseConfig, 32, root ?? undefined);
+	// Who the connected wallet is, so ownership can be reported per alias. Aliases are found
+	// by key now, so this decides what the wallet may do with each — not which ones it sees.
+	const me = await baseConfig.signer.getAddress().catch(() => null);
 	// discoverAliases signs once and returns the root, so every client built below reuses it.
 	if (found.length > 0) root ??= found[0].root;
 	const names = readNameMap();
@@ -625,6 +638,8 @@ export async function loadAliases(): Promise<void> {
 			aliasHash: a.aliasHash,
 			slot: a.slot,
 			index: a.index,
+			owner: a.owner,
+			ownedHere: !!a.owner && !!me && a.owner.toLowerCase() === me.toLowerCase(),
 			// Chain first. Registration publishes the plaintext in NamePublished — it is the one
 			// moment it can be, and every registration path does it — so the name survives a new
 			// browser, a cleared cache, and a device that never saw it. This read the local map
