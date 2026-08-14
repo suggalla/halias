@@ -34,12 +34,15 @@ error ClaimWrongPayout(uint256 expected, uint256 received);
 error AliasApprovalsDisabled();
 error UseAcceptAlias();
 error NoOffer();
-error OfferExpired();
-error NotOfferedToSigner();
+
 
 // Owner authorisation
 error AuthorizationExpired();
-error NotSignedByOwner();
+/// @dev Raised when a signed action is not signed by whoever had to sign it — the alias's
+///      owner for an owner action, the address an offer names for an acceptance. One error
+///      because one code path checks it; the preconditions that distinguish the two cases
+///      ({NotAliasOwner}, {NoOffer}) are raised by the callers before it is reached.
+error NotSignedByAuthority();
 
 // Pool
 error OnlyPoolMaySendETH();
@@ -200,13 +203,37 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         address owner = _ownerOf(uint256(aliasHash));
         if (owner == address(0)) revert NotAliasOwner();
 
-        if (block.timestamp > deadline) revert AuthorizationExpired();
-        if (!SignatureChecker.isValidSignatureNow(owner, _hashTypedDataV4(structHash), signature)) {
-            revert NotSignedByOwner();
-        }
-
-        unchecked { aliasNonce[aliasHash]++; }
+        _consumeAuthorization(owner, aliasHash, structHash, deadline, signature);
         return owner;
+    }
+
+    /// @dev The three things every signed action needs, in the one place they can be kept in
+    ///      step: the deadline, the signature, and the nonce bump that stops the signature
+    ///      being replayed.
+    ///
+    ///      Together, because the bump is the replay protection and separating it from the
+    ///      check is how a future signed action ends up replayable — verified, accepted, and
+    ///      still valid afterwards, with nothing to notice. Nothing can call this and skip it.
+    ///
+    ///      EIP-712 itself stops none of that. Its domain separator carries chainId and
+    ///      verifyingContract, so a signature cannot cross to another chain or another
+    ///      deployment, and distinct typehashes stop one message being read as another — but
+    ///      the same message, on this contract, verifies as many times as it is submitted.
+    ///      That is what `aliasNonce` is for, keyed by alias rather than by signer so that
+    ///      activity on one alias never invalidates a signature outstanding for a different
+    ///      one, and so that it keeps tracking the alias after the alias changes hands.
+    function _consumeAuthorization(
+        address principal,
+        bytes32 aliasHash,
+        bytes32 structHash,
+        uint256 deadline,
+        bytes calldata signature
+    ) private {
+        if (block.timestamp > deadline) revert AuthorizationExpired();
+        if (!SignatureChecker.isValidSignatureNow(principal, _hashTypedDataV4(structHash), signature)) {
+            revert NotSignedByAuthority();
+        }
+        unchecked { aliasNonce[aliasHash]++; }
     }
 
     /// @dev `_admin` is explicit rather than `msg.sender`: this deploys through
@@ -562,20 +589,19 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ) external nonReentrant {
         address to = pendingAliasOwner[aliasHash];
         if (to == address(0)) revert NoOffer();
-        if (block.timestamp > deadline) revert OfferExpired();
 
-        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
+        // The recipient signs, not the owner — which is why this cannot go through
+        // {_authorizeOwner}: routing it there would let the *seller* authorise the acceptance
+        // and choose the recipient's keys, which is the bug offer/accept exists to prevent.
+        // The shared half is the check itself.
+        _consumeAuthorization(to, aliasHash, keccak256(abi.encode(
             ACCEPT_ALIAS_TYPEHASH, aliasHash,
             newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey,
             to, aliasNonce[aliasHash], deadline
-        )));
-        if (!SignatureChecker.isValidSignatureNow(to, digest, signature)) {
-            revert NotOfferedToSigner();
-        }
+        )), deadline, signature);
 
-        // Consumed before anything else moves: one offer, one acceptance.
+        // Consumed once the signature is good: one offer, one acceptance.
         delete pendingAliasOwner[aliasHash];
-        unchecked { aliasNonce[aliasHash]++; }
 
         _transfer(ownerOf(uint256(aliasHash)), to, uint256(aliasHash));
         registry.reassign(aliasHash, newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey);

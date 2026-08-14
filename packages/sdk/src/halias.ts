@@ -906,7 +906,7 @@ export class Halias extends HaliasCore {
   /// But an alias can be handed to any address, including an ordinary EOA, so the derived key
   /// is not the owner by assumption. Resolved against the chain, falling back to the connected
   /// wallet when that is the holder, and refusing outright when neither is — which is a far
-  /// better answer than a signature that recovers to nobody and reverts as NotSignedByOwner.
+  /// better answer than a signature that recovers to nobody and reverts as NotSignedByAuthority.
   private async ownerSigner(aliasHash: bigint): Promise<ethers.Signer> {
     const derived = this.keys!.owner.address.toLowerCase();
     let owner: string;

@@ -432,17 +432,17 @@ describe("HaliasController", function () {
       // recovery phrase, which holds no ETH and can only sign. So a stranger fails by
       // signing wrongly rather than by being the wrong caller.
       await expect(updateAliasDataAs(domain, other, h, randField()))
-        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
       await expect(offerAliasAs(domain, other, h, other.address))
-        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
       await expect(cancelOfferAs(domain, other, h))
-        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
       await expect(updateAliasDataAs(domain, user, h, randField())).to.not.be.reverted;
     });
 
     it("refuses an action with no signature at all", async function () {
       await expect(domain.connect(user).offerAlias(h, other.address, 1n << 40n, "0x"))
-        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
     });
 
     it("an offer moves nothing until it is accepted", async function () {
@@ -467,7 +467,7 @@ describe("HaliasController", function () {
       expect((await registry.aliases(h)).spendingPubkey).to.equal(newPk);
       // The old owner can no longer act on it.
       await expect(updateAliasDataAs(domain, user, h, randField()))
-        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
     });
 
     it("a second offer replaces the first, which can no longer be taken", async function () {
@@ -479,7 +479,7 @@ describe("HaliasController", function () {
       expect(await domain.pendingAliasOwner(h)).to.equal(claimer.address);
 
       await expect(acceptAliasAs(domain, other, h, PK, NKH, ENC))
-        .to.be.revertedWithCustomError(domain, "NotOfferedToSigner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
       // And the one it was replaced by still works.
       await (await acceptAliasAs(domain, claimer, h, PK, NKH, ENC)).wait();
       expect(await domain.ownerOf(BigInt(h))).to.equal(claimer.address);
@@ -488,7 +488,7 @@ describe("HaliasController", function () {
     it("cannot be accepted by anyone but the address it was offered to", async function () {
       await (await offerAliasAs(domain, user, h, other.address)).wait();
       await expect(acceptAliasAs(domain, claimer, h, PK, NKH, ENC))
-        .to.be.revertedWithCustomError(domain, "NotOfferedToSigner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
       expect(await domain.ownerOf(BigInt(h))).to.equal(user.address);
     });
 
@@ -544,7 +544,7 @@ describe("HaliasController", function () {
       const { deadline, signature } =
         await signOwnerAction(domain, other, "OfferAlias", h, { to: other.address });
       await expect(domain.connect(other).offerAlias(h, other.address, deadline, signature))
-        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
     });
 
     it("refuses an expired signature", async function () {
@@ -560,7 +560,7 @@ describe("HaliasController", function () {
         await signOwnerAction(domain, user, "OfferAlias", h, { to: other.address });
       await (await domain.connect(other).offerAlias(h, other.address, deadline, signature)).wait();
       await expect(domain.connect(other).offerAlias(h, other.address, deadline, signature))
-        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
     });
 
     it("invalidates an outstanding signature when the owner acts directly", async function () {
@@ -572,7 +572,7 @@ describe("HaliasController", function () {
         await signOwnerAction(domain, user, "OfferAlias", h, { to: other.address });
       await (await updateAliasDataAs(domain, user, h, randField())).wait();
       await expect(domain.connect(other).offerAlias(h, other.address, deadline, signature))
-        .to.be.revertedWithCustomError(domain, "NotSignedByOwner");
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
     });
 
     it("refuses to authorise anything against an alias that does not exist", async function () {

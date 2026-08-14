@@ -709,7 +709,7 @@ async function main() {
 
   // Signed AFTER the offer, not before: every authorised action on an alias bumps its nonce,
   // so a signature produced first is already stale by the time it is submitted. The contract
-  // rejects it with NotOfferedToSigner, which reads like a wrong-recipient bug and is not.
+  // rejects it with NotSignedByAuthority, which reads like a wrong-recipient bug and is not.
   const rotateAccept = await rotated.acceptAlias(aliceName, { prepare: true });
 
   // Submitted by the relayer, not by the owner. That is the point of removing updateKeys:
