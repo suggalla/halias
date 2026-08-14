@@ -79,7 +79,7 @@ contract HaliasRegistry is SMTRegistry {
 
     /// @dev Transient slot holding the insertion a claim's proof may perform this
     ///      transaction. Transient rather than persistent so it cannot outlive the call that
-    ///      set it — see {armPendingLeaf}. An arbitrary constant, not a compiler-assigned
+    ///      set it — see {authorizePendingLeaf}. An arbitrary constant, not a compiler-assigned
     ///      slot: transient and persistent storage have separate address spaces, so this
     ///      cannot collide with anything above.
     uint256 private constant PENDING_LEAF_TSLOT = 0x48414c5f50454e44; // "HAL_PEND"
@@ -160,14 +160,14 @@ contract HaliasRegistry is SMTRegistry {
     ///
     ///         The leaf is recomputed here from stored state rather than accepted as an
     ///         argument, so the controller cannot arm a value the tree does not agree with.
-    function armPendingLeaf(bytes32 aliasHash) external onlyController {
+    function authorizePendingLeaf(bytes32 aliasHash) external onlyController {
         AliasRecord storage rec = _mustExist(aliasHash);
         uint256 key = uint256(aliasHash) % FIELD_PRIME;
         bytes32 leafHash = bytes32(PoseidonT4.hash([key, uint256(_leaf(rec)), 1]));
         assembly ("memory-safe") { tstore(PENDING_LEAF_TSLOT, leafHash) }
     }
 
-    /// @notice Stand the arming down, once the proof it was for has been checked.
+    /// @notice Withdraw the authorisation, once the proof it was for has been checked.
     /// @dev    Transient storage already guarantees it cannot outlive the transaction, so
     ///         this narrows the live span from "the rest of the transaction" to "across the
     ///         pool call". Nothing exploitable was reachable in the gap — the only leaf that

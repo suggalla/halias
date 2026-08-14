@@ -53,7 +53,7 @@ struct TransactParams {
     bytes32    externalData;   // opaque; bound into paramsHash, never interpreted here
     // The registry insertion this transaction's proof performs, or zero. Public signal, and
     // never the prover's to choose: the pool requires it to equal what the registry armed,
-    // which is zero on every path but a claim. See HaliasRegistry.armPendingLeaf.
+    // which is zero on every path but a claim. See HaliasRegistry.authorizePendingLeaf.
     bytes32    pendingLeaf;
     // Spend the inputs and create nothing. Proven, not asserted: the circuit sets this only
     // when both outputs are zero-amount, so it cannot be used to destroy real change.
