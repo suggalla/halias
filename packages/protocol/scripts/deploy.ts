@@ -1,5 +1,9 @@
 import hre, { ethers } from "hardhat";
 import { loadDeployment, saveDeployment } from "./deployment";
+
+/// One asset the app will offer. Decimals are recorded for the UI to render before it has
+/// read the contract; the SDK still reads the real ones off chain and those win.
+interface TokenRecord { address: string; symbol: string; decimals: number }
 import { ensurePoseidon, verifyPoseidon } from "./poseidon";
 
 // Deploys the whole system.
@@ -101,6 +105,50 @@ funding dev wallets to ${ethers.formatEther(target)} ETH`);
   }
 }
 
+/// A dev-chain ERC-20, so the app's asset selector has something to select.
+///
+/// The token list the app offers comes from the deployment JSON, and nothing was writing one —
+/// which meant the multi-asset UI could not render at all on a fresh local chain, and the only
+/// ERC-20 coverage lived inside e2e-live where no interface ever sees it. Six decimals
+/// deliberately: 18 is the case that agrees with a hardcoded `parseEther` by accident, so a
+/// dev chain that only ever offers an 18-decimal token hides exactly the bug worth catching.
+///
+/// Local only, and idempotent — a re-run reuses the recorded address rather than deploying a
+/// second one.
+async function deployDevToken(existing: unknown): Promise<TokenRecord[]> {
+  const chainId = Number((await ethers.provider.getNetwork()).chainId);
+  if (chainId !== 31337) return (existing as TokenRecord[]) ?? [];
+
+  // Recorded *and* still on chain. A restarted node keeps the deployment JSON but throws away
+  // its state, so trusting the record alone writes an address with no code behind it — the app
+  // then offers the asset in its selector and every read against it fails. Everything else in
+  // this script checks the chain before reusing an address; this has to as well.
+  const already = (existing as TokenRecord[] | undefined)?.find((t) => t.symbol === "USDC");
+  if (already && (await ethers.provider.getCode(already.address)) !== "0x") {
+    console.log(`\ndev token\n  ok   USDC  ${already.address} — already deployed`);
+    return existing as TokenRecord[];
+  }
+  if (already) {
+    console.log(`\ndev token\n  stale USDC  ${already.address} has no code — redeploying`);
+  }
+
+  const [payer] = await ethers.getSigners();
+  const token = await (await ethers.getContractFactory("MockERC20")).deploy("USD Coin", "USDC", 6);
+  await token.waitForDeployment();
+  const address = await token.getAddress();
+
+  // Funded so the selector is usable the moment the app loads, not after a mint step nobody
+  // has been told about.
+  for (const to of DEV_WALLETS) {
+    if (ethers.isAddress(to)) await (await (token as any).connect(payer).mint(to, 1_000_000n * 1_000_000n)).wait();
+  }
+  console.log(`\ndev token\n  sent USDC  ${address}  1,000,000 to each dev wallet`);
+  // Replaces any stale entry rather than appending beside it — two USDCs in the list would put
+  // two identical buttons in the selector, one of them pointing at nothing.
+  const kept = ((existing as TokenRecord[]) ?? []).filter((t) => t.symbol !== "USDC");
+  return [...kept, { address, symbol: "USDC", decimals: 6 }];
+}
+
 async function main() {
   const [deployer] = await ethers.getSigners();
   const network = process.env.HARDHAT_NETWORK ?? "localhost";
@@ -183,18 +231,22 @@ async function main() {
     if (!ok) throw new Error(`${label} is ${got}, expected ${want}`);
   }
 
+  await fundDevWallets();
+  const tokens = await deployDevToken((cfg as any).tokens);
+
   saveDeployment({
     poseidonT3, poseidonT4,
     verifier,
     deployer: deployerAddress,
-    // The three the SDK and app read. `halias` is deliberately absent: the monolith is gone,
-    // and a stale key would let a client silently point at the wrong contract.
+    // The three the SDK and app read, and only those three. A fourth address here would let a
+    // client silently point at something that is not the live pool.
     pool, registry, controller,
     admin,
     startBlock,
+    // What the app offers in its asset selector. Empty on a real network — adding an asset
+    // splits the anonymity set, so it is a deliberate per-deployment decision.
+    ...(tokens.length > 0 ? { tokens } : {}),
   });
-
-  await fundDevWallets();
 
   console.log(`\nRegistration fee: ${ethers.formatEther(await domC.registrationFee())} ETH`);
   console.log("Verify with:");

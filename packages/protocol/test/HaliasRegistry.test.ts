@@ -4,26 +4,26 @@ import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { SMT, aliasHashToKey } from "./helpers/smt";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { FIELD_PRIME, randField } from "./helpers/field";
+import { rand32 } from "./helpers/tx";
 
 // The registry stores nullifierKeyHash already hashed, so the leaf is a direct Poseidon of
 // the three stored fields. registryLeaf() in the helpers takes a raw nullifier key and
 // hashes it first, which is the wrong shape here.
-const leafOf = (pubkey: string, nullifierKeyHash: string, dataHash: string) =>
-  poseidonHash([BigInt(pubkey), BigInt(nullifierKeyHash), BigInt(dataHash)]);
+const leafOf = (spendingCommitment: string, nullifierKeyHash: string, dataHash: string) =>
+  poseidonHash([BigInt(spendingCommitment), BigInt(nullifierKeyHash), BigInt(dataHash)]);
 
 // HaliasRegistry — the standalone registry extracted from the SMTRegistry base.
 //
-// Registry.test.ts already covers the tree mechanics through the monolith. What is new
-// here, and therefore what this file is about, is the surface the split created: a single
-// immutable writer, and validation that lives in the registry rather than in whoever calls
-// it. The tree must hold its invariants because this contract enforces them, not because
-// the current controller happens to be well behaved — so every write is also driven from a
+// What this file is about is the registry's own surface: a single immutable writer, and
+// validation that lives here rather than in whoever calls it. The tree must hold its
+// invariants because this contract enforces them, not because the current controller happens
+// to be well behaved — so every write is also driven from a
 // non-controller to confirm it is refused.
 //
 // The off-chain SMT is rebuilt alongside the contract's and compared. That is the property
 // the circuit depends on: if these two ever disagree, every proof stops verifying.
 
-const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 describe("HaliasRegistry", function () {
   this.timeout(120000);
@@ -31,10 +31,8 @@ describe("HaliasRegistry", function () {
   let registry: any;
   let stranger: any;
 
-  const rand32 = () => ethers.keccak256(ethers.randomBytes(32));
   // A dataHash is committed into the Poseidon leaf, so it must be a field element. A raw
   // keccak exceeds p about 81% of the time.
-  const randField = () => ethers.toBeHex(BigInt(rand32()) % FIELD_PRIME, 32);
   const PK  = ethers.toBeHex(11n, 32);
   const NKH = ethers.toBeHex(22n, 32);
   const ENC = ethers.toBeHex(33n, 32);
@@ -122,12 +120,12 @@ describe("HaliasRegistry", function () {
 
       await expect(registry.register(h, PK, NKH, ENC))
         .to.emit(registry, "AliasRegistered")
-        .withArgs(h, PK, expectedLeaf, ENC, 1n);
+        .withArgs(h, PK, NKH, expectedLeaf, ENC, 1n);
 
       expect(await registry.leafOf(h)).to.equal(expectedLeaf);
 
       const rec = await registry.aliases(h);
-      expect(rec.spendingPubkey).to.equal(PK);
+      expect(rec.spendingCommitment).to.equal(PK);
       expect(rec.nullifierKeyHash).to.equal(NKH);
       expect(rec.encryptionPubkey).to.equal(ENC);
       expect(rec.dataHash).to.equal(ethers.ZeroHash);
@@ -139,7 +137,7 @@ describe("HaliasRegistry", function () {
       await expect(registry.register(ethers.ZeroHash, PK, NKH, ENC))
         .to.be.revertedWithCustomError(registry, "InvalidAliasHash");
       await expect(registry.register(rand32(), ethers.ZeroHash, NKH, ENC))
-        .to.be.revertedWithCustomError(registry, "InvalidSpendingPubkey");
+        .to.be.revertedWithCustomError(registry, "InvalidSpendingCommitment");
       await expect(registry.register(rand32(), PK, ethers.ZeroHash, ENC))
         .to.be.revertedWithCustomError(registry, "InvalidNullifierKeyHash");
       await expect(registry.register(rand32(), PK, NKH, ethers.ZeroHash))
@@ -149,7 +147,7 @@ describe("HaliasRegistry", function () {
       // addressed to it could never be spent.
       const overField = ethers.toBeHex(FIELD_PRIME, 32);
       await expect(registry.register(rand32(), overField, NKH, ENC))
-        .to.be.revertedWithCustomError(registry, "PubkeyOutOfField");
+        .to.be.revertedWithCustomError(registry, "SpendingCommitmentOutOfField");
       await expect(registry.register(rand32(), PK, overField, ENC))
         .to.be.revertedWithCustomError(registry, "NullifierKeyHashOutOfField");
     });
@@ -202,12 +200,12 @@ describe("HaliasRegistry", function () {
       expect((await registry.aliases(h)).dataHash).to.equal(ethers.ZeroHash);
     });
 
-    it("reassignment replaces the spending pubkey", async function () {
+    it("reassignment replaces the spending commitment", async function () {
       // The whole reason there is no `rotateKeys`: it wrote the other two keys and left
       // this one, so the only compromise that loses funds was the one it could not answer.
-      expect((await registry.aliases(h)).spendingPubkey).to.equal(PK);
+      expect((await registry.aliases(h)).spendingCommitment).to.equal(PK);
       await (await registry.reassign(h, ethers.toBeHex(66n, 32), ethers.toBeHex(77n, 32), ethers.toBeHex(88n, 32))).wait();
-      expect((await registry.aliases(h)).spendingPubkey).to.equal(ethers.toBeHex(66n, 32));
+      expect((await registry.aliases(h)).spendingCommitment).to.equal(ethers.toBeHex(66n, 32));
     });
 
     it("refuses a dataHash outside the field", async function () {
@@ -220,7 +218,12 @@ describe("HaliasRegistry", function () {
         .to.be.revertedWithCustomError(registry, "DataHashOutOfField");
       await expect(registry.setDataHash(h, ethers.toBeHex(FIELD_PRIME + 5n, 32)))
         .to.be.revertedWithCustomError(registry, "DataHashOutOfField");
-      await expect(registry.setDataHash(h, ethers.toBeHex(FIELD_PRIME - 1n, 32))).to.not.be.reverted;
+      // The boundary case, and the one that shows the guard is `>=` rather than `>`. Asserted
+      // on the stored value: a bound that rejected p-1 and a bound that accepted it but wrote
+      // something else are both wrong, and only one of them reverts.
+      const largest = ethers.toBeHex(FIELD_PRIME - 1n, 32);
+      await expect(registry.setDataHash(h, largest)).to.emit(registry, "AliasDataUpdated");
+      expect((await registry.aliases(h)).dataHash).to.equal(largest);
     });
 
     it("refuses to touch an alias that was never registered", async function () {
@@ -239,7 +242,7 @@ describe("HaliasRegistry", function () {
       await expect(registry.reassign(h, PK, ethers.toBeHex(FIELD_PRIME, 32), ENC))
         .to.be.revertedWithCustomError(registry, "NullifierKeyHashOutOfField");
       await expect(registry.reassign(h, ethers.ZeroHash, NKH, ENC))
-        .to.be.revertedWithCustomError(registry, "InvalidSpendingPubkey");
+        .to.be.revertedWithCustomError(registry, "InvalidSpendingCommitment");
     });
   });
 
@@ -249,7 +252,7 @@ describe("HaliasRegistry", function () {
     // `h` and `h + p` are distinct aliases that produce the SAME circuit-visible key.
     //
     // Unreachable by choosing a name — that would take ~2^254 work — and harmless if it
-    // happened, since the note commitment binds the spending pubkey. Enforced anyway so
+    // happened, since the note commitment binds the spending commitment. Enforced anyway so
     // that "one alias, one key" is a property of this contract rather than an assumption
     // every consumer of the circuit's aliasHash signal has to re-derive for itself.
     const h = BigInt(rand32()) % (1n << 250n);          // comfortably below 2^256 - p
@@ -268,7 +271,10 @@ describe("HaliasRegistry", function () {
     expect(await registry.isRegistered(ethers.toBeHex(hPrime, 32))).to.equal(false);
 
     // An unrelated alias is unaffected — the guard is on the key, not on registration.
-    await expect(registry.register(rand32(), PK, NKH, ENC)).to.not.be.reverted;
+    const fresh = rand32();
+    await expect(registry.register(fresh, PK, NKH, ENC)).to.emit(registry, "AliasRegistered");
+    expect(await registry.isRegistered(fresh), "the unrelated alias was blocked too")
+      .to.equal(true);
   });
 
   // ── Agreement with the off-chain tree ───────────────────────────────────────

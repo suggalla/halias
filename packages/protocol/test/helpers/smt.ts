@@ -87,7 +87,7 @@ export function toNullifierKeyHash(nullifierKey: bigint): bigint {
   return poseidonHash([nullifierKey, 1n]);
 }
 
-// Recompute registry leaf: Poseidon(pubkey, nullifierKeyHash, dataHash)
-export function registryLeaf(pubkey: bigint, nullifierKey: bigint, dataHash: bigint = 0n): bigint {
-  return poseidonHash([pubkey, toNullifierKeyHash(nullifierKey), dataHash]);
+// Recompute registry leaf: Poseidon(spendingCommitment, nullifierKeyHash, dataHash)
+export function registryLeaf(spendingCommitment: bigint, nullifierKey: bigint, dataHash: bigint = 0n): bigint {
+  return poseidonHash([spendingCommitment, toNullifierKeyHash(nullifierKey), dataHash]);
 }

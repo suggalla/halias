@@ -56,6 +56,22 @@ async function main() {
   const t = await (await pool.transact(await base(), "0x", "0x", proof, { value: ethers.parseEther("1") })).wait();
   console.log("transact      :", t!.gasUsed.toString());
 
+  // The exit path against an ordinary transact. An exit inserts nothing, so it skips the
+  // tree walk — the saving is the whole reason it exists, set against every exit being
+  // distinguishable on chain. Measure it rather than quote it.
+  const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+  const withdrawOf = (x: bigint) => FIELD_PRIME - x;
+  const w = await (await pool.transact(
+    await base({ publicAmount: withdrawOf(ethers.parseEther("0.1")), recipient: dep.address }),
+    "0x", "0x", proof)).wait();
+  console.log("withdraw      :", w!.gasUsed.toString());
+  const x = await (await pool.transact(
+    await base({ publicAmount: withdrawOf(ethers.parseEther("0.1")), recipient: dep.address,
+                 outputsEmpty: true }),
+    "0x", "0x", proof)).wait();
+  console.log("exit          :", x!.gasUsed.toString(),
+              ` (${(100 - Number(x!.gasUsed) * 100 / Number(w!.gasUsed)).toFixed(1)}% cheaper)`);
+
   // Registration cost is not one number. Slots are sequential, so consecutive aliases share
   // every SMT node above the level where their paths diverge — the first write into an empty
   // subtree is zero -> non-zero (~22.1k), every later one is an overwrite (~5k). Reporting

@@ -3,6 +3,8 @@ import { ethers } from "hardhat";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
+import { nullifierHex } from "./helpers/nullifier";
+import { ZERO_PROOF, NO_RELAYER, rand32 } from "./helpers/tx";
 
 // Tree rollover, and the two bugs it creates.
 //
@@ -24,8 +26,6 @@ import { ensurePoseidon } from "../scripts/poseidon";
 // A third property is structural: `filledSubtrees` is shared across trees and never reset, so
 // a new tree must overwrite the previous one's values before reading them.
 
-const ZERO_PROOF  = "0x" + "00".repeat(256);
-const NO_RELAYER  = { relayer: ethers.ZeroAddress, amount: 0n };
 const CAPACITY    = 4;   // MockSmallTreePool._treeCapacity()
 
 describe("pool tree rollover", function () {
@@ -33,7 +33,6 @@ describe("pool tree rollover", function () {
 
   let pool: any, registry: any;
 
-  const rand32 = () => ethers.keccak256(ethers.randomBytes(32));
 
   async function params(over: any = {}) {
     // currentAnchor, not getLastRoot + treeNumber: after a rollover those two disagree.
@@ -161,10 +160,19 @@ describe("pool tree rollover", function () {
     await insertPair();
     await insertPair();
     expect((await pool.position()).tree).to.equal(1n);
-    await expect(pool.transact(
+    // Proving against tree 0 while tree 1 is filling. The anchor is historical, but the new
+    // commitments must land in the *current* tree — asserted on the event's own tree number,
+    // because "did not revert" would hold even if the pool had appended to the frozen one.
+    const tx = await pool.transact(
       await params({ poolRoot: [a.root, a.root], treeNumber: [a.tree, a.tree] }),
       "0x", "0x", ZERO_PROOF,
-    )).to.not.be.reverted;
+    );
+    const receipt = await tx.wait();
+    const emitted = receipt!.logs
+      .map((l: any) => { try { return pool.interface.parseLog(l); } catch { return null; } })
+      .find((l: any) => l?.name === "Transact");
+    expect(emitted, "no Transact event").to.not.equal(undefined);
+    expect(emitted!.args.outputTreeNumber, "inserted into the frozen tree").to.equal(1n);
   });
 
   it("checks the pairing per input, so one transaction can span two trees", async function () {
@@ -176,10 +184,13 @@ describe("pool tree rollover", function () {
     const c = await insertPair();
     expect([a.tree, c.tree]).to.deep.equal([0, 1]);
 
-    await expect(pool.transact(
-      await params({ poolRoot: [a.root, c.root], treeNumber: [a.tree, c.tree] }),
-      "0x", "0x", ZERO_PROOF,
-    )).to.not.be.reverted;
+    const spanning = await params({ poolRoot: [a.root, c.root], treeNumber: [a.tree, c.tree] });
+    await expect(pool.transact(spanning, "0x", "0x", ZERO_PROOF)).to.emit(pool, "Transact");
+    // Both halves were actually consumed. A pool that validated only the first input would
+    // pass a not-reverted check and leave the second note spendable again.
+    for (const n of spanning.inputNullifiers) {
+      expect(await pool.spentNullifiers(n), "an input was not marked spent").to.equal(true);
+    }
 
     // …and mismatching either half still fails.
     await expect(pool.transact(
@@ -199,10 +210,10 @@ describe("pool tree rollover", function () {
     // End to end: the same leaf index in two trees, spent in one transaction. Under a
     // leaf-only nullifier these two would be the same value and the pool would reject the
     // second as already spent.
-    const POOL_LEVELS = Number(await pool.LEVELS());
+    // The SDK's derivation, not a local copy — SdkPreimage.test.ts asserts its POOL_LEVELS
+    // against this pool's own LEVELS(), which is the constant a rollover test depends on most.
     const key = poseidonHash([7n]);
-    const nul = (tree: number, leaf: number) => ethers.toBeHex(
-      poseidonHash([key, (BigInt(tree) << BigInt(POOL_LEVELS)) + BigInt(leaf), 1314148940n]), 32);
+    const nul = (tree: number, leaf: number) => nullifierHex(key, leaf, tree);
 
     const a = await insertPair();       // tree 0, leaves 0 and 1
     await insertPair();                 // fills tree 0
@@ -212,7 +223,7 @@ describe("pool tree rollover", function () {
     await expect(pool.transact(await params({
       poolRoot: [a.root, c.root], treeNumber: [a.tree, c.tree],
       inputNullifiers: [nul(a.tree, a.idx0), nul(c.tree, c.idx0)],
-    }), "0x", "0x", ZERO_PROOF)).to.not.be.reverted;
+    }), "0x", "0x", ZERO_PROOF)).to.emit(pool, "Transact");
 
     expect(await pool.spentNullifiers(nul(a.tree, a.idx0))).to.equal(true);
     expect(await pool.spentNullifiers(nul(c.tree, c.idx0))).to.equal(true);
@@ -221,11 +232,21 @@ describe("pool tree rollover", function () {
   // ── Capacity ────────────────────────────────────────────────────────────────
 
   it("caps the tree count at what the circuit can address", async function () {
-    // MAX_TREES must equal 2^(32 - LEVELS), because the nullifier's global index is 32 bits
-    // and NoteNullifier range-checks the tree number to exactly that. A larger cap would let
-    // notes be inserted into trees no witness can ever prove against — present on chain and
-    // permanently unspendable.
+    // MAX_TREES must equal the width NoteNullifier range-checks `treeNumber` to — 32 bits.
+    // A larger cap would let notes be inserted into trees no witness can ever prove against:
+    // present on chain and permanently unspendable, with nothing to signal it.
+    //
+    // 2^32 rather than 2^(32 - LEVELS). The narrower bound would hold the whole global index
+    // under 2^32 and cap the pool at 2^32 leaves, but uniqueness never required that — only
+    // leafIndex has to be bounded to LEVELS. The wider bound costs 32 constraints.
+    expect(await pool.MAX_TREES()).to.equal(2n ** 32n);
+  });
+
+  it("addresses 2^48 leaves, not 2^32", async function () {
+    // The number the cap is actually for. Stated so a later change to LEVELS that quietly
+    // moved capacity would have to say so here.
     const levels = Number(await pool.LEVELS());
-    expect(await pool.MAX_TREES()).to.equal(2n ** BigInt(32 - levels));
+    const capacity = (await pool.MAX_TREES()) * (2n ** BigInt(levels));
+    expect(capacity).to.equal(2n ** 48n);
   });
 });

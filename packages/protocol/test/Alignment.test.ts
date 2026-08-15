@@ -9,14 +9,15 @@ import { SMT, registryLeaf, aliasHashToKey, toNullifierKeyHash } from "./helpers
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
+import { nullifierFor as nullifierOf, POOL_LEVELS } from "./helpers/nullifier";
+import { FIELD_PRIME } from "./helpers/field";
+import { deployStack as sharedStack } from "./helpers/stack";
 
 const snarkjs = require("snarkjs");
 
 const TRANSACT_WASM = path.resolve(__dirname, "../circuits/out/transact/transact_js/transact.wasm");
 const TRANSACT_ZKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony/transact_final.zkey");
-const POOL_LEVELS = 16;
 const REGISTRY_LEVELS = 32;
-const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 // Circuit <-> contract alignment.
 //
@@ -36,7 +37,7 @@ describe("Circuit/contract alignment", function () {
   let dummyIdx = 4000;
 
   let DUMMY_NULLIFIER_KEY: bigint;
-  let DUMMY_OUT_PUBKEY: bigint;
+  let DUMMY_OUT_SPENDING_COMMITMENT: bigint;
   let DUMMY_OUT_COMMITMENT: bigint;
 
   const s = (v: bigint) => v.toString();
@@ -46,21 +47,21 @@ describe("Circuit/contract alignment", function () {
     const viewingPrivateKey  = BigInt("0x" + crypto.randomBytes(31).toString("hex"));
     return {
       spendingPrivateKey, viewingPrivateKey,
-      pubkey:       poseidonHash([spendingPrivateKey]),
+      spendingCommitment:       poseidonHash([spendingPrivateKey]),
       nullifierKey: poseidonHash([viewingPrivateKey]),
     };
   }
 
-  const createCommitment = (pubkey: bigint, nkHash: bigint, blinding: bigint, amount: bigint, token: bigint = 0n) =>
-    poseidonHash([pubkey, nkHash, blinding, amount, token]);
+  const createCommitment = (spendingCommitment: bigint, nkHash: bigint, blinding: bigint, amount: bigint, token: bigint = 0n) =>
+    poseidonHash([spendingCommitment, nkHash, blinding, amount, token]);
 
   // Keys on the note's GLOBAL position — tree * 2^POOL_LEVELS + leaf. A leaf index alone no
   // longer identifies a note, and using one would make leaf 5 of tree 0 collide with leaf 5
   // of tree 3.
-  const computeNullifier = (nullifierKey: bigint, leafIndex: number, treeNumber: number = 0) =>
-    poseidonHash([nullifierKey, (BigInt(treeNumber) << BigInt(POOL_LEVELS)) + BigInt(leafIndex), 1314148940n]);
+  const nullifierFor = (nullifierKey: bigint, leafIndex: number, treeNumber: number = 0) =>
+    nullifierOf(nullifierKey, leafIndex, treeNumber);
 
-  const dummyNullifier = (leafIndex: number) => computeNullifier(DUMMY_NULLIFIER_KEY, leafIndex);
+  const dummyNullifier = (leafIndex: number) => nullifierFor(DUMMY_NULLIFIER_KEY, leafIndex);
 
   function dummyInput(leafIndex: number) {
     return {
@@ -71,7 +72,7 @@ describe("Circuit/contract alignment", function () {
   }
 
   const dummyOutput = () => ({
-    pubkey: DUMMY_OUT_PUBKEY, nullifierKeyHash: 0n, dataHash: 0n, aliasHash: 0n, registrySlot: 0,
+    spendingCommitment: DUMMY_OUT_SPENDING_COMMITMENT, nullifierKeyHash: 0n, dataHash: 0n, aliasHash: 0n, registrySlot: 0,
     blinding: 0n, amount: 0n, registrySiblings: new Array(REGISTRY_LEVELS).fill(0n),
   });
 
@@ -98,7 +99,7 @@ describe("Circuit/contract alignment", function () {
       inAmount:             o.inputs.map((i: any) => s(i.amount)),
       inPathIndices:        o.inputs.map((i: any) => i.pathIndices.map(String)),
       inPathElements:       o.inputs.map((i: any) => i.pathElements.map(s)),
-      outPubkey:            o.outputs.map((x: any) => s(x.pubkey)),
+      outSpendingCommitment:            o.outputs.map((x: any) => s(x.spendingCommitment)),
       outBlinding:          o.outputs.map((x: any) => s(x.blinding)),
       outAmount:            o.outputs.map((x: any) => s(x.amount)),
       outNullifierKeyHash:  o.outputs.map((x: any) => s(x.nullifierKeyHash)),
@@ -114,20 +115,14 @@ describe("Circuit/contract alignment", function () {
   before(async function () {
     await initPoseidon();
     DUMMY_NULLIFIER_KEY  = poseidonHash([2n]);
-    DUMMY_OUT_PUBKEY     = poseidonHash([0n]);
-    DUMMY_OUT_COMMITMENT = poseidonHash([DUMMY_OUT_PUBKEY, 0n, 0n, 0n, 0n]);
+    DUMMY_OUT_SPENDING_COMMITMENT     = poseidonHash([0n]);
+    DUMMY_OUT_COMMITMENT = poseidonHash([DUMMY_OUT_SPENDING_COMMITMENT, 0n, 0n, 0n, 0n]);
   });
 
   async function deployStack() {
-    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
-    const tv = await (await ethers.getContractFactory("TransactVerifier")).deploy();
-    const dep = await (await ethers.getContractFactory("HaliasDeployer", {
-      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
-    })).deploy(await tv.getAddress(), (await ethers.getSigners())[0].address);
-    const pool     = await ethers.getContractAt("HaliasPool",         await dep.pool());
-    const registry = await ethers.getContractAt("HaliasRegistry",     await dep.registry());
-    const halias   = await ethers.getContractAt("HaliasController",   await dep.controller());
-    return { pool, registry, halias, REGISTRATION_FEE: await halias.registrationFee() };
+    // The real verifier: this suite is the one that generates proofs.
+    const { pool, registry, controller } = await sharedStack({ realVerifier: true });
+    return { pool, registry, halias: controller, REGISTRATION_FEE: await controller.registrationFee() };
   }
 
   beforeEach(async function () {
@@ -137,15 +132,15 @@ describe("Circuit/contract alignment", function () {
     poolTree    = new MerkleTree(POOL_LEVELS);
   });
 
-  async function registerLocal(pubkey: bigint, nk: bigint) {
+  async function registerLocal(spendingCommitment: bigint, nk: bigint) {
     // The contract derives the hash from the name, so the test starts from a name too.
     const name = `a${Math.floor(Math.random() * 1e12)}.hls`;
     const aliasHash = ethers.keccak256(ethers.toUtf8Bytes(name));
-    await registerAlias(halias, (await ethers.getSigners())[0], name, ethers.toBeHex(pubkey, 32), ethers.toBeHex(toNullifierKeyHash(nk), 32),
+    await registerAlias(halias, (await ethers.getSigners())[0], name, ethers.toBeHex(spendingCommitment, 32), ethers.toBeHex(toNullifierKeyHash(nk), 32),
       ethers.keccak256(ethers.randomBytes(32)), REGISTRATION_FEE);
     const key  = aliasHashToKey(aliasHash);
     const slot = Number(await registry.aliasSlot(aliasHash)) - 1;
-    registrySMT.update(slot, key, registryLeaf(pubkey, nk));
+    registrySMT.update(slot, key, registryLeaf(spendingCommitment, nk));
     return { aliasHash, key, slot };
   }
 
@@ -154,11 +149,11 @@ describe("Circuit/contract alignment", function () {
   describe("hash agreement between off-chain and on-chain", function () {
     it("registry leaf: circuit Poseidon(3) == contract PoseidonT4", async function () {
       const kp = generateKeypair();
-      const { aliasHash } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { aliasHash } = await registerLocal(kp.spendingCommitment, kp.nullifierKey);
       // The contract emits the leaf it stored; the helper mirrors the circuit's RegistryLeaf.
       const stored = await registry.aliases(aliasHash);
       const onChainLeaf = await registry.getRegistryRoot();
-      expect(BigInt(stored.spendingPubkey)).to.equal(kp.pubkey);
+      expect(BigInt(stored.spendingCommitment)).to.equal(kp.spendingCommitment);
       expect(BigInt(stored.nullifierKeyHash)).to.equal(toNullifierKeyHash(kp.nullifierKey));
       // Local SMT was updated with registryLeaf(); if the hash functions disagreed the
       // roots would diverge immediately.
@@ -168,7 +163,7 @@ describe("Circuit/contract alignment", function () {
     it("SMT root tracks the contract across several registrations", async function () {
       for (let i = 0; i < 3; i++) {
         const kp = generateKeypair();
-        await registerLocal(kp.pubkey, kp.nullifierKey);
+        await registerLocal(kp.spendingCommitment, kp.nullifierKey);
         expect(await registry.getRegistryRoot()).to.equal(ethers.toBeHex(registrySMT.root, 32));
       }
     });
@@ -240,9 +235,45 @@ describe("Circuit/contract alignment", function () {
       }, "0x", "0x", "0x")).to.be.revertedWithCustomError(pool, "WrongMsgValue");
     });
 
+    it("puts the deposit/withdrawal split exactly at FIELD_PRIME - 2^248", async function () {
+      // The other side of the boundary, and the reason it is worth having: the test above
+      // only catches a FIELD_PRIME that is too *large*. One too small shifts the boundary
+      // down, `atBoundary - 1` stays a deposit, and it passes while the SDK and the contract
+      // disagree about the modulus every signed amount is encoded in.
+      //
+      // Checking both sides pins it in both directions. A prime off by one flips exactly one
+      // of these two, and `FIELD_PRIME` is now declared once for the whole repo — so this is
+      // what stands between that single declaration and a silent disagreement with the
+      // contract, which has its own copy in Constants.sol and exposes it nowhere.
+      const maxAbs = 1n << 248n;
+      const atBoundary = FIELD_PRIME - maxAbs;
+      const base = {
+        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root],
+        treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
+        registryRoot: await registry.getRegistryRoot(),
+        tokenAddress: ethers.ZeroAddress,
+        inputNullifiers: [ethers.keccak256("0x05"), ethers.keccak256("0x06")],
+        outputCommitments: [ethers.keccak256("0x07"), ethers.keccak256("0x08")],
+        relayerFee: { relayer: ethers.ZeroAddress, amount: 0n },
+        recipient: ethers.ZeroAddress, externalData: ethers.ZeroHash,
+        pendingLeaf: ethers.ZeroHash, outputsEmpty: false,
+      };
+
+      // Both sides read off which check the contract reaches first, with the payee left at
+      // zero throughout. A withdrawal validates its destination and rejects the zero address;
+      // a deposit never looks at the payee and asks for msg.value instead. Two named errors,
+      // both reached before any arithmetic on 2^248, which panics rather than reverting
+      // cleanly.
+      await expect(pool.transact({ ...base, publicAmount: atBoundary }, "0x", "0x", "0x"))
+        .to.be.revertedWithCustomError(pool, "BadPayee");
+
+      await expect(pool.transact({ ...base, publicAmount: atBoundary - 1n }, "0x", "0x", "0x"))
+        .to.be.revertedWithCustomError(pool, "WrongMsgValue");
+    });
+
     it("circuit rejects a deposit of 2^248 (one past its range check)", async function () {
       const kp = generateKeypair();
-      const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { key, slot } = await registerLocal(kp.spendingCommitment, kp.nullifierKey);
       const amount = 1n << 248n;
       const nkHash = toNullifierKeyHash(kp.nullifierKey);
       await expect(prove(buildInput({
@@ -250,12 +281,12 @@ describe("Circuit/contract alignment", function () {
         publicAmount: amount, paramsHash: 1n,
         inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs: [
-          { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
+          { spendingCommitment: kp.spendingCommitment, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
             blinding: 1n, amount, registrySiblings: registrySMT.getSiblings(slot) },
           dummyOutput(),
         ],
         inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
-        outputCommitments: [createCommitment(kp.pubkey, nkHash, 1n, amount), DUMMY_OUT_COMMITMENT],
+        outputCommitments: [createCommitment(kp.spendingCommitment, nkHash, 1n, amount), DUMMY_OUT_COMMITMENT],
       }))).to.be.rejected;
       dummyIdx += 2;
     });
@@ -271,7 +302,7 @@ describe("Circuit/contract alignment", function () {
     // unspendable rather than dangerous. Cheap, and it stops the two layers disagreeing about
     // what a token *is*.
     const kp = generateKeypair();
-    const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
+    const { key, slot } = await registerLocal(kp.spendingCommitment, kp.nullifierKey);
     const token = 1n << 160n;
     const nkHash = toNullifierKeyHash(kp.nullifierKey);
     await expect(prove(buildInput({
@@ -279,12 +310,12 @@ describe("Circuit/contract alignment", function () {
       publicAmount: 100n, tokenAddress: token, paramsHash: 1n,
       inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
       outputs: [
-        { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
+        { spendingCommitment: kp.spendingCommitment, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
           blinding: 1n, amount: 100n, registrySiblings: registrySMT.getSiblings(slot) },
         dummyOutput(),
       ],
       inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
-      outputCommitments: [createCommitment(kp.pubkey, nkHash, 1n, 100n, token), DUMMY_OUT_COMMITMENT],
+      outputCommitments: [createCommitment(kp.spendingCommitment, nkHash, 1n, 100n, token), DUMMY_OUT_COMMITMENT],
     }))).to.be.rejected;
     dummyIdx += 2;
   });
@@ -294,26 +325,26 @@ describe("Circuit/contract alignment", function () {
   describe("zero-amount handling", function () {
     it("a zero-amount output skips the registry proof, so garbage siblings still prove", async function () {
       // ForceEqualIfEnabled is gated on outAmount != 0. A dummy output must therefore
-      // verify with an unregistered pubkey and nonsense siblings — that is what lets a
+      // verify with an unregistered spendingCommitment and nonsense siblings — that is what lets a
       // transaction have fewer than two real recipients.
       const kp = generateKeypair();
-      const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { key, slot } = await registerLocal(kp.spendingCommitment, kp.nullifierKey);
       const nkHash = toNullifierKeyHash(kp.nullifierKey);
       const junk = { ...dummyOutput(), aliasHash: 12345n, nullifierKeyHash: 999n,
         registrySiblings: new Array(REGISTRY_LEVELS).fill(7n) };
-      const junkComm = createCommitment(junk.pubkey, junk.nullifierKeyHash, junk.blinding, 0n);
+      const junkComm = createCommitment(junk.spendingCommitment, junk.nullifierKeyHash, junk.blinding, 0n);
 
       const { publicSignals } = await prove(buildInput({
         poolRoot: poolTree.getRoot(), registryRoot: registrySMT.root,
         publicAmount: 50n, paramsHash: 1n,
         inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs: [
-          { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
+          { spendingCommitment: kp.spendingCommitment, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
             blinding: 1n, amount: 50n, registrySiblings: registrySMT.getSiblings(slot) },
           junk,
         ],
         inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
-        outputCommitments: [createCommitment(kp.pubkey, nkHash, 1n, 50n), junkComm],
+        outputCommitments: [createCommitment(kp.spendingCommitment, nkHash, 1n, 50n), junkComm],
       }));
       expect(publicSignals.length).to.equal(14);
       dummyIdx += 2;
@@ -321,7 +352,7 @@ describe("Circuit/contract alignment", function () {
 
     it("a zero-amount input skips the pool proof, so an unknown note still proves", async function () {
       const kp = generateKeypair();
-      const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { key, slot } = await registerLocal(kp.spendingCommitment, kp.nullifierKey);
       const nkHash = toNullifierKeyHash(kp.nullifierKey);
       // Both inputs are dummies against an empty tree; only their nullifiers are constrained.
       const { publicSignals } = await prove(buildInput({
@@ -329,12 +360,12 @@ describe("Circuit/contract alignment", function () {
         publicAmount: 10n, paramsHash: 1n,
         inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs: [
-          { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
+          { spendingCommitment: kp.spendingCommitment, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
             blinding: 3n, amount: 10n, registrySiblings: registrySMT.getSiblings(slot) },
           dummyOutput(),
         ],
         inputNullifiers:   [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
-        outputCommitments: [createCommitment(kp.pubkey, nkHash, 3n, 10n), DUMMY_OUT_COMMITMENT],
+        outputCommitments: [createCommitment(kp.spendingCommitment, nkHash, 3n, 10n), DUMMY_OUT_COMMITMENT],
       }));
       expect(publicSignals[5]).to.equal("10");   // publicAmount
       dummyIdx += 2;
@@ -344,20 +375,20 @@ describe("Circuit/contract alignment", function () {
       // The pool proof is skipped but inNullifier === inputNullifier is not, so a prover
       // cannot burn an arbitrary nullifier to grief someone else's future note.
       const kp = generateKeypair();
-      const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
+      const { key, slot } = await registerLocal(kp.spendingCommitment, kp.nullifierKey);
       const nkHash = toNullifierKeyHash(kp.nullifierKey);
       await expect(prove(buildInput({
         poolRoot: poolTree.getRoot(), registryRoot: registrySMT.root,
         publicAmount: 10n, paramsHash: 1n,
         inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
         outputs: [
-          { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
+          { spendingCommitment: kp.spendingCommitment, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
             blinding: 3n, amount: 10n, registrySiblings: registrySMT.getSiblings(slot) },
           dummyOutput(),
         ],
         // Claim an arbitrary nullifier rather than the one the keys derive.
         inputNullifiers:   [ethers.toBigInt(ethers.keccak256("0xbeef")) % FIELD_PRIME, dummyNullifier(dummyIdx + 1)],
-        outputCommitments: [createCommitment(kp.pubkey, nkHash, 3n, 10n), DUMMY_OUT_COMMITMENT],
+        outputCommitments: [createCommitment(kp.spendingCommitment, nkHash, 3n, 10n), DUMMY_OUT_COMMITMENT],
       }))).to.be.rejected;
       dummyIdx += 2;
     });
@@ -399,7 +430,7 @@ describe("Circuit/contract alignment", function () {
     // demonstrates that rather than leaving it as a claim in a comment.
     const freeSlot    = 1000;
     const siblings    = registrySMT.getSiblings(freeSlot);
-    const pendingLeaf = poseidonHash([key, registryLeaf(kp.pubkey, kp.nullifierKey), 1n]);
+    const pendingLeaf = poseidonHash([key, registryLeaf(kp.spendingCommitment, kp.nullifierKey), 1n]);
 
     const amount = 5n;
     const base = {
@@ -408,11 +439,11 @@ describe("Circuit/contract alignment", function () {
       inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
       inputNullifiers: [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
       outputs: [
-        { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
+        { spendingCommitment: kp.spendingCommitment, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
           blinding: 3n, amount, registrySlot: freeSlot, registrySiblings: siblings },
         dummyOutput(),
       ],
-      outputCommitments: [createCommitment(kp.pubkey, nkHash, 3n, amount), DUMMY_OUT_COMMITMENT],
+      outputCommitments: [createCommitment(kp.spendingCommitment, nkHash, 3n, amount), DUMMY_OUT_COMMITMENT],
       pendingSlot: freeSlot, pendingSiblings: siblings,
     };
 
@@ -434,7 +465,7 @@ describe("Circuit/contract alignment", function () {
     // non-zero, and pay unregistered keys — making registry membership vacuous on exactly the
     // path that mints new aliases. It also means an insertion can never overwrite an alias.
     const victim = generateKeypair();
-    const { key: takenKey, slot: takenSlot } = await registerLocal(victim.pubkey, victim.nullifierKey);
+    const { key: takenKey, slot: takenSlot } = await registerLocal(victim.spendingCommitment, victim.nullifierKey);
 
     const kp     = generateKeypair();
     const nkHash = toNullifierKeyHash(kp.nullifierKey);
@@ -448,12 +479,12 @@ describe("Circuit/contract alignment", function () {
       inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
       inputNullifiers: [dummyNullifier(dummyIdx), dummyNullifier(dummyIdx + 1)],
       outputs: [
-        { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
+        { spendingCommitment: kp.spendingCommitment, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
           blinding: 3n, amount, registrySlot: takenSlot, registrySiblings: siblings },
         dummyOutput(),
       ],
-      outputCommitments: [createCommitment(kp.pubkey, nkHash, 3n, amount), DUMMY_OUT_COMMITMENT],
-      pendingLeaf: poseidonHash([key, registryLeaf(kp.pubkey, kp.nullifierKey), 1n]),
+      outputCommitments: [createCommitment(kp.spendingCommitment, nkHash, 3n, amount), DUMMY_OUT_COMMITMENT],
+      pendingLeaf: poseidonHash([key, registryLeaf(kp.spendingCommitment, kp.nullifierKey), 1n]),
       pendingSlot: takenSlot, pendingSiblings: siblings,
     })), "an insertion overwrote an occupied slot").to.be.rejected;
 
@@ -470,7 +501,7 @@ describe("Circuit/contract alignment", function () {
     // only produces a witness if the circuit also folds in tree 1 — and supplying the tree-0
     // value fails. Drop the tree from NoteNullifier and this test stops passing both ways.
     const n0 = dummyNullifier(dummyIdx);
-    const n1 = computeNullifier(DUMMY_NULLIFIER_KEY, dummyIdx, 1);
+    const n1 = nullifierFor(DUMMY_NULLIFIER_KEY, dummyIdx, 1);
     expect(n0, "tree number had no effect on the nullifier").to.not.equal(n1);
 
     const base = {
@@ -484,7 +515,7 @@ describe("Circuit/contract alignment", function () {
     // Proving in tree 1 requires the tree-1 nullifiers…
     const { publicSignals } = await prove(buildInput({
       ...base, treeNumber: 1,
-      inputNullifiers: [n1, computeNullifier(DUMMY_NULLIFIER_KEY, dummyIdx + 1, 1)],
+      inputNullifiers: [n1, nullifierFor(DUMMY_NULLIFIER_KEY, dummyIdx + 1, 1)],
     }));
     expect(publicSignals[10]).to.equal(n1.toString());
     expect(publicSignals[2]).to.equal("1");   // treeNumber[0] is public
@@ -500,10 +531,10 @@ describe("Circuit/contract alignment", function () {
 
   it("publicSignals order matches the contract's pubSignals array", async function () {
     const kp = generateKeypair();
-    const { key, slot } = await registerLocal(kp.pubkey, kp.nullifierKey);
+    const { key, slot } = await registerLocal(kp.spendingCommitment, kp.nullifierKey);
     const nkHash = toNullifierKeyHash(kp.nullifierKey);
     const amount = 77n, blinding = 5n, paramsHash = 424242n;
-    const comm = createCommitment(kp.pubkey, nkHash, blinding, amount);
+    const comm = createCommitment(kp.spendingCommitment, nkHash, blinding, amount);
     const n0 = dummyNullifier(dummyIdx), n1 = dummyNullifier(dummyIdx + 1);
 
     const { publicSignals } = await prove(buildInput({
@@ -511,7 +542,7 @@ describe("Circuit/contract alignment", function () {
       publicAmount: amount, paramsHash,
       inputs: [dummyInput(dummyIdx), dummyInput(dummyIdx + 1)],
       outputs: [
-        { pubkey: kp.pubkey, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
+        { spendingCommitment: kp.spendingCommitment, nullifierKeyHash: nkHash, dataHash: 0n, aliasHash: key,
           blinding, amount, registrySiblings: registrySMT.getSiblings(slot) },
         dummyOutput(),
       ],

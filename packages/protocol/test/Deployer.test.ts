@@ -6,6 +6,8 @@ import { registerAlias } from "./helpers/register";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
+import { FIELD_PRIME } from "./helpers/field";
+import { ZERO_PROOF, NO_RELAYER, rand32 } from "./helpers/tx";
 
 // HaliasDeployer — the three contracts brought up wired, in one transaction.
 //
@@ -15,9 +17,6 @@ import { anchorOf } from "./helpers/anchor";
 // addresses, since a wrong one produces a registry authorising an address that will never
 // hold code — inert, with nothing reverting to say so.
 
-const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const ZERO_PROOF  = "0x" + "00".repeat(256);
-const NO_RELAYER  = { relayer: ethers.ZeroAddress, amount: 0n };
 
 describe("HaliasDeployer", function () {
   this.timeout(120000);
@@ -26,7 +25,6 @@ describe("HaliasDeployer", function () {
   let admin: any, user: any;
   let verifier: string;
 
-  const rand32 = () => ethers.keccak256(ethers.randomBytes(32));
 
   async function deployStack() {
     const [admin, user] = await ethers.getSigners();
@@ -149,12 +147,12 @@ describe("HaliasDeployer", function () {
 
     const r = {
       owner: user.address, aliasHash: rand32(),
-      spendingPubkey: ethers.toBeHex(11n, 32),
+      spendingCommitment: ethers.toBeHex(11n, 32),
       nullifierKeyHash: ethers.toBeHex(22n, 32),
       encryptionPubkey: ethers.toBeHex(33n, 32),
     };
     const externalData = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address owner,bytes32 aliasHash,bytes32 spendingPubkey,bytes32 nullifierKeyHash,bytes32 encryptionPubkey)"],
+      ["tuple(address owner,bytes32 aliasHash,bytes32 spendingCommitment,bytes32 nullifierKeyHash,bytes32 encryptionPubkey)"],
       [r],
     ));
 
@@ -167,7 +165,7 @@ describe("HaliasDeployer", function () {
       // during the registration, and the pool requires the public signal to match.
       pendingLeaf: ethers.toBeHex(poseidonHash([
         aliasHashToKey(r.aliasHash),
-        poseidonHash([BigInt(r.spendingPubkey), BigInt(r.nullifierKeyHash), 0n]),
+        poseidonHash([BigInt(r.spendingCommitment), BigInt(r.nullifierKeyHash), 0n]),
         1n,
       ]), 32),
       outputsEmpty: false,

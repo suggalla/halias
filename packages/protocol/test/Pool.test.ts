@@ -3,6 +3,8 @@ import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
+import { FIELD_PRIME } from "./helpers/field";
+import { ZERO_PROOF, NO_RELAYER, rand32 } from "./helpers/tx";
 
 // HaliasPool, exercised against the real HaliasRegistry.
 //
@@ -10,18 +12,14 @@ import { anchorOf } from "./helpers/anchor";
 // these tests are about the Solidity that decides where value goes. Claim.test.ts is where
 // the real verifier runs.
 //
-// The pool was extracted from the monolith with three behavioural widenings that no test
-// had ever executed: the destination requirement was relaxed to only apply when a payout
-// actually exists, the uint96 ceiling on the relayer fee was dropped, and relayer fees were
-// extended from ETH to arbitrary tokens. Each of those has a test below that fails if the
-// widening is reverted, and each has one that fails if it was widened too far.
+// Three of the pool's rules are looser than the obvious ones, and each is loose on purpose:
+// a destination is required only when a payout actually exists, a relayer fee has no upper
+// bound short of the withdrawal itself, and a fee may be denominated in any token rather than
+// only ETH. Each has a test below that fails if the rule is tightened, and one that fails if
+// it is loosened further.
 
-const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const ZERO_PROOF  = "0x" + "00".repeat(256);
-const NO_RELAYER  = { relayer: ethers.ZeroAddress, amount: 0n };
 
 const withdrawOf = (amount: bigint) => FIELD_PRIME - amount;
-const rand32     = () => ethers.keccak256(ethers.randomBytes(32));
 
 describe("HaliasPool", function () {
   this.timeout(120000);
@@ -117,7 +115,13 @@ describe("HaliasPool", function () {
     it("reads the live registry through the interface", async function () {
       // Proves IHaliasRegistry actually matches HaliasRegistry's ABI. Nothing else in the
       // build checks this, because the pool only ever holds an address.
-      await expect(send(await baseParams())).to.not.be.reverted;
+      //
+      // Asserted on the event rather than on the absence of a revert: an ABI mismatch that
+      // returned garbage instead of reverting would still pass a not-reverted check, and the
+      // root moving is what proves the read fed a real insertion.
+      const rootBefore = (await anchorOf(pool)).root;
+      await expect(send(await baseParams())).to.emit(pool, "Transact");
+      expect((await anchorOf(pool)).root).to.not.equal(rootBefore);
     });
   });
 
@@ -199,14 +203,16 @@ describe("HaliasPool", function () {
       const oldRoot = (await anchorOf(pool)).root;
       await depositETH(ethers.parseEther("1"));
       expect((await anchorOf(pool)).root).to.not.equal(oldRoot);
-      await expect(send(await baseParams({ poolRoot: [oldRoot, oldRoot], treeNumber: [0, 0]}))).to.not.be.reverted;
+      await expect(send(await baseParams({ poolRoot: [oldRoot, oldRoot], treeNumber: [0, 0]})))
+        .to.emit(pool, "Transact");
     });
 
     it("accepts a registry root that is no longer current", async function () {
       const oldRoot = await registry.getRegistryRoot();
       await (await registry.register(rand32(), ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), rand32())).wait();
       expect(await registry.getRegistryRoot()).to.not.equal(oldRoot);
-      await expect(send(await baseParams({ registryRoot: oldRoot }))).to.not.be.reverted;
+      await expect(send(await baseParams({ registryRoot: oldRoot })))
+        .to.emit(pool, "Transact");
     });
   });
 
@@ -246,7 +252,12 @@ describe("HaliasPool", function () {
         .to.be.revertedWithCustomError(pool, "WrongMsgValue").withArgs(amount, amount - 1n);
       await expect(send(await baseParams({ publicAmount: amount }), { value: amount + 1n }))
         .to.be.revertedWithCustomError(pool, "WrongMsgValue").withArgs(amount, amount + 1n);
-      await expect(send(await baseParams({ publicAmount: amount }), { value: amount })).to.not.be.reverted;
+      // The positive control, and it has to say more than "did not revert": the whole point of
+      // the check above is that the pool's balance tracks msg.value exactly.
+      const held = await ethers.provider.getBalance(poolAddr);
+      await expect(send(await baseParams({ publicAmount: amount }), { value: amount }))
+        .to.emit(pool, "Transact");
+      expect(await ethers.provider.getBalance(poolAddr)).to.equal(held + amount);
     });
 
     it("refuses value on a withdrawal", async function () {
@@ -310,7 +321,8 @@ describe("HaliasPool", function () {
         publicAmount: withdrawOf(amount),
         recipient:    ethers.ZeroAddress,
         relayerFee:   { relayer: relayer.address, amount },
-      }))).to.not.be.reverted;
+      }))).to.emit(pool, "Withdrawal")
+        .withArgs(ethers.ZeroAddress, 0n, relayer.address, amount, ethers.ZeroAddress);
 
       expect(await ethers.provider.getBalance(relayer.address) - before).to.equal(amount);
     });
@@ -344,8 +356,24 @@ describe("HaliasPool", function () {
       // note and pay nobody.
       const amount = ethers.parseEther("1");
       await depositETH(amount);
-      await expect(send(await baseParams({ publicAmount: withdrawOf(amount), recipient: verifierAddr })))
-        .to.be.reverted;
+
+      const nullifiers = [rand32(), rand32()];
+      const rootBefore = (await anchorOf(pool)).root;
+
+      // Named, not bare. `_payOut` goes through OpenZeppelin's Address.sendValue, so the
+      // failure has an identity — and asserting on it is what distinguishes "the payout was
+      // refused" from "the parameters were malformed", which a bare revert cannot.
+      await expect(send(await baseParams({
+        publicAmount: withdrawOf(amount), recipient: verifierAddr, inputNullifiers: nullifiers,
+      }))).to.be.revertedWithCustomError(pool, "FailedCall");
+
+      // The point of reverting rather than swallowing: nothing moved. Without these the test
+      // passes for a contract that reverts *after* burning the note.
+      expect(await ethers.provider.getBalance(poolAddr), "pool paid out anyway").to.equal(amount);
+      expect((await anchorOf(pool)).root, "commitments were inserted anyway").to.equal(rootBefore);
+      for (const n of nullifiers) {
+        expect(await pool.spentNullifiers(n), "the note was burned anyway").to.equal(false);
+      }
     });
   });
 
