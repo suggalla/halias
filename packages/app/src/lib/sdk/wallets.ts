@@ -3,9 +3,10 @@ import { readable } from 'svelte/store';
 
 // Which wallet to talk to.
 //
-// This used to read `window.ethereum`. Every extension injects into that one object, so with
-// more than one installed the last to load wins and the user has no say — someone running
-// MetaMask and Rabby got whichever happened to initialise second, with no way to pick the
+// Discovered over EIP-6963 rather than read off `window.ethereum`. Every extension injects
+// into that one object, so with more than one installed the last to load wins and the user has
+// no say — someone running MetaMask and Rabby would get whichever initialised second, with no
+// way to pick the
 // other. EIP-6963 replaces the collision with an announcement: each wallet emits its own
 // provider plus a name, icon and reverse-DNS id, and the app lists them.
 //
@@ -31,8 +32,8 @@ export function findWallet(rdns: string): EIP6963ProviderDetail | undefined {
 
 /// The provider to use when the caller has not picked one.
 ///
-/// Only sensible when exactly one wallet is present. With several, picking for the user is
-/// how the collision this replaces used to behave, so callers are expected to prompt instead.
+/// Only sensible when exactly one wallet is present. With several, picking for the user is the
+/// `window.ethereum` collision by another route, so callers are expected to prompt instead.
 export function soleWallet(): EIP6963ProviderDetail | undefined {
 	const found = store.getProviders();
 	return found.length === 1 ? found[0] : undefined;

@@ -28,6 +28,28 @@
 	--titlebar-h: 32px;
 	--snap-preview: rgba(212, 160, 192, 0.15);
 
+	/* === TYPEFACES ===
+	 *
+	 * Two faces, and which one a thing gets says what kind of thing it is.
+	 *
+	 *   sans  prose. Every sentence explaining what a phrase is, what a password protects,
+	 *         what a view key exposes — the copy this app leans on hardest.
+	 *   mono  values you read character by character, or compare: addresses, amounts,
+	 *         recovery phrases, view keys, transaction hashes.
+	 *
+	 * It used to be monospace everywhere — Courier New on the body, `ui-monospace` in twenty
+	 * components — so the explanations were set in the face that is worst for reading them,
+	 * and the two stacks did not match each other. Mono now marks data instead of being the
+	 * default, which makes it mean something.
+	 *
+	 * System stacks, not a webfont: this ships to IPFS as a static build, and a self-hosted
+	 * face is bytes to pin, a flash of unstyled text, and one more thing to verify against a
+	 * published build hash. */
+	--font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+		Arial, sans-serif;
+	--font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+		monospace;
+
 	/* === SEMANTIC COLOUR ===
 	 *
 	 * Separate from the accent, and deliberately so: the accent says "this is the thing to
@@ -55,10 +77,22 @@ body {
 	overflow: hidden;
 	background: var(--bg-dark);
 	color: var(--text);
-	font-family: 'Courier New', Courier, monospace;
+	font-family: var(--font-sans);
 	font-size: 15px;
-	line-height: 1.5;
+	/* Prose wants more leading than Courier did — a sans face at the same size sets a longer
+	 * line, and this app's longest text is its explanations. */
+	line-height: 1.55;
 	-webkit-font-smoothing: antialiased;
+}
+
+/* Data, wherever it appears. Tabular figures so amounts in a column line up on the decimal
+ * and a changing balance does not shift the digits beside it. */
+.mono,
+code,
+kbd,
+samp {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
 }
 
 /* === SELECTION === */

@@ -17,6 +17,44 @@
 	let copied = $state<'code' | 'link' | null>(null);
 	let formError = $state<string | null>(null);
 
+	// Invites already outstanding, and what can still be done about them.
+	//
+	// Listable at all only because the secret is derived from this wallet's root rather than
+	// generated randomly — see inviteSecretAt in the SDK. A random secret exists only in the
+	// screen that first displayed it, so closing this window used to strand the funds behind
+	// any invite whose code had not been saved. Recomputed, they can be found again on any
+	// device holding the phrase, and taken back if nobody redeemed them.
+	type Pending = {
+		index: number;
+		inviteCode: string;
+		name: string;
+		amount: bigint | null;
+		claimable: boolean;
+	};
+	let pending = $state<Pending[]>([]);
+	let loading = $state(false);
+	let reclaiming = $state<number | null>(null);
+
+	async function loadPending() {
+		loading = true;
+		const r = await run(() => getClient().listInvites());
+		if (r) pending = (r as Pending[]).filter((i) => i.claimable);
+		loading = false;
+	}
+
+	// Re-read whenever the alias changes, since invites belong to a wallet's root and the
+	// screen is reachable from any of its aliases.
+	$effect(() => {
+		if ($clientState.selected) loadPending();
+	});
+
+	async function reclaim(index: number) {
+		reclaiming = index;
+		const r = await run(() => getClient().reclaimInvite(index));
+		reclaiming = null;
+		if (r) await loadPending();
+	}
+
 	const busy = $derived($clientState.status === 'syncing');
 	// Rendered inside the alias screen, so the alias is settled before this mounts.
 	const source = $derived($clientState.selected);
@@ -41,6 +79,7 @@
 		if (r) {
 			created = { inviteCode: (r as any).inviteCode, amount: (r as any).amount };
 			amount = '';
+			await loadPending();
 		}
 	}
 
@@ -102,7 +141,7 @@
 
 		<label>
 			<span>Amount (ETH)</span>
-			<input bind:value={amount} placeholder="0.2" inputmode="decimal" disabled={busy} />
+			<input class="mono" bind:value={amount} placeholder="0.2" inputmode="decimal" disabled={busy} />
 		</label>
 		<p class="hint">
 			From this alias's shielded balance of {formatEther(source.balance)} ETH. Both the
@@ -114,6 +153,50 @@
 		<button class="primary" disabled={busy} onclick={create}>
 			{busy ? 'Working…' : 'Create invite'}
 		</button>
+	{/if}
+
+	<!-- Shown alongside creating rather than behind a tab, because an outstanding invite is
+	     money that has left this balance and not yet arrived anywhere. Only unclaimed ones are
+	     listed: a redeemed invite is finished, and nothing on chain says who redeemed it — the
+	     claimer's change is addressed to their own alias and is indistinguishable from any
+	     other output, which is the point. -->
+	{#if pending.length > 0}
+		<section class="pending">
+			<h3>Waiting to be redeemed</h3>
+			<p class="hint">
+				Still yours until someone spends them. Taking one back returns its funds to this
+				alias — the registration fee it already paid is not recoverable, and whoever holds
+				the code can still redeem it first.
+			</p>
+			<ul>
+				{#each pending as p (p.index)}
+					<li>
+						<div class="who">
+							<span class="amt">{p.amount === null ? '—' : formatEther(p.amount)} ETH</span>
+							<span class="nm">{p.name.replace(/\.hls$/, '')}</span>
+						</div>
+						<div class="row">
+							<button
+								class="ghost sm"
+								disabled={reclaiming !== null}
+								onclick={() => copy(p.inviteCode, 'code')}
+							>
+								{copied === 'code' ? 'Copied' : 'Copy code'}
+							</button>
+							<button
+								class="ghost sm danger"
+								disabled={busy || reclaiming !== null}
+								onclick={() => reclaim(p.index)}
+							>
+								{reclaiming === p.index ? 'Taking back…' : 'Take back'}
+							</button>
+						</div>
+					</li>
+				{/each}
+			</ul>
+		</section>
+	{:else if loading}
+		<p class="hint">Checking for outstanding invites…</p>
 	{/if}
 
 	{#if formError}<p class="err">{formError}</p>{/if}
@@ -128,17 +211,35 @@
 	label { display: flex; flex-direction: column; gap: 0.25rem; }
 	label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
 		color: var(--text-dim); }
-	input[readonly] { width: 100%; font-family: ui-monospace, monospace; font-size: 0.72rem;
+	input[readonly] { width: 100%; font-family: var(--font-mono); font-size: 0.72rem;
 		background: var(--bg-input); color: inherit; border: 1px solid var(--border);
 		border-radius: 6px; padding: 0.55rem; }
 	.note { font-size: 0.78rem; line-height: 1.5; padding: 0.7rem 0.8rem;
 		border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; }
 	.note.warn { border-left-color: var(--caution); }
 	strong { font-weight: 600; }
-	code { font-family: ui-monospace, monospace; }
+	code { font-family: var(--font-mono); }
 	.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 	.actions .primary { flex: 1; min-width: 8rem; }
 	.primary { padding: 0.55rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
+
+	/* Outstanding invites. Separated by a rule rather than a heading weight, because this is a
+	   different subject from the form above it, not a subsection of it. */
+	.pending { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.9rem;
+		border-top: 1px solid var(--border); }
+	.pending ul { list-style: none; margin: 0; padding: 0; display: flex;
+		flex-direction: column; gap: 0.4rem; }
+	.pending li { display: flex; align-items: center; justify-content: space-between;
+		gap: 0.75rem; flex-wrap: wrap; padding: 0.55rem 0.7rem; background: var(--bg-input);
+		border: 1px solid var(--border); border-radius: 8px; }
+	.who { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+	.amt { font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+		font-size: 0.85rem; color: var(--text-bright); }
+	.nm { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-dim);
+		overflow-wrap: anywhere; }
+	.row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+	.sm { font-size: 0.72rem; padding: 0.3rem 0.6rem; }
+	.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 	.err { color: var(--bad); font-size: 0.85rem; margin: 0; line-height: 1.5; }
 </style>

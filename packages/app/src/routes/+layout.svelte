@@ -129,6 +129,17 @@
 					Register a name, send and receive ETH. Every transfer provably goes between
 					registered identities — but which identities stay hidden.
 				</p>
+				<!-- The second half of the pitch, and the half that is actually unusual. Privacy
+				     tools are normally unreadable twice over: you send to a hex string you can only
+				     verify by comparing characters, and the tool will not tell you what it leaks.
+				     Both are architectural here rather than cosmetic — names are in the circuit, and
+				     the leaks are enumerable because there is no server and no relayer in the trust
+				     path — so saying it on the front page is a claim we can stand behind. -->
+				<p class="lede">
+					Built to be read. You pay a name, not forty hex characters you have to trust you
+					copied correctly, and every screen says plainly what it makes public and what it
+					does not.
+				</p>
 				<Onboarding />
 				{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
 			</section>
@@ -199,7 +210,7 @@
 	.app { min-height: 100vh; display: flex; flex-direction: column; }
 	.bar { display: flex; align-items: center; gap: 1.25rem; padding: 0.7rem 1.25rem;
 		border-bottom: 1px solid var(--border); font-size: 0.85rem; }
-	.brand { font-family: ui-monospace, monospace; letter-spacing: 0.02em; font-weight: 600;
+	.brand { font-family: var(--font-mono); letter-spacing: 0.02em; font-weight: 600;
 		color: inherit; text-decoration: none; }
 	/* Breadcrumb. Levels you can return to, so the navigable ones look pressable and the
 	   current one does not. */
@@ -228,7 +239,7 @@
 	.vtag { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em;
 		color: var(--bg-dark); background: var(--accent); padding: 0.15rem 0.45rem;
 		border-radius: 999px; font-weight: 700; }
-	.vname { font-family: ui-monospace, monospace; font-size: 0.85rem;
+	.vname { font-family: var(--font-mono); font-size: 0.85rem;
 		overflow-wrap: anywhere; }
 	/* Boxed, not bare text. These sit beside a network pill and a breadcrumb, and without a
 	   boundary there was nothing to tell a reader they were controls at all. */

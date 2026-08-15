@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { formatEther, keccak256, toUtf8Bytes } from 'ethers';
-	import { normalizeAlias, fullAlias, InvalidAliasError } from 'halias-sdk';
+	// From the alias module, not the package root — see the note in sdk/client.ts. This is pure
+	// string handling and has no business loading Poseidon.
+	import { normalizeAlias, fullAlias, InvalidAliasError } from 'halias-sdk/alias';
 	import {
 		clientState,
 		run,
@@ -331,7 +333,7 @@
 		gap: 1rem; flex-wrap: wrap;
 		border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; }
 	.label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
-	.addr { margin-left: 0.5rem; font-family: ui-monospace, monospace; font-size: 0.78rem;
+	.addr { margin-left: 0.5rem; font-family: var(--font-mono); font-size: 0.78rem;
 		background: none; border: none; color: inherit; padding: 0; cursor: pointer;
 		overflow-wrap: anywhere; text-align: left; }
 	.addr:hover { color: var(--accent); }
@@ -349,12 +351,12 @@
 		color: inherit; font: inherit; text-align: left; }
 	.alias:hover:not(:disabled) { border-color: var(--accent); }
 	.alias:disabled { cursor: default; color: var(--text-dim); }
-	.nm { font-family: ui-monospace, monospace; overflow-wrap: anywhere; font-size: 0.8rem;
+	.nm { font-family: var(--font-mono); overflow-wrap: anywhere; font-size: 0.8rem;
 		min-width: 0; }
 	.bal { font-variant-numeric: tabular-nums; opacity: 0.85; }
 	.row { display: flex; gap: 0.4rem; align-items: center; }
 	.row input { flex: 1; min-width: 0; }
-	.suffix { color: var(--text-dim); font-family: ui-monospace, monospace; }
+	.suffix { color: var(--text-dim); font-family: var(--font-mono); }
 	.label-in { width: 100%; margin-top: 0.3rem; font-size: 0.8rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0.4rem 0 0; }
 	.offers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
@@ -363,7 +365,7 @@
 		padding: 0.7rem 0.8rem; background: var(--bg-input); border: 1px solid var(--accent);
 		border-radius: 6px; }
 	.oinfo { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
-	.from { font-size: 0.7rem; color: var(--text-dim); font-family: ui-monospace, monospace;
+	.from { font-size: 0.7rem; color: var(--text-dim); font-family: var(--font-mono);
 		overflow-wrap: anywhere; }
 	.offers .primary { padding: 0.4rem 0.9rem; }
 	.ok { color: var(--good); font-size: 0.85rem; margin: 0; }

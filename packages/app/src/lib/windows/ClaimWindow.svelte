@@ -145,7 +145,7 @@
 
 		<label>
 			<span>Invite code</span>
-			<input bind:value={code} placeholder="0x…" disabled={busy} />
+			<input class="mono" bind:value={code} placeholder="0x…" disabled={busy} />
 		</label>
 
 		<label>
@@ -173,11 +173,11 @@
 			<div class="sub">
 				<label>
 					<span>Submitting address</span>
-					<input bind:value={submitter} placeholder="0x…" disabled={busy} />
+					<input class="mono" bind:value={submitter} placeholder="0x…" disabled={busy} />
 				</label>
 				<label>
 					<span>Their fee (ETH)</span>
-					<input bind:value={submitterFee} inputmode="decimal" disabled={busy} />
+					<input class="mono" bind:value={submitterFee} inputmode="decimal" disabled={busy} />
 				</label>
 				<div class="est">
 					<button class="ghost sm" disabled={busy} onclick={suggest}>Estimate</button>
@@ -195,7 +195,7 @@
 		{#if blob}
 			<label>
 				<span>Send this to whoever is submitting</span>
-				<input readonly value={relayLink} onfocus={(e) => e.currentTarget.select()} />
+				<input class="mono" readonly value={relayLink} onfocus={(e) => e.currentTarget.select()} />
 			</label>
 			<div class="actions">
 				<button class="ghost" onclick={() => copy(blob!, 'blob')}>
@@ -254,7 +254,7 @@
 		border: 1px solid var(--border); border-left-width: 3px;
 		border-left-color: var(--accent); border-radius: 4px; }
 	strong { font-weight: 600; }
-	code { font-family: ui-monospace, monospace; }
+	code { font-family: var(--font-mono); }
 	.primary { padding: 0.55rem; }
 	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
 	.ok { color: var(--good); font-size: 0.85rem; margin: 0; line-height: 1.5; }

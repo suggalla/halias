@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { formatEther, parseEther, isAddress } from 'ethers';
+	import { formatUnits, parseUnits, isAddress } from 'ethers';
+	import { ETH_TOKEN, type TokenConfig } from '../sdk/config.js';
 
 	// What the wallet cannot tell you.
 	//
@@ -25,6 +26,7 @@
 		submitter = '',
 		submitterFee = '0.01',
 		busy = false,
+		token = ETH_TOKEN,
 		onconfirm,
 		oncancel
 	}: {
@@ -38,14 +40,25 @@
 		submitter?: string;
 		submitterFee?: string;
 		busy?: boolean;
+		/// What `amount` and `submitterFee` are denominated in. Passed rather than read off the
+		/// client, because a deposit chooses its asset on its own form — the payer may hold no
+		/// alias, so there is no per-alias selection to inherit — and a review showing the wrong
+		/// unit is the one thing this screen exists to prevent.
+		token?: TokenConfig;
 		onconfirm: () => void;
 		oncancel: () => void;
 	} = $props();
 
 
+	// Denominated in whatever is moving, not in ETH. The fee comes out of the same note, so
+	// a withdrawal of a token pays its submitter in that token — even though what the
+	// submitter actually spends is ETH gas.
+	const sym = $derived(token.symbol);
+	const fmt = (v: bigint) => formatUnits(v, token.decimals);
+
 	const feeWei = $derived.by(() => {
 		try {
-			return parseEther(submitterFee.trim() || '0');
+			return parseUnits(submitterFee.trim() || '0', token.decimals);
 		} catch {
 			return 0n;
 		}
@@ -54,7 +67,9 @@
 	// Only a withdrawal splits the total between recipient and submitter; a transfer pays the
 	// fee on top, out of the same note.
 	const netToRecipient = $derived(
-		relayed && mode === 'withdraw' ? formatEther(parseEther(amount || '0') - feeWei) : amount
+		relayed && mode === 'withdraw'
+			? fmt(parseUnits(amount || '0', token.decimals) - feeWei)
+			: amount
 	);
 
 	// The fee is committed inside the proof, so it has to be picked before the proof exists —
@@ -77,7 +92,7 @@
 			<dt>To</dt>
 			<dd class="mono">{target}</dd>
 			<dt>Amount</dt>
-			<dd>{amount} ETH</dd>
+			<dd>{amount} {sym}</dd>
 			<dt>Visibility</dt>
 			<dd class="warn">
 				That address and this amount are public. Who can spend it is not — only
@@ -89,10 +104,10 @@
 			<dt>To</dt>
 			<dd class="mono">{target}</dd>
 			<dt>Amount</dt>
-			<dd>{amount} ETH</dd>
+			<dd>{amount} {sym}</dd>
 			{#if relayed}
 				<dt>Fee</dt>
-				<dd>{formatEther(feeWei)} ETH to <span class="mono">{submitter}</span></dd>
+				<dd>{fmt(feeWei)} {sym} to <span class="mono">{submitter}</span></dd>
 				<dt>Visibility</dt>
 				<dd class="warn">
 					The amount and both aliases stay hidden, but the fee leaving the pool is public —
@@ -108,12 +123,12 @@
 			<dt>To</dt>
 			<dd class="mono">{target}</dd>
 			<dt>Leaving the pool</dt>
-			<dd>{amount} ETH</dd>
+			<dd>{amount} {sym}</dd>
 			{#if relayed}
 				<dt>Fee</dt>
-				<dd>{formatEther(feeWei)} ETH to <span class="mono">{submitter}</span></dd>
+				<dd>{fmt(feeWei)} {sym} to <span class="mono">{submitter}</span></dd>
 				<dt>Recipient receives</dt>
-				<dd>{netToRecipient} ETH</dd>
+				<dd>{netToRecipient} {sym}</dd>
 			{/if}
 			<dt>Visibility</dt>
 			<dd class="warn">Amount, destination and timing are public</dd>
@@ -128,8 +143,8 @@
 				: relayed
 					? 'Prepare for submission'
 					: mode === 'deposit'
-						? `Deposit ${amount} ETH to ${target}`
-						: `${VERB[mode]} ${amount} ETH`}
+						? `Deposit ${amount} ${sym} to ${target}`
+						: `${VERB[mode]} ${amount} ${sym}`}
 		</button>
 	</div>
 
@@ -147,7 +162,7 @@
 		border-radius: 6px; }
 	dt { color: var(--text-dim); }
 	dd { margin: 0; overflow-wrap: anywhere; }
-	.mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+	.mono { font-family: var(--font-mono); font-size: 0.8rem; }
 	.good { color: var(--accent); }
 	.warn { color: var(--caution); }
 	.note { margin: 0; font-size: 0.78rem; color: var(--text-dim); line-height: 1.5; }

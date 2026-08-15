@@ -12,6 +12,11 @@
 		Named private payments. Register a <code>.hls</code> alias, and every transfer provably
 		goes between registered identities — without revealing which ones.
 	</p>
+	<p class="lede">
+		The design goal is legibility. Privacy tools usually ask you to verify a hex string
+		character by character and then decline to tell you what they leak; this page is the
+		other half of that promise, and the list below is exhaustive rather than reassuring.
+	</p>
 
 	<section>
 		<h2>What is public</h2>
@@ -42,7 +47,8 @@
 			<dd>Held as notes only you can decrypt. Nobody can total them, including us.</dd>
 			<dt>Your keys</dt>
 			<dd>
-				Derived in your browser from one wallet signature. They never leave it, and no
+				Derived in your browser from your recovery phrase — never from your Ethereum
+				wallet, which only broadcasts and pays gas. They never leave this browser, and no
 				server of ours is involved in anything here.
 			</dd>
 		</dl>
@@ -126,7 +132,7 @@
 
 <style>
 	.info { display: flex; flex-direction: column; gap: 1.75rem; padding: 0.5rem; }
-	h1 { margin: 0; font-size: 1.4rem; font-family: ui-monospace, monospace; }
+	h1 { margin: 0; font-size: 1.4rem; font-family: var(--font-mono); }
 	.lede { margin: 0; opacity: 0.9; line-height: 1.55; max-width: 34rem; }
 	h2 { margin: 0 0 0.6rem; font-size: 0.72rem; text-transform: uppercase;
 		letter-spacing: 0.09em; color: var(--text-dim); font-weight: 600; }
@@ -139,7 +145,7 @@
 		gap: 0.4rem; font-size: 0.85rem; line-height: 1.5; opacity: 0.88; }
 	p { margin: 0; font-size: 0.85rem; line-height: 1.55; opacity: 0.88; }
 	strong { opacity: 1; font-weight: 600; }
-	code { font-family: ui-monospace, monospace; opacity: 0.9; }
+	code { font-family: var(--font-mono); opacity: 0.9; }
 	.caution { border-top-color: var(--caution); }
 	.caution strong { color: var(--caution); }
 	@media (max-width: 30rem) {

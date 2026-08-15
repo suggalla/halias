@@ -1,7 +1,7 @@
 // Encrypted-at-rest storage for the recovery phrase.
 //
-// The phrase used to be typed every session and held only in memory. That stored nothing,
-// which was honest but unusable. This stores it encrypted, and the shape is the one in
+// Holding the phrase in memory only, and asking for it every session, stores nothing and is
+// unusable. This stores it encrypted instead, in the shape set out in
 // packages/protocol/docs/key-management.md:
 //
 //     dataKey   = random(32)

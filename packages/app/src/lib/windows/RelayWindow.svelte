@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { formatEther, formatUnits } from 'ethers';
+	import { ETH_TOKEN, findToken } from '../sdk/config.js';
 	import { clientState, wallet } from '../sdk/client.js';
-	import type { RelayQuote, RelayPayload } from 'halias-sdk';
+	import type { RelayQuote, RelayPayload } from 'halias-sdk/relay';
 
 	// The relayer's side: simulate before committing gas.
 	//
@@ -15,6 +16,18 @@
 	let raw = $state('');
 	let fromLink = $state(false);
 	let quote = $state<RelayQuote | null>(null);
+
+	// What the fee is actually denominated in. A relayer is paid out of the note, so the fee is
+	// in whatever that note holds — while the gas it spends is always ETH. Labelling both "ETH"
+	// is right only for an ETH fee and silently wrong for any other, which is the failure this
+	// screen is least able to notice: the numbers still look like money.
+	const feeToken = $derived(
+		quote ? findToken($clientState.chainId ?? 0, quote.tokenAddress) : ETH_TOKEN
+	);
+	const feeSym = $derived(feeToken.symbol);
+	const fmtFee = (v: bigint) => formatUnits(v, feeToken.decimals);
+	// Null when the two sides are different assets. Nothing here can bridge them.
+	const comparable = $derived(quote?.profit ?? null);
 	let payload = $state<RelayPayload | null>(null);
 	let checking = $state(false);
 	let sending = $state(false);
@@ -109,7 +122,7 @@
 		{/if}
 		<label>
 			<span>Prepared transaction</span>
-			<textarea bind:value={raw} rows="5" placeholder="Paste here…" disabled={sending}></textarea>
+			<textarea class="mono" bind:value={raw} rows="5" placeholder="Paste here…" disabled={sending}></textarea>
 		</label>
 		<button class="primary" disabled={checking || sending || !raw.trim()} onclick={check}>
 			{checking ? 'Simulating…' : 'Simulate'}
@@ -135,23 +148,33 @@
 				{:else}
 					<dd>Withdrawal</dd>
 					<dt>Leaving the pool</dt>
-					<dd>{formatEther(quote.withdrawing)} ETH</dd>
+					<dd>{fmtFee(quote.withdrawing)} {feeSym}</dd>
 					<dt>Recipient</dt>
 					<dd class="mono">{quote.recipient}</dd>
 				{/if}
 				<dt>Fee to</dt>
 				<dd class="mono">{quote.relayer}</dd>
 				<dt>You earn</dt>
-				<dd>{formatEther(quote.fee)} ETH</dd>
+				<dd>{fmtFee(quote.fee)} {feeSym}</dd>
 				<dt>Gas</dt>
 				<dd>
 					{quote.gasEstimate.toLocaleString()} @ {formatUnits(quote.gasPrice, 'gwei')} gwei
 					· {formatEther(quote.gasCost)} ETH
 				</dd>
 				<dt>Net</dt>
-				<dd class:good={quote.profit > 0n} class:warn={quote.profit <= 0n}>
-					{quote.profit > 0n ? '+' : ''}{formatEther(quote.profit)} ETH
-				</dd>
+				{#if comparable === null}
+					<!-- Stated rather than computed. Subtracting a gas cost in wei from a fee in a
+					     token's base units produces a number, and showing it as money would be a
+					     lie with two decimal places. -->
+					<dd class="warn">
+						Not comparable — the fee is in {feeSym} and the gas is in ETH.
+						Price it yourself before submitting.
+					</dd>
+				{:else}
+					<dd class:good={comparable > 0n} class:warn={comparable <= 0n}>
+						{comparable > 0n ? '+' : ''}{formatEther(comparable)} ETH
+					</dd>
+				{/if}
 			</dl>
 
 			{#if quote.kind === 'claim'}
@@ -171,10 +194,10 @@
 					The fee is payable to {quote.relayer}, not to you. The proof fixes that address,
 					so submitting this would cost you gas and pay you nothing.
 				</p>
-			{:else if quote.profit <= 0n}
+			{:else if comparable !== null && comparable <= 0n}
 				<p class="warn">
 					Gas currently costs more than the fee. Submitting would lose you
-					{formatEther(-quote.profit)} ETH — worth waiting for gas to fall, or asking for more.
+					{formatEther(-comparable)} ETH — worth waiting for gas to fall, or asking for more.
 				</p>
 			{/if}
 
@@ -183,9 +206,13 @@
 				disabled={sending || !quote.valid || !forUs}
 				onclick={submit}
 			>
-				{sending ? 'Submitting…' : quote.profit > 0n
-					? `Submit and earn ${formatEther(quote.fee)} ETH`
-					: 'Submit at a loss'}
+				{sending
+					? 'Submitting…'
+					: comparable === null
+						? `Submit and earn ${fmtFee(quote.fee)} ${feeSym}`
+						: comparable > 0n
+							? `Submit and earn ${fmtFee(quote.fee)} ${feeSym}`
+							: 'Submit at a loss'}
 			</button>
 		{/if}
 
@@ -204,7 +231,7 @@
 	label { display: flex; flex-direction: column; gap: 0.25rem; }
 	label span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
 		color: var(--text-dim); }
-	textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.72rem;
+	textarea { width: 100%; font-family: var(--font-mono); font-size: 0.72rem;
 		resize: vertical; background: var(--bg-input); color: inherit;
 		border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;
 		word-break: break-all; }
@@ -214,7 +241,7 @@
 	dl.bad { border-left-color: var(--bad); }
 	dt { color: var(--text-dim); }
 	dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-	.mono { font-family: ui-monospace, monospace; font-size: 0.78rem; }
+	.mono { font-family: var(--font-mono); font-size: 0.78rem; }
 	dd em { display: block; font-style: normal; font-size: 0.75rem; color: var(--text-dim);
 		margin-top: 0.15rem; }
 	.good { color: var(--accent); }

@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { formatEther, parseEther, isAddress } from 'ethers';
-	import { clientState, getClient, run, deselectAlias, wallet } from '../sdk/client.js';
+	import { formatEther, formatUnits, parseUnits, isAddress } from 'ethers';
+	import {
+		clientState, getClient, run, deselectAlias, wallet, setToken, addToken
+	} from '../sdk/client.js';
 	import PrivacyNote from './PrivacyNote.svelte';
 	import InviteWindow from './InviteWindow.svelte';
 	import ReviewStep from './ReviewStep.svelte';
@@ -20,7 +22,7 @@
 	// value moves or who receives it, because on chain that is precisely what is hidden.
 	// Signing without a summary means confirming something nobody has shown you.
 
-	type Mode = 'transfer' | 'withdraw' | 'deposit' | 'invite' | 'ownership' | 'viewkey';
+	type Mode = 'transfer' | 'withdraw' | 'deposit' | 'invite' | 'ownership' | 'viewkey' | 'notes';
 	type Phase = 'form' | 'review' | 'handoff';
 
 	// A list, not a tab strip. Five actions squeezed into one row lost the labels, and these
@@ -31,8 +33,10 @@
 	// "transfer" put the most destructive action under the cursor by default.
 	const ACTIONS: { id: Mode; label: string; blurb: string; needsOwner?: boolean }[] = [
 		{ id: 'transfer',  label: 'Send',      blurb: 'Pay another alias from this one. Amounts stay hidden.' },
-		{ id: 'deposit',   label: 'Add funds', blurb: 'Move ETH from a wallet into this alias.' },
-		{ id: 'withdraw',  label: 'Withdraw',  blurb: 'Move ETH out to an ordinary address.' },
+		{ id: 'deposit',   label: 'Add funds', blurb: 'Move funds from a wallet into this alias.' },
+		{ id: 'withdraw',  label: 'Withdraw',  blurb: 'Move funds out to an ordinary address.' },
+		{ id: 'notes',     label: 'Combine notes',
+		  blurb: 'Merge this balance into fewer notes, so more of it can be sent at once.' },
 		{ id: 'invite',    label: 'Invite',    blurb: 'Create a funded link for someone with no alias yet.' },
 		{ id: 'ownership', label: 'Transfer alias ownership',
 		  blurb: 'Hand this alias to a new owner, or sell it.',
@@ -60,13 +64,21 @@
 	let blob = $state<string | null>(null);
 	let copied = $state<'blob' | 'link' | null>(null);
 
+	// The amount asked for is more than two notes can cover — held here rather than reported
+	// as an error, because it is not one. The money is present and the wallet can reach it;
+	// it just takes a transaction first. Null when the amount is spendable as it stands.
+	let blocked = $state<bigint | null>(null);
+	let merging = $state<{ step: number; of: number } | null>(null);
+
 	// Priced before the proof exists: gas for transact is fixed regardless of the amount, so a
 	// fee can be chosen up front rather than discovered afterwards.
 	let quote = $state<{ gasCost: bigint; gasPrice: bigint; suggested: bigint } | null>(null);
 	let estimating = $state(false);
 	let estimateError = $state<string | null>(null);
+	// The submitter's fee comes out of the same notes, so it is denominated in the token
+	// being moved — not in ETH, even though what the submitter spends is gas.
 	const feeWei = $derived.by(() => {
-		try { return parseEther(submitterFee.trim() || '0'); } catch { return 0n; }
+		try { return parseAmt(submitterFee.trim() || '0'); } catch { return 0n; }
 	});
 
 	async function estimate() {
@@ -83,6 +95,38 @@
 			estimating = false;
 		}
 	}
+
+	// Adding an asset this build was never told about. The pool takes any token address, so a
+	// curated list is a suggestion rather than a limit — and a token someone was paid in but
+	// cannot see is money they cannot spend.
+	let adding = $state(false);
+	let newToken = $state('');
+	let addError = $state<string | null>(null);
+
+	async function addAsset() {
+		addError = null;
+		try {
+			const added = await addToken(newToken.trim());
+			newToken = '';
+			adding = false;
+			// Select it. Someone who just typed an address wants to act on that asset, and
+			// leaving the selection where it was makes the new button look inert.
+			await setToken(added.address);
+		} catch (e: any) {
+			addError = e?.shortMessage ?? e?.message ?? 'Could not read that token';
+		}
+	}
+
+	// The asset everything on this screen is denominated in. A note names exactly one, so
+	// there is no combined balance and no conversion — switching re-reads at the other token.
+	// `dec` is the whole reason this is threaded rather than assumed: parseEther on a
+	// 6-decimal token computes a million times the intended amount.
+	const token = $derived($clientState.token);
+	const sym = $derived(token.symbol);
+	const dec = $derived(token.decimals);
+	const isEth = $derived(token.address === '0x0000000000000000000000000000000000000000');
+	const parseAmt = (v: string) => parseUnits(v, dec);
+	const fmt = (v: bigint) => formatUnits(v, dec);
 
 	const alias = $derived($clientState.selected);
 	const busy = $derived($clientState.status === 'syncing');
@@ -106,6 +150,8 @@
 		target = '';
 		blob = null;
 		copied = null;
+		blocked = null;
+		merging = null;
 	}
 
 	function setMode(m: Mode | null) {
@@ -114,6 +160,13 @@
 		msg = null;
 		formError = null;
 		blob = null;
+		blocked = null;
+		merging = null;
+		// The gas quote prices ETH. Carrying one into a form denominated in something else would
+		// compare a token fee against a wei cost and call it "below cost" — cleared here because
+		// switching asset means leaving the form, so this is the only way back in.
+		quote = null;
+		estimateError = null;
 	}
 
 	// Catch what is checkable here rather than after a proof has been generated — the proof
@@ -126,6 +179,55 @@
 			return (formError = `Enter a ${mode === 'transfer' ? 'recipient alias' : 'destination address'}`);
 		if (mode === 'withdraw' && !isAddress(target.trim()))
 			return (formError = 'That is not a valid address');
+
+		// Stopped before the proof, and separately from the errors above, because the answer is
+		// a button rather than a correction. A balance held as three or more notes cannot leave
+		// in one transaction — the proof takes two note inputs — so an amount can be entirely
+		// affordable and still unsendable until the notes are combined.
+		const wei = parseAmt(amt);
+		if (wei > $clientState.sendableNow && wei <= $clientState.balance) {
+			blocked = wei;
+			return;
+		}
+		phase = 'review';
+	}
+
+	/// Merge until the whole balance can leave in one transaction.
+	///
+	/// Targeted at the full balance, not at a single note. The circuit takes two inputs, so two
+	/// notes is already completely sendable — merging the last pair costs another proof and
+	/// another fee to reach a number nobody can spend any harder. Four notes needs two merges to
+	/// become fully sendable, not three.
+	async function combineAll() {
+		const c = getClient();
+		merging = { step: 0, of: 1 };
+		await run(() =>
+			c.consolidate(BigInt(token.address), {
+				target: $clientState.balance,
+				onProgress: ({ step, of }: { step: number; of: number }) =>
+					(merging = { step: step + 1, of })
+			})
+		);
+		merging = null;
+	}
+
+	/// Combine notes until the pending amount can be sent, then carry on into the review.
+	///
+	/// Targeted at the amount rather than merging everything: each merge is its own proof and
+	/// its own gas, and the goal is this payment, not a tidy wallet.
+	async function combine() {
+		const target_ = blocked!;
+		const c = getClient();
+		merging = { step: 0, of: 1 };
+		const r = await run(() =>
+			c.consolidate(BigInt(token.address), {
+				target: target_,
+				onProgress: ({ step, of }: { step: number; of: number }) => (merging = { step: step + 1, of })
+			})
+		);
+		merging = null;
+		if (!r) return; // the error is already on clientState
+		blocked = null;
 		phase = 'review';
 	}
 
@@ -136,16 +238,18 @@
 		if (!isAddress(submitter.trim())) return 'Enter the address that will submit this';
 		let fee: bigint;
 		try {
-			fee = parseEther(submitterFee.trim() || '0');
+			fee = parseAmt(submitterFee.trim() || '0');
 		} catch {
 			return 'That fee is not a valid amount';
 		}
 		if (fee <= 0n) return 'Whoever submits needs a fee to cover gas';
 		// A withdrawal splits its total between recipient and submitter; a transfer pays the
 		// fee on top, so what it has to fit inside is the note, not the amount.
-		if (mode === 'withdraw' && fee >= parseEther(amt))
+		if (mode === 'withdraw' && fee >= parseAmt(amt))
 			return 'The fee is the whole withdrawal — nothing would reach the recipient';
-		if (mode === 'transfer' && alias && parseEther(amt) + fee > alias.balance)
+		// Against the shielded balance of this token, not the alias summary — that one is the
+		// wallet-level ETH figure and says nothing about what this alias holds in a token.
+		if (mode === 'transfer' && parseAmt(amt) + fee > $clientState.balance)
 			return 'The amount plus the fee is more than this alias holds';
 		return null;
 	}
@@ -160,12 +264,13 @@
 		if (formError) return;
 
 		const relayOpts = delegate
-			? { relayerFee: parseEther(submitterFee.trim()), relayer: submitter.trim(), prepare: true }
+			? { relayerFee: parseAmt(submitterFee.trim()), relayer: submitter.trim(), prepare: true }
 			: {};
+		const tok = BigInt(token.address);
 		const r = await run(() =>
 			mode === 'transfer'
-				? c.send(to, amt, undefined, relayOpts)
-				: c.withdraw(to, amt, undefined, undefined, relayOpts)
+				? c.send(to, amt, tok, relayOpts)
+				: c.withdraw(to, amt, tok, undefined, relayOpts)
 		);
 		if (!r) return (phase = 'form'); // the error is already on clientState
 
@@ -176,8 +281,8 @@
 		}
 		msg =
 			mode === 'transfer'
-				? `Transferred ${amt} ETH to ${to}`
-				: `Withdrew ${amt} ETH to ${to}`;
+				? `Transferred ${amt} ${sym} to ${to}`
+				: `Withdrew ${amt} ${sym} to ${to}`;
 		reset();
 	}
 
@@ -212,8 +317,17 @@
 				</button>
 			<div class="who">
 				<span class="nm">{label}</span>
-				<span class="bal" title="Shielded balance of this alias">
-					{formatEther(alias.balance)} ETH shielded
+				<span class="bal" title="Shielded balance of this alias, in {sym}">
+					{fmt($clientState.balance)} {sym} shielded
+					<!-- Per token, like the balance beside it — a note holds exactly one asset, so
+					     these count only the notes backing the figure shown. Worth being visible
+					     rather than discovered: it is what decides whether the whole balance can
+					     leave at once, and three or more is the case where it cannot. -->
+					{#if $clientState.noteCount > 0}
+						<span class="notecount" class:split={$clientState.sendableNow < $clientState.balance}>
+							· {$clientState.noteCount} note{$clientState.noteCount === 1 ? '' : 's'}
+						</span>
+					{/if}
 				</span>
 			</div>
 		</header>
@@ -225,6 +339,55 @@
 			     any value, and sits here because only this alias's owner can offer it. Adding
 			     funds is here too: anyone can pay any alias, but funding the one you are acting
 			     as is the common case and made you leave the screen to do it. -->
+			<!-- Which asset the actions below operate on. Shown only when there is a choice:
+			     one token means the selector is a control with a single option, which reads as
+			     something being unavailable rather than as a setting. Every balance, amount and
+			     note count on this screen belongs to whichever is picked — they never merge,
+			     because a note names exactly one token. -->
+			<div class="assets" role="group" aria-label="Asset">
+				{#each $clientState.tokens as t (t.address)}
+					<button
+						class="asset"
+						class:on={t.address === token.address}
+						disabled={busy}
+						onclick={() => setToken(t.address)}
+					>{t.symbol}</button>
+				{/each}
+				<!-- Always available, even when ETH is the only entry. The list a deployment ships
+				     says what is suggested, not what the pool accepts. -->
+				<button class="asset add" disabled={busy} onclick={() => (adding = !adding)}>
+					{adding ? '×' : '+'}
+				</button>
+			</div>
+
+			{#if adding}
+				<div class="addToken">
+					<label>
+						<span>Token address</span>
+						<input
+							class="mono"
+							bind:value={newToken}
+							placeholder="0x…"
+							disabled={busy}
+							onkeydown={(e) => e.key === 'Enter' && addAsset()}
+						/>
+					</label>
+					<p class="hint">
+						Its symbol and decimals are read from the contract, never assumed — getting
+						decimals wrong is how an amount ends up a million times too large.
+					</p>
+					{#if addError}<p class="err">{addError}</p>{/if}
+					<div class="row">
+						<button class="primary" disabled={busy || !newToken.trim()} onclick={addAsset}>
+							Add
+						</button>
+						<button class="ghost" onclick={() => { adding = false; addError = null; }}>
+							Cancel
+						</button>
+					</div>
+				</div>
+			{/if}
+
 			<ul class="actions">
 				{#each ACTIONS as a (a.id)}
 					<li>
@@ -249,6 +412,57 @@
 				<InviteWindow />
 			{:else if mode === 'ownership'}
 				<OwnershipView />
+			{:else if mode === 'notes'}
+				<!-- Reachable on its own, not only after a send has already been refused. The circuit
+				     takes two note inputs, so a balance spread over three or more cannot leave in one
+				     transaction — which is a thing to fix deliberately, rather than a wall you find at
+				     the moment you are trying to pay someone. -->
+				<div class="notes">
+					<dl>
+						<dt>Balance</dt>
+						<dd>{fmt($clientState.balance)} {sym}</dd>
+						<dt>Held as</dt>
+						<dd>{$clientState.noteCount} note{$clientState.noteCount === 1 ? '' : 's'}</dd>
+						<dt>Sendable at once</dt>
+						<dd class:warn={$clientState.sendableNow < $clientState.balance}>
+							{fmt($clientState.sendableNow)} {sym}
+						</dd>
+					</dl>
+
+					{#if $clientState.noteCount <= 1}
+						<p class="hint">Nothing to combine — the whole balance is already one note.</p>
+					{:else if $clientState.sendableNow >= $clientState.balance}
+						<p class="hint">
+							All of it can already leave in one transaction. Combining further would still
+							cost a proof and gas for each merge, and buy nothing.
+						</p>
+					{:else}
+						<p class="hint">
+							{$clientState.noteCount} notes, and a transaction spends at most two — so
+							{fmt($clientState.balance - $clientState.sendableNow)} {sym} of this cannot move
+							until they are merged. This needs {$clientState.noteCount - 2} merge{$clientState.noteCount - 2 === 1 ? '' : 's'},
+							not {$clientState.noteCount - 1}: two notes is already fully sendable, and merging
+							the last pair would cost a proof and a fee for nothing. Each stops safely part-way.
+						</p>
+					{/if}
+
+					{#if merging}
+						<p class="hint">Combining… {merging.step} of {merging.of}</p>
+					{/if}
+
+					<div class="row">
+						<button
+							class="primary"
+							disabled={busy || merging !== null || $clientState.noteCount <= 1}
+							onclick={combineAll}
+						>
+							{merging ? 'Combining…' : 'Combine'}
+						</button>
+						<button class="ghost" disabled={merging !== null} onclick={() => setMode(null)}>
+							Back
+						</button>
+					</div>
+				</div>
 			{:else if mode === 'viewkey'}
 				<ViewKeyView />
 			{:else if mode === 'deposit'}
@@ -260,13 +474,21 @@
 					<input bind:value={target} placeholder={targetPlaceholder} disabled={busy} />
 				</label>
 				<label>
-					<span>Amount (ETH)</span>
-					<input bind:value={amount} placeholder="0.1" inputmode="decimal" disabled={busy} />
+					<span>Amount ({sym})</span>
+					<input class="mono" bind:value={amount} placeholder="0.1" inputmode="decimal"
+						disabled={busy} />
 				</label>
 
-				<!-- Decided here, in full. It used to be a checkbox here and its address and fee on
-				     the review, which made the review a form — and a review that still takes input
-				     cannot be read in one pass and confirmed. -->
+				<!-- Decided here, in full: the checkbox and the address and fee that go with it. Split
+				     across this form and the review, the review becomes a form itself — and one that
+				     still takes input cannot be read in one pass and confirmed. -->
+				<!-- Offered for ETH only, and the reason is that there is no exchange rate here.
+				     Whoever submits spends gas in ETH and is paid out of the note, which is
+				     denominated in whatever is being moved. For ETH those are the same unit and a
+				     fee can be quoted from the gas estimate. For a token they are not, and pricing
+				     one against the other needs an oracle this has no business carrying — so
+				     rather than suggest a number that could be off by any factor, the option is
+				     withdrawn and says why. -->
 				<label class="check">
 					<input type="checkbox" bind:checked={delegate} disabled={busy} />
 					<span>
@@ -283,20 +505,33 @@
 					<div class="sub">
 						<label>
 							<span>Submitting address</span>
-							<input bind:value={submitter} placeholder="0x…" disabled={busy} />
+							<input class="mono" bind:value={submitter} placeholder="0x…" disabled={busy} />
 						</label>
 						<label>
-							<span>Their fee (ETH)</span>
-							<input bind:value={submitterFee} inputmode="decimal" disabled={busy} />
+							<span>Their fee ({sym})</span>
+							<input class="mono" bind:value={submitterFee} inputmode="decimal" disabled={busy} />
 						</label>
 						<div class="est">
-							<button class="ghost sm" disabled={busy || estimating} onclick={estimate}>
-								{estimating ? 'Estimating…' : 'Estimate'}
-							</button>
+							<!-- Offered only for ETH, and the reason is that there is no exchange rate
+							     here. The estimate prices gas, which is always ETH; the fee is paid out
+							     of the note, which is in whatever is being moved. For ETH those are one
+							     unit and the estimate is a real answer. For a token they are not, and a
+							     suggested number would be off by whatever the token happens to be
+							     worth — so the control is withdrawn rather than made to guess. -->
+							{#if isEth}
+								<button class="ghost sm" disabled={busy || estimating} onclick={estimate}>
+									{estimating ? 'Estimating…' : 'Estimate'}
+								</button>
+							{:else}
+								<span class="hint">
+									Gas is paid in ETH and this fee is paid in {sym}, so nothing here can
+									suggest an amount — agree one with whoever submits.
+								</span>
+							{/if}
 							{#if quote}
 								<span class="hint">
 									≈{formatEther(quote.gasCost).slice(0, 7)} ETH of gas, plus 20% for whoever
-									submits.
+									submits. <!-- gas is always ETH, whatever is being moved -->
 									{#if feeWei > 0n && feeWei < quote.gasCost}
 										<strong class="belowCost">
 											This fee is below cost — a stranger would lose money and refuse.
@@ -322,6 +557,7 @@
 		{:else if phase === 'review'}
 			<ReviewStep
 				mode={txMode}
+				{token}
 				amount={amount.trim()}
 				target={target.trim()}
 				alias={label}
@@ -345,7 +581,7 @@
 				</p>
 				<label class="linkRow">
 					<span>Link</span>
-					<input readonly value={relayLink} onfocus={(e) => e.currentTarget.select()} />
+					<input class="mono" readonly value={relayLink} onfocus={(e) => e.currentTarget.select()} />
 				</label>
 				<p class="hint">
 					Opening it lands them on the Relay screen with this already loaded. The transaction
@@ -354,7 +590,7 @@
 
 				<details>
 					<summary>Or copy the raw transaction</summary>
-					<textarea readonly rows="6" value={blob}></textarea>
+					<textarea class="mono" readonly rows="6" value={blob}></textarea>
 				</details>
 
 				<div class="actions">
@@ -369,6 +605,23 @@
 			</div>
 		{/if}
 
+		{#if blocked !== null}
+			<div class="blocked">
+				<p class="lead">This alias holds {fmt($clientState.balance)} {sym} across
+					{$clientState.noteCount} notes, and one transaction can spend two of them.</p>
+				<p>That caps a single payment at {fmt($clientState.sendableNow)} {sym} until the
+					notes are combined. Combining is private and moves nothing — it pays you, from you.</p>
+				{#if merging}
+					<p class="progress">Combining… {merging.step} of {merging.of}</p>
+				{:else}
+					<div class="actions">
+						<button class="ghost" onclick={() => (blocked = null)}>Change amount</button>
+						<button class="primary" onclick={combine}>Combine notes</button>
+					</div>
+				{/if}
+			</div>
+		{/if}
+
 		{#if formError}<p class="err">{formError}</p>{/if}
 		{#if msg}<p class="ok">{msg}</p>{/if}
 		{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
@@ -377,6 +630,11 @@
 
 <style>
 	.transact { display: flex; flex-direction: column; gap: 1rem; padding: 0.5rem; }
+	.blocked { display: flex; flex-direction: column; gap: 0.5rem;
+		border: 1px solid var(--border); border-radius: 4px; padding: 0.75rem; }
+	.blocked .lead { font-weight: 600; }
+	.blocked p { margin: 0; }
+	.blocked .progress { opacity: 0.8; }
 	header { display: flex; align-items: flex-start; gap: 0.75rem; flex-wrap: wrap;
 		border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; }
 	.back { background: none; border: none; color: inherit; opacity: 0.85; cursor: pointer;
@@ -384,8 +642,38 @@
 	.back:hover { opacity: 1; }
 	.who { margin-left: auto; display: flex; gap: 0.75rem; align-items: baseline;
 		flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
-	.nm { font-family: ui-monospace, monospace; overflow-wrap: anywhere; font-size: 0.8rem; }
+	.nm { font-family: var(--font-mono); overflow-wrap: anywhere; font-size: 0.8rem; }
 	.bal { font-variant-numeric: tabular-nums; opacity: 0.9; }
+	/* The asset the actions below operate on. A segmented row rather than a dropdown: with
+	   two or three options every one is visible, and which is current is legible without
+	   opening anything. */
+	.assets { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
+	.asset { font-size: 0.78rem; padding: 0.3rem 0.75rem; border-radius: 999px;
+		border: 1px solid var(--border); background: var(--bg-input); color: var(--text-dim);
+		transition: border-color 0.15s, background 0.15s, color 0.15s; }
+	.asset:hover:not(:disabled) { border-color: var(--accent); color: var(--text-bright); }
+	.asset.on { background: var(--accent); border-color: var(--accent); color: var(--bg-dark);
+		font-weight: 700; }
+	/* Reads as an affordance rather than another asset — same shape, no label of its own. */
+	.asset.add { font-family: var(--font-mono); padding: 0.3rem 0.7rem; }
+	.addToken { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.9rem;
+		padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px;
+		background: var(--bg-input); }
+
+	/* Quiet beside the balance until it matters — three or more notes means part of the balance
+	   cannot move, and that is the moment it should catch the eye. */
+	.notecount { color: var(--text-dim); font-size: 0.78rem; }
+	.notecount.split { color: var(--caution); }
+
+	/* The notes panel: a summary anyone can act on, rather than an error they ran into. */
+	.notes { display: flex; flex-direction: column; gap: 0.9rem; }
+	.notes dl { margin: 0; display: grid; grid-template-columns: 10rem 1fr; gap: 0.4rem 1rem;
+		font-size: 0.85rem; padding: 0.8rem; border: 1px solid var(--border);
+		border-radius: 6px; }
+	.notes dt { color: var(--text-dim); }
+	.notes dd { margin: 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+	.notes dd.warn { color: var(--caution); }
+
 	.actions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.4rem; }
 	/* A column, so the title reads first and its description sits under it. The hover border
@@ -406,7 +694,7 @@
 	.handoff { display: flex; flex-direction: column; gap: 0.7rem; }
 	.handoff h3 { margin: 0; font-size: 0.75rem; text-transform: uppercase;
 		letter-spacing: 0.08em; color: var(--text-dim); font-weight: 600; }
-	textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.72rem;
+	textarea { width: 100%; font-family: var(--font-mono); font-size: 0.72rem;
 		resize: vertical; background: var(--bg-input); color: inherit;
 		border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;
 		word-break: break-all; }
@@ -414,7 +702,7 @@
 	.actions .primary { flex: 1; }
 	.primary { padding: 0.55rem; }
 	.hint, .empty { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
-	.mono { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+	.mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
 	.check { display: flex; flex-direction: row; align-items: flex-start; gap: 0.5rem;
 		cursor: pointer; }
 	.check input { margin-top: 0.15rem; }
@@ -425,7 +713,7 @@
 	.ghost.sm { padding: 0.3rem 0.7rem; font-size: 0.78rem; }
 	.belowCost { display: block; color: var(--caution); margin-top: 0.25rem; }
 	.check em { display: block; font-style: normal; font-size: 0.78rem; color: var(--text-dim); }
-	.linkRow input { width: 100%; font-family: ui-monospace, monospace; font-size: 0.72rem;
+	.linkRow input { width: 100%; font-family: var(--font-mono); font-size: 0.72rem;
 		background: var(--bg-input); color: inherit;
 		border: 1px solid var(--border); border-radius: 6px; padding: 0.55rem; }
 	details { font-size: 0.8rem; opacity: 0.88; }
