@@ -12,7 +12,7 @@ An alias holds three keys in the registry, and they were not equally recoverable
 | --- | --- |
 | `encryptionPubkey` | attacker reads incoming note amounts |
 | `nullifierKeyHash` | attacker links your spends |
-| `spendingPubkey` | attacker spends everything, forever |
+| `spendingCommitment` | attacker spends everything, forever |
 
 `updateKeys` wrote the first two and never the third — so the tool named "update keys" did
 not address the only compromise that loses money, behind a name implying otherwise.
@@ -77,15 +77,15 @@ matters, build the escrow — see below, which needs no contract changes.
 nothing related them:
 
 ```solidity
-transferAlias(aliasHash, newOwner, newSpendingPubkey, ...)  // seller chose all of it
+transferAlias(aliasHash, newOwner, newSpendingCommitment, ...)  // seller chose all of it
 ```
 
 So a seller could hand over the token while installing keys they kept. The buyer would own
 the name; every payment to it would arrive for the seller, decryptable only by them. Nothing
-in the contract can detect this. A spending pubkey is `Poseidon(spendingPrivateKey)`, where
+in the contract can detect this. A spending commitment is `Poseidon(spendingPrivateKey)`, where
 the private key derives from an EIP-191 wallet signature — no curve, no recoverable
 relationship to an address. Recomputing it needs the private key, which the contract will
-never have. `newSpendingPubkey` is just 32 bytes the caller picked.
+never have. `newSpendingCommitment` is just 32 bytes the caller picked.
 
 **Only the recipient can assert which keys are theirs, so only the recipient can complete a
 transfer.**
@@ -140,7 +140,7 @@ Self-handover is the rotation path — see F7 above, which is why `updateKeys` n
 
 Sweeping first is a courtesy, not a guarantee, and it cannot be made into one. Nothing on
 chain can verify an alias is empty: the pool cannot compute an alias's balance without
-breaking the privacy that is the point of it, and "no unspent note exists under this pubkey"
+breaking the privacy that is the point of it, and "no unspent note exists under this spending commitment"
 is a universal statement over 2^32 leaves that the circuit cannot express.
 
 Notes already under the seller's spending key stay spendable by the seller regardless. So a

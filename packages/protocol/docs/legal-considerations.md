@@ -127,7 +127,7 @@ The one remaining gap against Railgun is a provenance proof, and the architectur
 admits one without weakening anything above.
 
 `transact.circom` binds an alias's `dataHash` into its registry leaf —
-`Poseidon(pubkey, nullifierKeyHash, dataHash)`, hashed again as
+`Poseidon(spendingCommitment, nullifierKeyHash, dataHash)`, hashed again as
 `Poseidon(aliasHash, leafValue, 1)` and proven against a published registry root. The leaf
 commits to the alias itself, so a prover cannot point at another alias's slot. That means a
 **separate** circuit can prove statements about `dataHash` and have them bind to a specific
