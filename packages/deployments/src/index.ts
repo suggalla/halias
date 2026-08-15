@@ -9,18 +9,32 @@ export interface NetworkConfig {
   blockExplorer: string;
 }
 
+/// One asset the app is willing to offer, recorded by the deploy script.
+///
+/// Decimals are here so a UI can render before it has read the token contract. The SDK reads
+/// the real ones on chain and those win — this is a hint, never the authority.
+export interface TokenRecord {
+  address: string;
+  symbol: string;
+  decimals: number;
+}
+
 export interface Deployment {
   deployer: string;
-  factory: string;
   poseidonT3: string;
   poseidonT4: string;
-  transactVerifier: string;
-  halias: string;
-  vanitySalt?: string;
-  predictedAddress?: string;
-  deployTxHash?: string;
+  verifier: string;
+  /// The three the SDK and app read, and only those three. A fourth contract address recorded
+  /// here would let a client silently point at something that is not the live pool.
+  pool: string;
+  registry: string;
+  controller: string;
+  admin?: string;
   startBlock?: number;
   updatedAt?: string;
+  /// Local chains only. Adding an asset splits the anonymity set, so it is a deliberate
+  /// per-deployment decision rather than something a script does by default.
+  tokens?: TokenRecord[];
 }
 
 const networks = networksJson as Record<string, NetworkConfig>;
@@ -50,15 +64,9 @@ export function getDeployment(chainId: number): Deployment {
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));
 }
 
-// The monolith. Kept for deployments made before the pool/registry/domain split.
-export function getContractAddress(chainId: number): string {
-  return getDeployment(chainId).halias;
-}
-
-// Post-split deployments carry three addresses. A deployment JSON that still only has
-// `halias` will throw here rather than silently hand back the wrong contract — the pool
-// hashes its own address into paramsHash, so a wrong one produces proofs that verify
-// against nothing.
+// Every deployment carries three addresses. One that does not predates the contract split and
+// throws here rather than silently handing back the wrong contract — the pool hashes its own
+// address into paramsHash, so a wrong one produces proofs that verify against nothing.
 function requireAddress(chainId: number, key: "pool" | "registry" | "controller"): string {
   const addr = (getDeployment(chainId) as Record<string, any>)[key];
   if (!addr) {
