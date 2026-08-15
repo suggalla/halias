@@ -97,7 +97,7 @@ take different slots, and commit the *same* circuit-visible key.
 
 Not practically reachable and not a theft vector. Colliding with a chosen name means finding
 a string whose keccak is congruent to it mod p, around 2^254 work, and the note commitment
-binds the spending pubkey regardless, so a collision confers no ability to receive or spend
+binds the spending commitment regardless, so a collision confers no ability to receive or spend
 another alias's funds.
 
 Fixed anyway, because it is an invariant that did not hold and is easy to assume does.
@@ -187,7 +187,7 @@ Each has a test that fails if the change is reverted.
 
 Found by checking published findings against comparable systems rather than by reading our
 own code; see [prior-art-review.md](prior-art-review.md). `register` and `reassign` write a
-zero `dataHash` and `_checkKeys` bounds both pubkeys, so registration was clean —
+zero `dataHash` and `_checkKeys` bounds the spending commitment and the nullifier key hash, so registration was clean —
 `setDataHash` took an arbitrary `bytes32` into the Poseidon leaf with no bound, and Poseidon
 reduces silently rather than reverting, so `p + 5` and `5` committed the identical leaf.
 Two internal passes missed it because the only way in is the update path.

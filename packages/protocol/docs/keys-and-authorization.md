@@ -41,7 +41,7 @@ held. See `key-management.md`.
 | Key | Derived as | Authorizes | If compromised |
 | --- | --- | --- | --- |
 | `spendingPrivKey` | from `seed_i` | spending notes | everything, until the alias is re-keyed |
-| `spendingPubkey` | `Poseidon(spendingPrivKey)` | *receiving* — the registry entry | — |
+| `spendingCommitment` | `Poseidon(spendingPrivKey)` | *receiving* — the registry entry | — |
 | `viewingPrivKey` | from `seed_i` | deriving the nullifier key | linkability of your spends |
 | `nullifierKey` | `Poseidon(viewingPrivKey)` | computing nullifiers | as above |
 | `nullifierKeyHash` | `Poseidon(nullifierKey, 1)` | published in the registry | — |
@@ -49,7 +49,7 @@ held. See `key-management.md`.
 | owner key | secp256k1 from `seed_i` | the three name operations | the alias can be given away — not spent from |
 
 Spending requires **both** the spending and viewing private keys: the commitment binds
-`spendingPubkey` and `nullifierKeyHash`, and the nullifier needs the raw nullifier key. A
+`spendingCommitment` and `nullifierKeyHash`, and the nullifier needs the raw nullifier key. A
 compromised viewing key alone loses privacy, not funds.
 
 The owner key is the one key that is an Ethereum key, and it deliberately never sends a
@@ -60,9 +60,9 @@ protect separate things.
 ### Derived values
 
 ```
-commitment = Poseidon(pubkey, nullifierKeyHash, blinding, amount, tokenAddress)
-nullifier  = Poseidon(nullifierKey, leafIndex, NULLIFIER_DOMAIN)   // 1314148940 ("NULL")
-registry leaf = Poseidon(pubkey, nullifierKeyHash, dataHash), SMT-hashed at arity 3
+commitment = Poseidon(spendingCommitment, nullifierKeyHash, blinding, amount, tokenAddress)
+nullifier  = Poseidon(nullifierKey, leafIndex, NULLIFIER_DOMAIN)   // 1314148940 ("NTRL" ascii)
+registry leaf = Poseidon(spendingCommitment, nullifierKeyHash, dataHash), SMT-hashed at arity 3
 ```
 
 The nullifier's 3-arity domain separator is what stops it colliding with the 2-arity
@@ -260,7 +260,7 @@ Audited. Owner authorisation no longer appears here at all.
 | admin functions | `onlyAdmin` | no | correct — the admin is a specific party, not an arbitrary one |
 
 There is no `updateKeys`. It wrote the nullifier and encryption keys but never the spending
-pubkey, so the one compromise that loses funds was the one it could not answer. **Rotation is
+commitment, so the one compromise that loses funds was the one it could not answer. **Rotation is
 a handover to yourself at a different index**: offer the alias to the owner address derived at
 index `i+1`, accept there, and `reassign` replaces all three keys. Since the owner address is
 derived per index, the destination differs from the source — the handover is real on chain
@@ -277,9 +277,9 @@ able to pay for a transaction. Neither owner key can pay for one in any case.
 The contract guarantees **the recipient consented**. The client guarantees **the keys are the
 recipient's own**.
 
-Nothing on chain can verify the second: a spending pubkey is `Poseidon(spendingPrivateKey)`
+Nothing on chain can verify the second: a spending commitment is `Poseidon(spendingPrivateKey)`
 derived from a recovery phrase, so there is no recoverable relationship between an address
-and a pubkey. An EIP-712 signature proves the signer *wanted* a pubkey installed, not that
+and a spending commitment. An EIP-712 signature proves the signer *wanted* a spending commitment installed, not that
 they *control* it.
 
 A compromised client defeats that guarantee — and also holds your wallet connection and

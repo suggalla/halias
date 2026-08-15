@@ -40,7 +40,7 @@ Writes `contracts/WithdrawVerifier.sol` (or `TransferVerifier.sol` for `-c trans
 ## Concepts
 
 - **Witness**: full assignment of all signals (private + public) that satisfies every circuit constraint
-- **Commitment**: `Poseidon(spendingPubkey, nullifier, secret, denomination)` — stored on-chain in Merkle tree
+- **Commitment**: `Poseidon(spendingCommitment, nullifier, secret, denomination)` — stored on-chain in Merkle tree
 - **Powers of Tau**: universal ceremony (circuit-independent), run once per constraint size
 - **Phase 2 (zkey)**: circuit-specific setup on top of the Powers of Tau output
 - **Nullifier**: deterministically derived from spending key + leaf index; its hash is published on-chain to prevent double-spend

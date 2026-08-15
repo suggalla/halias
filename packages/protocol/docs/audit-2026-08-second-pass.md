@@ -152,7 +152,7 @@ destination is committed in `paramsHash` — but it makes the victim's transacti
 spent nullifier. Accepted pending encrypted mempools / inclusion lists.
 
 **T3 — For one hour after a handover, a stale root pays the previous owner.**
-Note commitments bind `spendingPubkey` at creation, and the pool accepts any root superseded
+Note commitments bind `spendingCommitment` at creation, and the pool accepts any root superseded
 within `REGISTRY_ROOT_MAX_AGE`. Cut from ~24h to 1h; not closed, and not closable in the pool,
 which cannot know an alias changed hands. Client mitigation is advisory only (N2).
 

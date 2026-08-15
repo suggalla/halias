@@ -13,7 +13,7 @@ Three properties make it worse than ordinary signature phishing:
 
 - **Silent** — no transaction, no approval, nothing on chain. The victim gets no signal.
 - **Total** — spending *and* viewing keys, every index, full balance and full history.
-- **Unremediable** — notes bind `pubkey = Poseidon(spendingPrivateKey)`, so the attacker can
+- **Unremediable** — notes bind `spendingCommitment = Poseidon(spendingPrivateKey)`, so the attacker can
   spend every existing note. Rotating via `acceptAlias` protects only *future* receipts.
 
 ## Two independent roles

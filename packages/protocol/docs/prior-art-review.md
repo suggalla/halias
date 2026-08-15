@@ -7,9 +7,29 @@ had missed** — one from each approach.
 
 ## What is comparable
 
-**Private payments with a name layer: no direct prior art.** Railgun, Aztec, Penumbra and
-Namada all have shielded value and no name registry — recipients are keys or addresses.
-That part of Halias has nothing to check against.
+**Private payments with a name layer: one dead predecessor, no live one.** Railgun, Penumbra
+and Namada all have shielded value and no name registry — recipients are keys or addresses.
+
+Aztec's **zk.money is direct prior art** and the earlier version of this section was wrong to
+say otherwise. It had aliases, and they were proven in-circuit: from Aztec's own documentation,
+*"during account registration a zero-knowledge proof is created which links encryption keys to
+spending keys and registers your alias."* Unique, twenty characters, lowercase alphanumeric —
+very nearly the constraint we arrived at independently. It shut down in March 2023 for
+[commercial reasons the founders were explicit about](https://www.coindesk.com/consensus-magazine/2023/03/24/founders-deny-regulatory-pressure-forced-aztec-connect-zkmoney-shutdown),
+not regulatory ones, with the rollup switched off in March 2024.
+
+Three differences survive that, and they are the ones worth defending:
+
+- **Theirs was a lookup convenience; ours is a spend condition.** A zk.money alias let a sender
+  find your encryption key. Here the circuit *requires* the recipient to be in the registry —
+  the pool cannot pay an unregistered key at all. Different in kind, not degree.
+- Their aliases were not NFTs, not transferable, and carried no attestation hook. Ours are
+  ERC-721 with a `dataHash` bound into the registry leaf.
+- Theirs ran on a rollup with a sequencer. This is an L1 contract with no operator.
+
+The useful lesson from zk.money is not architectural. It died of insufficient usage, with
+funding, a team and DeFi integrations behind it — and a shielded pool's privacy is monotonic in
+its user count. That is the risk this project actually carries.
 
 **A tree of identity commitments proven in-circuit: plenty.** Semaphore is the closest
 structural analogue — commitments in an incremental Merkle tree, membership proven by a
@@ -24,7 +44,7 @@ the right comparison for `SMTRegistry`.
 above the bn128 field. Fixed with `require(newLeaf < SNARK_SCALAR_FIELD)`.
 
 **This applies to us, and we had it.** `register` and `reassign` write `dataHash = 0`, and
-`_checkKeys` bounds both pubkeys — so registration was clean. `setDataHash` took an
+`_checkKeys` bounds the spending commitment and the nullifier key hash — so registration was clean. `setDataHash` took an
 arbitrary `bytes32` straight into the Poseidon leaf with no bound.
 
 Measured rather than assumed, because severity depends entirely on what Poseidon does with
@@ -142,3 +162,6 @@ found this way is something a paid auditor no longer has to find.
 - [LeanIMT paper](https://zkkit.org/leanimt-paper.pdf)
 - [WorldIDIdentityManagerImplV1.sol](https://github.com/worldcoin/world-id-contracts/blob/main/src/WorldIDIdentityManagerImplV1.sol)
 - [Ackee — Wormhole/Worldcoin World ID State Root Bridge audit](https://ackee.xyz/blog/wormhole-worldcoin-world-id-state-root-bridge/)
+- [zk.money account FAQ](https://aztec-protocol.gitbook.io/zk-money/faq/faq-account) — aliases,
+  spending keys, and what registration proved
+- [Founders deny regulatory pressure forced the Aztec Connect shutdown](https://www.coindesk.com/consensus-magazine/2023/03/24/founders-deny-regulatory-pressure-forced-aztec-connect-zkmoney-shutdown)
