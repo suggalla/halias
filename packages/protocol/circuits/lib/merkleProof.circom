@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
+//
+// Adapted from Tornado Cash Nova (GPL-3.0) and built on circomlib (GPL-3.0).
 pragma circom 2.0.0;
 
 include "poseidon.circom";

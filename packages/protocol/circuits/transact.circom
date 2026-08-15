@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
+//
+// Adapted from Tornado Cash Nova (GPL-3.0) and built on circomlib (GPL-3.0).
 pragma circom 2.0.0;
 
 include "poseidon.circom";
@@ -19,17 +23,17 @@ include "lib/notes.circom";
 //   transfer: publicAmount = 0 (in-pool)
 //
 // Note structure:
-//   commitment = Poseidon(pubkey, nullifierKey, blinding, amount, tokenAddress)
+//   commitment = Poseidon(spendingCommitment, nullifierKey, blinding, amount, tokenAddress)
 //   nullifier  = Poseidon(nullifierKey, leafIndex)  [computed at spend time]
-//   pubkey     = Poseidon(spendingPrivateKey)        [no elliptic curve needed]
+//   spendingCommitment     = Poseidon(spendingPrivateKey)        [no elliptic curve needed]
 //   nullifierKey = Poseidon(viewingPrivateKey)       [also the audit/viewing key]
 //
 // Registry leaf:
-//   leaf = Poseidon(pubkey, nullifierKey, dataHash)
+//   leaf = Poseidon(spendingCommitment, nullifierKey, dataHash)
 //
 // Key hierarchy (off-chain, SDK):
 //   MetaMask signature
-//     ├── spendingPrivateKey  → pubkey      = Poseidon(spendingPrivateKey) [in circuit]
+//     ├── spendingPrivateKey  → spendingCommitment      = Poseidon(spendingPrivateKey) [in circuit]
 //     ├── viewingPrivateKey   → nullifierKey = Poseidon(viewingPrivateKey)  [in circuit]
 //     └── encryptionKeypair   → X25519 (off-chain only, circuit-agnostic)
 //
@@ -74,7 +78,7 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     signal input inPathElements[nIns][poolLevels];
 
     // === Private inputs — outputs ===
-    signal input outPubkey[nOuts];
+    signal input outSpendingCommitment[nOuts];
     signal input outBlinding[nOuts];
     signal input outAmount[nOuts];
 
@@ -102,7 +106,7 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
     // INPUT VERIFICATION
     // -----------------------------------------------------------------------
 
-    component inPubKey[nIns];
+    component inSpendingCommitment[nIns];
     component inNullifierKey[nIns];
     component inNullifierKeyHash[nIns];
     component inCommitment[nIns];
@@ -120,8 +124,8 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
         inAmountCheck[i].in <== inAmount[i];
 
         // 1. Derive public key = Poseidon(spendingPrivateKey)
-        inPubKey[i] = Poseidon(1);
-        inPubKey[i].inputs[0] <== inSpendingPrivateKey[i];
+        inSpendingCommitment[i] = Poseidon(1);
+        inSpendingCommitment[i].inputs[0] <== inSpendingPrivateKey[i];
 
         // 2. Derive nullifier key = Poseidon(viewingPrivateKey)
         inNullifierKey[i] = Poseidon(1);
@@ -135,7 +139,7 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
 
         // 3. Compute commitment (uses nullifierKeyHash, not raw nullifierKey)
         inCommitment[i] = NoteCommitment();
-        inCommitment[i].pubkey <== inPubKey[i].out;
+        inCommitment[i].spendingCommitment <== inSpendingCommitment[i].out;
         inCommitment[i].nullifierKeyHash <== inNullifierKeyHash[i].out;
         inCommitment[i].blinding <== inBlinding[i];
         inCommitment[i].amount <== inAmount[i];
@@ -273,7 +277,7 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
 
         // 2. Verify output commitment (uses outNullifierKeyHash directly — sender reads hash from registry)
         outCommitment[i] = NoteCommitment();
-        outCommitment[i].pubkey <== outPubkey[i];
+        outCommitment[i].spendingCommitment <== outSpendingCommitment[i];
         outCommitment[i].nullifierKeyHash <== outNullifierKeyHash[i];
         outCommitment[i].blinding <== outBlinding[i];
         outCommitment[i].amount <== outAmount[i];
@@ -284,9 +288,9 @@ template Transact(poolLevels, registryLevels, nIns, nOuts) {
         outAmountCheck[i] = Num2Bits(248);
         outAmountCheck[i].in <== outAmount[i];
 
-        // 4. Compute registry leaf value = Poseidon(pubkey, nullifierKeyHash, dataHash)
+        // 4. Compute registry leaf value = Poseidon(spendingCommitment, nullifierKeyHash, dataHash)
         outRegistryLeaf[i] = RegistryLeaf();
-        outRegistryLeaf[i].pubkey           <== outPubkey[i];
+        outRegistryLeaf[i].spendingCommitment           <== outSpendingCommitment[i];
         outRegistryLeaf[i].nullifierKeyHash <== outNullifierKeyHash[i];
         outRegistryLeaf[i].dataHash         <== outDataHash[i];
 
