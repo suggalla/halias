@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
 pragma solidity 0.8.28;
 
 import { SMTRegistry } from "./base/SMTRegistry.sol";
@@ -12,10 +13,10 @@ import { FIELD_PRIME } from "./base/Constants.sol";
 error NotController();
 error ZeroController();
 error InvalidAliasHash();
-error InvalidSpendingPubkey();
+error InvalidSpendingCommitment();
 error InvalidNullifierKeyHash();
 error InvalidEncryptionPubkey();
-error PubkeyOutOfField();
+error SpendingCommitmentOutOfField();
 error NullifierKeyHashOutOfField();
 error AliasTaken();
 error AliasKeyTaken();
@@ -49,7 +50,7 @@ contract HaliasRegistry is SMTRegistry {
     /// @dev The keys an alias commits to. The registry leaf is derived from these on every
     ///      write, so the record and the tree cannot drift out of step.
     struct AliasRecord {
-        bytes32 spendingPubkey;
+        bytes32 spendingCommitment;
         bytes32 nullifierKeyHash;   // Poseidon(nullifierKey, 1) — the raw key is never on chain
         bytes32 encryptionPubkey;
         bytes32 dataHash;
@@ -62,6 +63,48 @@ contract HaliasRegistry is SMTRegistry {
 
     mapping(bytes32 => AliasRecord) public aliases;
 
+    // ── the prefix index ───────────────────────────────────────────────────────
+    //
+    // Registrations grouped by the top ALIAS_PREFIX_BITS of the alias hash, so a client can
+    // read the group its recipient falls in instead of every registration ever made.
+    //
+    // This exists because resolving a name locally used to mean scanning the whole registry —
+    // measured at 785 bytes of log JSON per alias, so 785 MB at a million aliases, which is
+    // where the client dies long before anything else does. The alternative was asking a
+    // targeted question, which names the recipient to whoever answers. This is the third
+    // option: ask about a group.
+    //
+    // 12 bits is the finest granularity, not the mandated one. A client wanting a larger
+    // anonymity set reads several adjacent prefixes — 16 of them is an 8-bit query — so the
+    // trade between k and bandwidth stays a client decision. Storing it coarser would take
+    // that choice away; storing it finer costs nothing here but more calls to widen.
+    //
+    // Cost, measured against the same registrations with the push removed: **+27,442 gas
+    // (2.4%)** into a group that already exists, **+44,578 (3.9%)** for the first alias in a
+    // group, where both the array length slot and its first element are cold. Against a
+    // registration's ~1.13M — which is dominated by the 32 Poseidon rounds of the SMT
+    // update — that is the cheapest part of the transaction.
+    //
+    // See docs/rpc-surface.md.
+    uint256 public constant ALIAS_PREFIX_BITS = 12;
+
+    mapping(uint16 => bytes32[]) private _aliasesByPrefix;
+
+    /// One alias, with everything needed to rebuild its registry leaf and prove membership.
+    struct AliasEntry {
+        bytes32 aliasHash;
+        bytes32 spendingCommitment;
+        bytes32 nullifierKeyHash;
+        bytes32 encryptionPubkey;
+        bytes32 dataHash;
+        // The tree position, zero-based — what {SMTRegistry-getSmtSiblings} takes, NOT what
+        // {aliasSlot} stores or {AliasRegistered} emits. Those are offset by one so that zero
+        // reads as "unregistered". Named `pathKey` rather than `slot` because the two
+        // conventions have already been confused once, and an off-by-one here silently derives
+        // the neighbour's path rather than failing.
+        uint32  pathKey;
+    }
+
     /// @notice The alias holding each circuit-visible key, so no two can share one.
     /// @dev    The tree is keyed on `aliasHash % FIELD_PRIME`, not on the full 32 bytes —
     ///         a field element is all a leaf can hold, and widening it would take two
@@ -71,30 +114,55 @@ contract HaliasRegistry is SMTRegistry {
     ///
     ///         No one can reach this by choosing a name — colliding with an existing alias
     ///         means finding a string whose keccak is congruent to it mod p, around 2^254
-    ///         work — and the note commitment binds the spending pubkey regardless, so a
+    ///         work — and the note commitment binds the spending commitment regardless, so a
     ///         collision would confer no ability to receive or spend. It is enforced anyway
     ///         so that "one alias, one key" is an invariant of this contract rather than an
     ///         assumption anything built on top has to re-derive.
     mapping(uint256 => bytes32) public aliasByKey;
 
-    /// @dev Transient slot holding the insertion a claim's proof may perform this
-    ///      transaction. Transient rather than persistent so it cannot outlive the call that
-    ///      set it — see {authorizePendingLeaf}. An arbitrary constant, not a compiler-assigned
-    ///      slot: transient and persistent storage have separate address spaces, so this
-    ///      cannot collide with anything above.
-    uint256 private constant PENDING_LEAF_TSLOT = 0x48414c5f50454e44; // "HAL_PEND"
+    /// @dev The insertion a claim's proof may perform this transaction.
+    ///
+    ///      Transient rather than persistent so it cannot outlive the call that set it — see
+    ///      {authorizePendingLeaf}. Declared with the `transient` data location rather than
+    ///      reached through `tstore`/`tload` in assembly: the compiler assigns and tracks the
+    ///      slot, which removes both the hand-picked constant and the three assembly blocks
+    ///      that used it. Same semantics, and nothing left for a reader to verify by hand.
+    bytes32 private transient _pendingLeaf;
 
     // ── Events ─────────────────────────────────────────────────────────────────
 
+    /// @dev Carries every field of the record, `nullifierKeyHash` included.
+    ///
+    ///      That one is here for a reason worth stating: without it a client cannot resolve a
+    ///      recipient from logs and has to call {aliases} instead — a targeted read carrying
+    ///      the alias hash of the person it is about to pay, handed to whatever node answers,
+    ///      moments before a transfer that publishes nothing. Everything else it needs is
+    ///      already in this event, so one missing field was forcing the leak.
+    ///
+    ///      It reveals nothing new. `nullifierKeyHash` is `Poseidon(nullifierKey, 1)` — the
+    ///      raw key never appears on chain — and it is already readable from {aliases} and
+    ///      already committed inside `leaf` below. This only moves it somewhere a client can
+    ///      obtain in bulk, at 32 bytes of log data.
+    ///
+    ///      See docs/rpc-surface.md.
     event AliasRegistered(
         bytes32 indexed aliasHash,
-        bytes32 spendingPubkey,
+        bytes32 spendingCommitment,
+        bytes32 nullifierKeyHash,
         bytes32 leaf,
         bytes32 encryptionPubkey,
         uint32  slot
     );
     event AliasDataUpdated(bytes32 indexed aliasHash, bytes32 dataHash, bytes32 leaf);
-    event AliasReassigned(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 leaf, bytes32 encryptionPubkey);
+    /// @dev Same shape as {AliasRegistered}, and for the same reason — a rotation replaces the
+    ///      keys, so a client rebuilding from logs needs the new ones from here.
+    event AliasReassigned(
+        bytes32 indexed aliasHash,
+        bytes32 spendingCommitment,
+        bytes32 nullifierKeyHash,
+        bytes32 leaf,
+        bytes32 encryptionPubkey
+    );
 
     modifier onlyController() {
         if (msg.sender != controller) revert NotController();
@@ -114,7 +182,7 @@ contract HaliasRegistry is SMTRegistry {
     ///         reassigned, so a registration is the only thing that can consume one.
     function register(
         bytes32 aliasHash,
-        bytes32 spendingPubkey,
+        bytes32 spendingCommitment,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey
     ) external onlyController {
@@ -123,10 +191,10 @@ contract HaliasRegistry is SMTRegistry {
         uint256 key = uint256(aliasHash) % FIELD_PRIME;
         if (aliasByKey[key] != bytes32(0)) revert AliasKeyTaken();
         aliasByKey[key] = aliasHash;
-        _checkKeys(spendingPubkey, nullifierKeyHash, encryptionPubkey);
+        _checkKeys(spendingCommitment, nullifierKeyHash, encryptionPubkey);
 
         aliases[aliasHash] = AliasRecord({
-            spendingPubkey:   spendingPubkey,
+            spendingCommitment:   spendingCommitment,
             nullifierKeyHash: nullifierKeyHash,
             encryptionPubkey: encryptionPubkey,
             dataHash:         bytes32(0),
@@ -134,7 +202,11 @@ contract HaliasRegistry is SMTRegistry {
         });
 
         bytes32 leaf = _writeLeaf(aliasHash);
-        emit AliasRegistered(aliasHash, spendingPubkey, leaf, encryptionPubkey, aliasSlot[aliasHash]);
+        // Indexed here rather than in {_smtUpdate} because this is the only path that creates
+        // an alias — the guard above makes that exact — while `_smtUpdate` also runs for
+        // rotations and data changes, which must not append a second copy.
+        _aliasesByPrefix[_aliasPrefix(aliasHash)].push(aliasHash);
+        emit AliasRegistered(aliasHash, spendingCommitment, nullifierKeyHash, leaf, encryptionPubkey, aliasSlot[aliasHash]);
     }
 
     // {reassign} is the only way an alias's keys change, and it replaces all three at once:
@@ -164,7 +236,7 @@ contract HaliasRegistry is SMTRegistry {
         AliasRecord storage rec = _mustExist(aliasHash);
         uint256 key = uint256(aliasHash) % FIELD_PRIME;
         bytes32 leafHash = bytes32(PoseidonT4.hash([key, uint256(_leaf(rec)), 1]));
-        assembly ("memory-safe") { tstore(PENDING_LEAF_TSLOT, leafHash) }
+        _pendingLeaf = leafHash;
     }
 
     /// @notice Withdraw the authorisation, once the proof it was for has been checked.
@@ -175,12 +247,12 @@ contract HaliasRegistry is SMTRegistry {
     ///         could at most re-insert already-registered keys — but that is a paragraph of
     ///         reasoning, and an auditor should not have to reconstruct it.
     function clearPendingLeaf() external onlyController {
-        assembly ("memory-safe") { tstore(PENDING_LEAF_TSLOT, 0) }
+        _pendingLeaf = 0;
     }
 
     /// @notice The insertion armed for this transaction, or zero.
-    function pendingLeaf() external view returns (bytes32 v) {
-        assembly ("memory-safe") { v := tload(PENDING_LEAF_TSLOT) }
+    function pendingLeaf() external view returns (bytes32) {
+        return _pendingLeaf;
     }
 
     /// @notice Point the alias at new off-chain data.
@@ -206,20 +278,20 @@ contract HaliasRegistry is SMTRegistry {
     ///         controller's record — this only moves the keys the tree commits to.
     function reassign(
         bytes32 aliasHash,
-        bytes32 newSpendingPubkey,
+        bytes32 newSpendingCommitment,
         bytes32 newNullifierKeyHash,
         bytes32 newEncryptionPubkey
     ) external onlyController {
         AliasRecord storage rec = _mustExist(aliasHash);
-        _checkKeys(newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey);
+        _checkKeys(newSpendingCommitment, newNullifierKeyHash, newEncryptionPubkey);
 
-        rec.spendingPubkey   = newSpendingPubkey;
+        rec.spendingCommitment   = newSpendingCommitment;
         rec.nullifierKeyHash = newNullifierKeyHash;
         rec.encryptionPubkey = newEncryptionPubkey;
         rec.dataHash         = bytes32(0);
 
         bytes32 leaf = _writeLeaf(aliasHash);
-        emit AliasReassigned(aliasHash, newSpendingPubkey, leaf, newEncryptionPubkey);
+        emit AliasReassigned(aliasHash, newSpendingCommitment, newNullifierKeyHash, leaf, newEncryptionPubkey);
     }
 
     // ── Views ──────────────────────────────────────────────────────────────────
@@ -236,7 +308,59 @@ contract HaliasRegistry is SMTRegistry {
         return _leaf(rec);
     }
 
+    /// @notice How many aliases fall in a prefix group. Read this to page {getAliasesByPrefix}.
+    function prefixCount(uint16 prefix) external view returns (uint256) {
+        return _aliasesByPrefix[prefix].length;
+    }
+
+    /// @notice Every alias in a prefix group, with what a client needs to rebuild its leaf and
+    ///         locate it in the tree.
+    /// @dev    Paged, because a group is unbounded and an `eth_call` returning all of it would
+    ///         eventually exceed what a node will serve. Paging discloses nothing further: every
+    ///         page names the same group, and which page a caller wants says nothing about which
+    ///         entry they came for.
+    ///
+    ///         Returns whole records rather than hashes so that resolving a name is one call.
+    ///         Following up with {aliases} per entry would put the alias hash back on the wire
+    ///         individually, which is the leak this replaces.
+    ///
+    ///         `offset` past the end returns empty rather than reverting — a client paging to
+    ///         exhaustion should stop, not fail.
+    function getAliasesByPrefix(uint16 prefix, uint256 offset, uint256 limit)
+        external view returns (AliasEntry[] memory entries)
+    {
+        bytes32[] storage group = _aliasesByPrefix[prefix];
+        if (offset >= group.length) return new AliasEntry[](0);
+
+        uint256 end = offset + limit;
+        if (end > group.length || end < offset) end = group.length;   // `< offset` catches overflow
+        entries = new AliasEntry[](end - offset);
+
+        for (uint256 i = offset; i < end; i++) {
+            bytes32 h = group[i];
+            AliasRecord storage rec = aliases[h];
+            entries[i - offset] = AliasEntry({
+                aliasHash:          h,
+                spendingCommitment: rec.spendingCommitment,
+                nullifierKeyHash:   rec.nullifierKeyHash,
+                encryptionPubkey:   rec.encryptionPubkey,
+                dataHash:           rec.dataHash,
+                // Offset back to zero-based here, once, so callers never do it themselves.
+                pathKey:            aliasSlot[h] - 1
+            });
+        }
+    }
+
     // ── Internals ──────────────────────────────────────────────────────────────
+
+    /// @dev Internal, deliberately, exactly as {HaliasController-registrationCommitment} is.
+    ///      As an external `pure` helper this would be callable over `eth_call` with a single
+    ///      alias hash as its argument — which is a targeted question naming one person, and
+    ///      the whole reason the prefix index exists. Clients compute this locally; it is a
+    ///      shift. `SdkPreimage.test.ts` asserts the selector is not dispatchable.
+    function _aliasPrefix(bytes32 aliasHash) private pure returns (uint16) {
+        return uint16(uint256(aliasHash) >> (256 - ALIAS_PREFIX_BITS));
+    }
 
     /// @dev The single place a leaf is built and pushed into the tree. Every write routes
     ///      through here, so the committed leaf is always a function of the stored record —
@@ -251,7 +375,7 @@ contract HaliasRegistry is SMTRegistry {
     ///      aliasHash argument here would be unused and imply a binding this does not make.
     function _leaf(AliasRecord storage rec) private view returns (bytes32) {
         return bytes32(PoseidonT4.hash([
-            uint256(rec.spendingPubkey),
+            uint256(rec.spendingCommitment),
             uint256(rec.nullifierKeyHash),
             uint256(rec.dataHash)
         ]));
@@ -263,14 +387,14 @@ contract HaliasRegistry is SMTRegistry {
     }
 
     function _checkKeys(
-        bytes32 spendingPubkey,
+        bytes32 spendingCommitment,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey
     ) private pure {
-        if (spendingPubkey   == bytes32(0)) revert InvalidSpendingPubkey();
+        if (spendingCommitment   == bytes32(0)) revert InvalidSpendingCommitment();
         if (nullifierKeyHash == bytes32(0)) revert InvalidNullifierKeyHash();
         if (encryptionPubkey == bytes32(0)) revert InvalidEncryptionPubkey();
-        if (uint256(spendingPubkey)   >= FIELD_PRIME) revert PubkeyOutOfField();
+        if (uint256(spendingCommitment)   >= FIELD_PRIME) revert SpendingCommitmentOutOfField();
         if (uint256(nullifierKeyHash) >= FIELD_PRIME) revert NullifierKeyHashOutOfField();
     }
 }

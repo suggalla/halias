@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
 pragma solidity 0.8.28;
 
 import { PoseidonT3 } from "poseidon-solidity/PoseidonT3.sol";
@@ -9,10 +10,10 @@ error ZeroCommitment();
 
 // A sequence of shallow trees, addressed by (treeNumber, leafIndex).
 //
-// Depth buys gas, not capacity: the nullifier's global index is 32 bits however it is split,
-// so total capacity is 2^32 leaves either way, while an insert costs exactly LEVELS Poseidon
-// hashes. It costs privacy — trees fill in order, so the tree number is a coarse creation
-// timestamp, where a single tree leaks nothing.
+// Depth buys gas, not capacity: an insert costs exactly LEVELS Poseidon hashes whatever the
+// split, and capacity comes from the tree counter, which is 32 bits of its own. It costs
+// privacy — trees fill in order, so the tree number is a coarse creation timestamp, where a
+// single tree leaks nothing.
 //
 // Roots are never evicted. A stale proof is harmless because nullifiers prevent double
 // spends, and a rolled-over tree is frozen, so proofs against it stay valid forever.
@@ -21,9 +22,13 @@ contract MerkleTreeWithHistory {
     // buckets creation time more coarsely.
     uint32 public constant LEVELS = 16;
 
-    /// @notice How many trees the circuit can address. Derived, not hard-coded, so changing
-    ///         LEVELS cannot leave this disagreeing with it — see {_insertPair}.
-    uint32 public constant MAX_TREES = uint32(1) << (32 - LEVELS);
+    /// @notice How many trees the circuit can address: 2^32, the width NoteNullifier
+    ///         range-checks `treeNumber` to. Total capacity is that times 2^LEVELS — 2^48
+    ///         leaves at LEVELS = 16.
+    /// @dev    A uint32 counter cannot reach 2^32, so the guard in {_insertPair} is on the
+    ///         counter's own maximum rather than on this. Stated as a uint64 so the number is
+    ///         readable rather than expressed as an overflow.
+    uint64 public constant MAX_TREES = uint64(1) << 32;
 
     // Shared across trees, never reset. Per-tree slots would cost ~16 zero -> non-zero
     // SSTOREs (~354k gas) on whichever transaction opens a tree. Sharing is safe only because
@@ -91,10 +96,11 @@ contract MerkleTreeWithHistory {
         // 2^LEVELS is even, so the last pair of a tree fills it exactly.
         unchecked { leafIndex += 2; }
         if (leafIndex >= _treeCapacity()) {
-            // The circuit's bound, not the uint32's. NoteNullifier range-checks treeNumber
-            // to 2^(32 - LEVELS); a uint32 counter passes that happily, and every note past
-            // it would sit on chain permanently unprovable. Silent and irreversible.
-            if (treeNumber + 1 >= MAX_TREES) revert TreeSpaceExhausted();
+            // The two bounds now coincide: NoteNullifier range-checks treeNumber to 32 bits
+            // and the counter is a uint32, so the last addressable tree is the counter's own
+            // maximum. Checked rather than left to overflow, because a note past the circuit's
+            // bound would sit on chain permanently unprovable — silent and irreversible.
+            if (treeNumber == _maxTreeNumber()) revert TreeSpaceExhausted();
             treeNumber += 1;
             leafIndex = 0;
         }
@@ -111,6 +117,16 @@ contract MerkleTreeWithHistory {
     ///      mistake waiting to happen.
     function _treeCapacity() internal view virtual returns (uint32) {
         return uint32(1) << LEVELS;
+    }
+
+    /// @dev The last addressable tree. Virtual for the same reason as {_treeCapacity} and
+    ///      with the same limits: only the ceiling moves, and reaching the real one naturally
+    ///      takes 2^32 rollovers — so without this the revert below it is unreachable, and an
+    ///      unreachable revert is an untested one. It guards the case where a note would land
+    ///      past the circuit's 32-bit treeNumber bound and sit on chain permanently
+    ///      unprovable, which is exactly the failure worth having a test for.
+    function _maxTreeNumber() internal view virtual returns (uint32) {
+        return type(uint32).max;
     }
 
     function _commitPoolRoot(uint32 tree) internal {

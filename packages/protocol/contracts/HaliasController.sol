@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
 pragma solidity 0.8.28;
 
 import { HaliasRegistry } from "./HaliasRegistry.sol";
@@ -17,10 +18,10 @@ error NotPendingAdmin();
 error NotAliasOwner();
 error InvalidOwner();
 error WrongRegistrationFee();
-error NoCommitment();
-error CommitTooNew();
-error CommitExpired();
-error CommitmentPending();
+error NoReservation();
+error ReservationTooNew();
+error ReservationExpired();
+error ReservationPending();
 error NameDoesNotMatchAlias();
 error EmptyName();
 error InsufficientFees();
@@ -74,7 +75,8 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     address public admin;
     address public pendingAdmin;
 
-    /// @notice Registration commitments, by hash, recording the block each was made.
+    /// @notice Outstanding registration reservations, by commitment hash, each recording the
+    ///         moment it was made.
     /// @dev    Registration is otherwise a race anyone watching the mempool wins. The alias
     ///         hash travels in plain calldata, so a front-runner registers it first with
     ///         *their own keys* — and then every payment to that name arrives in notes only
@@ -85,7 +87,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///
     ///         Committing first closes it: an observer sees an opaque hash and cannot build a
     ///         competing commitment without the preimage. By the time the name is public, the
-    ///         commitment is already MIN_COMMIT_AGE blocks old and a would-be front-runner
+    ///         reservation is already a block old and a would-be front-runner
     ///         cannot manufacture one in the past.
     ///
     ///         The owner is bound into the commitment for a second reason: without it, the
@@ -97,7 +99,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         {claim} needs none of this. Its owner is fixed inside the proof through
     ///         `externalData`, so a copied claim registers to the bound owner rather than the
     ///         copier — blockable, but not stealable.
-    mapping(bytes32 => uint256) public commitments;
+    mapping(bytes32 => uint256) public reservations;
 
     /// @notice Who an alias has been offered to, if anyone. Zero means no outstanding offer.
     mapping(bytes32 => address) public pendingAliasOwner;
@@ -105,7 +107,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     mapping(bytes32 => uint256) public aliasNonce;
 
     bytes32 private constant ACCEPT_ALIAS_TYPEHASH = keccak256(
-        "AcceptAlias(bytes32 aliasHash,bytes32 spendingPubkey,bytes32 nullifierKeyHash,"
+        "AcceptAlias(bytes32 aliasHash,bytes32 spendingCommitment,bytes32 nullifierKeyHash,"
         "bytes32 encryptionPubkey,address to,uint256 nonce,uint256 deadline)"
     );
     bytes32 private constant OFFER_ALIAS_TYPEHASH = keccak256(
@@ -118,19 +120,22 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         "UpdateAliasData(bytes32 aliasHash,bytes32 dataHash,uint256 nonce,uint256 deadline)"
     );
 
-    /// @dev One block is the whole requirement: a front-runner seeing the reveal cannot
-    ///      commit and reveal in the same block, so they are locked out. Longer only costs
-    ///      legitimate users time.
-    uint256 public constant MIN_COMMIT_AGE = 1;
-    /// @dev Commitments expire so abandoned ones cannot be hoarded and revealed much later.
+    /// @dev Reservations expire so abandoned ones cannot be hoarded and revealed much later.
     ///
-    ///      Seconds, not blocks, and the difference from MIN_COMMIT_AGE is deliberate: that
-    ///      one is genuinely a block property — a front-runner who first learns the name from
-    ///      the reveal must not be able to commit in the same block — while this bounds a
-    ///      *duration*. Expressed in blocks it meant a day on mainnet and four hours on a
-    ///      two-second L2, which quietly shortens how long a legitimate registrant has to
-    ///      reveal. Same reasoning as REGISTRY_ROOT_MAX_AGE.
-    uint256 public constant MAX_COMMIT_AGE = 1 days;
+    ///      Seconds rather than blocks, so the window is the same duration everywhere. In
+    ///      blocks it would mean a day on mainnet and four hours on a two-second L2, quietly
+    ///      shortening how long a legitimate registrant has to reveal. Same reasoning as
+    ///      REGISTRY_ROOT_MAX_AGE.
+    ///
+    ///      There is no matching minimum, because a timestamp already supplies one. Every
+    ///      transaction in a block shares its timestamp, so `block.timestamp <= madeAt` is
+    ///      satisfied only in a strictly later block — which is exactly the requirement: a
+    ///      front-runner who first learns the name from the reveal must not be able to reserve
+    ///      and reveal alongside it. Recording the block number as well, packed beside the
+    ///      timestamp and unpacked through two helpers, bought nothing this comparison does
+    ///      not. If a longer wait is ever wanted (ENS uses 60 seconds), it is a constant added
+    ///      to this same comparison, still with no block number involved.
+    uint256 public constant MAX_RESERVATION_AGE = 1 days;
 
     uint256 public registrationFee = 0.001 ether;
     uint256 public accumulatedFees;
@@ -146,7 +151,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     struct Registration {
         address owner;
         bytes32 aliasHash;
-        bytes32 spendingPubkey;
+        bytes32 spendingCommitment;
         bytes32 nullifierKeyHash;   // Poseidon(nullifierKey, 1) — computed off-chain
         bytes32 encryptionPubkey;
     }
@@ -156,7 +161,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     /// @notice The plaintext behind an alias hash, published by its registrant.
     /// @dev    Optional and one-shot: see {_publishName}.
     event NamePublished(bytes32 indexed aliasHash, string name);
-    event Committed(bytes32 indexed commitment, uint256 blockNumber);
+    event RegistrationReserved(bytes32 indexed commitment, uint256 reservedAt);
     event AliasOffered(bytes32 indexed aliasHash, address indexed from, address indexed to);
     event AliasOfferCancelled(bytes32 indexed aliasHash);
     event AliasClaimed(bytes32 indexed aliasHash, address indexed owner, address indexed submitter);
@@ -173,12 +178,12 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     /// @dev Authorises an action reserved to an alias's owner. A signature is the only way to
     ///      express that intent — `msg.sender` is never consulted.
     ///
-    ///      There used to be a second path: an empty signature meant the owner was submitting
-    ///      the transaction themselves. It is gone because the owner is no longer an account
-    ///      anyone transacts from. A client derives its owner key from its recovery phrase, so
-    ///      that key holds no ETH and cannot pay for a transaction — it can only ever sign,
-    ///      while some funded wallet submits. Keeping a sender-based path would have meant
-    ///      keeping the assumption that owning a name and paying for gas are the same account,
+    ///      There is deliberately no second path where an empty signature means the owner is
+    ///      submitting for themselves. The owner is not an account anyone transacts from: a
+    ///      client derives its owner key from its recovery phrase, so that key holds no ETH and
+    ///      cannot pay for a transaction — it can only ever sign, while some funded wallet
+    ///      submits. A sender-based path would encode the assumption that owning a name and
+    ///      paying for gas are the same account,
     ///      which is exactly the coupling this removes.
     ///
     ///      What it buys: `ownerOf` no longer names a wallet anyone uses, so it stops tying a
@@ -261,7 +266,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         A live commitment cannot be reset, and that is load-bearing. The hash is
     ///         public the moment it is made, so anyone could otherwise re-commit someone
     ///         else's in the same block as their reveal — pushing `madeAt` to the current
-    ///         block and failing the reveal with {CommitTooNew}, indefinitely, for the price
+    ///         block and failing the reveal with {ReservationTooNew}, indefinitely, for the price
     ///         of gas. Nobody can front-run the *first* commitment because that needs the
     ///         preimage, so refusing to overwrite closes the window entirely.
     ///
@@ -272,40 +277,46 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     /// @dev    Named for what it commits to rather than just `commit`: this contract also
     ///         takes claims, offers and acceptances, and none of those go through here.
     ///         Pairs with {registrationCommitment}, which builds the hash.
-    function commitRegistration(bytes32 commitment) external {
-        uint256 prev = commitments[commitment];
-        if (prev != 0 && block.timestamp <= _commitTime(prev) + MAX_COMMIT_AGE) {
-            revert CommitmentPending();
+    function reserveRegistration(bytes32 commitment) external {
+        uint256 prev = reservations[commitment];
+        if (prev != 0 && block.timestamp <= prev + MAX_RESERVATION_AGE) {
+            revert ReservationPending();
         }
 
-        commitments[commitment] = block.number | (block.timestamp << 128);
-        emit Committed(commitment, block.number);
+        reservations[commitment] = block.timestamp;
+        emit RegistrationReserved(commitment, block.timestamp);
     }
 
-    /// @dev A commitment records both the block it was made in and the moment, packed into one
-    ///      slot so the two-transaction flow still costs one SSTORE. Both are needed because
-    ///      the two ages measure different things — see MAX_COMMIT_AGE.
-    function _commitBlock(uint256 v) private pure returns (uint256) { return v & type(uint128).max; }
-    function _commitTime(uint256 v)  private pure returns (uint256) { return v >> 128; }
-
-    /// @notice The commitment for a registration. Derive it here rather than reimplementing
-    ///         the encoding, so a caller cannot commit to something they cannot reveal.
+    /// @dev The commitment a registration reveals against.
+    ///
+    ///      `internal`, and that is the point. As an external `pure` helper this was callable
+    ///      over `eth_call` with the plaintext name as its first argument — which hands the
+    ///      name to whatever node answers the call, *before* the opaque commitment is
+    ///      broadcast. That inverts the whole mechanism: commit-reveal exists so nobody learns
+    ///      the name until front-running it is impossible, and the node answering is also the
+    ///      one watching the mempool it would be front-run in.
+    ///
+    ///      A caller must therefore reproduce this encoding rather than ask for it. That is
+    ///      four lines, and it is not left to chance: the SDK exports `registrationCommitment`
+    ///      and SdkPreimage.test.ts proves the two agree by precommitting with the SDK's hash
+    ///      and revealing against this one — a disagreement surfaces as {NoReservation} there
+    ///      rather than as a stranded registration in production.
     function registrationCommitment(
         string calldata name,
-        bytes32 spendingPubkey,
+        bytes32 spendingCommitment,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey,
         address owner,
         bytes32 salt
-    ) public pure returns (bytes32) {
+    ) internal pure returns (bytes32) {
         return keccak256(abi.encode(
-            aliasToHash(name), spendingPubkey, nullifierKeyHash, encryptionPubkey, owner, salt
+            aliasToHash(name), spendingCommitment, nullifierKeyHash, encryptionPubkey, owner, salt
         ));
     }
 
     /// @notice Register an alias, paying the fee from your own balance.
     /// @param  name  The plaintext behind `aliasHash`, or "" to keep it off chain.
-    /// @param  salt  The salt used in the matching {commit}.
+    /// @param  salt  The salt used in the matching {reserveRegistration}.
     /// @param  owner The address that will hold the name. Not `msg.sender`: a client derives
     ///         this from its own recovery phrase, so the name travels with the keys rather
     ///         than with whichever wallet happened to pay. `ownerOf` then reveals an address
@@ -314,34 +325,35 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         It is bound into the commitment, so naming someone else's address cannot be
     ///         forced on them by front-running a reveal: the commitment a victim published
     ///         does not match one with a different owner in it.
-    function register(
+    function revealRegistration(
         string calldata name,
-        bytes32 spendingPubkey,
+        bytes32 spendingCommitment,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey,
         address owner,
         bytes32 salt
     ) external payable nonReentrant {
         bytes32 c = registrationCommitment(
-            name, spendingPubkey, nullifierKeyHash, encryptionPubkey, owner, salt
+            name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner, salt
         );
-        uint256 madeAt = commitments[c];
-        if (madeAt == 0)                                            revert NoCommitment();
-        if (block.number    < _commitBlock(madeAt) + MIN_COMMIT_AGE) revert CommitTooNew();
-        if (block.timestamp > _commitTime(madeAt)  + MAX_COMMIT_AGE) revert CommitExpired();
+        uint256 madeAt = reservations[c];
+        if (madeAt == 0)                                        revert NoReservation();
+        // A strictly later block, which is the whole requirement — see MAX_RESERVATION_AGE.
+        if (block.timestamp <= madeAt)                          revert ReservationTooNew();
+        if (block.timestamp >  madeAt + MAX_RESERVATION_AGE)    revert ReservationExpired();
         // One-shot: consumed here so the slot is reclaimed and the same tuple can be
         // committed again immediately. Replay is already impossible — the commitment binds
         // the name, and re-registering it reverts as taken.
-        delete commitments[c];
+        delete reservations[c];
 
-        _takeFeeAndRecord(name, spendingPubkey, nullifierKeyHash, encryptionPubkey, owner);
+        _takeFeeAndRecord(name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner);
     }
 
     /// @notice Register in one transaction, with no commitment.
     /// @dev    Front-runnable wherever the mempool is public, and profitably so: the name
     ///         travels in this call's calldata, so anyone watching can register it first
     ///         with *their own* keys and receive every payment afterwards intended for
-    ///         whoever asked for it. That is what {register}'s two-step flow exists to
+    ///         whoever asked for it. That is what {revealRegistration}'s two-step flow exists to
     ///         prevent, and it is why the SDK uses that path by default.
     ///
     ///         This is the right call only where the mempool is not public — an encrypted
@@ -353,21 +365,21 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         Even then the guarantee is narrower than it looks. An encrypted mempool hides
     ///         a transaction from public observers, not necessarily from whoever decrypts
     ///         and builds the block.
-    function registerDirect(
+    function directRegistration(
         string calldata name,
-        bytes32 spendingPubkey,
+        bytes32 spendingCommitment,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey,
         address owner
     ) external payable nonReentrant {
-        _takeFeeAndRecord(name, spendingPubkey, nullifierKeyHash, encryptionPubkey, owner);
+        _takeFeeAndRecord(name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner);
     }
 
     /// @dev Everything the two registration paths share. They differ only in what they
     ///      require *before* this: a matured commitment, or nothing.
     function _takeFeeAndRecord(
         string calldata name,
-        bytes32 spendingPubkey,
+        bytes32 spendingCommitment,
         bytes32 nullifierKeyHash,
         bytes32 encryptionPubkey,
         address owner
@@ -382,7 +394,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         _record(Registration({
             owner:            owner,
             aliasHash:        aliasToHash(name),
-            spendingPubkey:   spendingPubkey,
+            spendingCommitment:   spendingCommitment,
             nullifierKeyHash: nullifierKeyHash,
             encryptionPubkey: encryptionPubkey
         }), name);
@@ -448,7 +460,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         // Registry first: it owns every invariant about the tree, including rejecting an
         // alias that is already taken. Minting before that would let a failed registration
         // leave a token behind.
-        registry.register(r.aliasHash, r.spendingPubkey, r.nullifierKeyHash, r.encryptionPubkey);
+        registry.register(r.aliasHash, r.spendingCommitment, r.nullifierKeyHash, r.encryptionPubkey);
 
         // `_mint`, deliberately, not `_safeMint` — static analysers flag this, so: `_safeMint`
         // calls `onERC721Received` on the recipient, and the recipient is `r.owner`, chosen by
@@ -507,7 +519,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     // ── Alias maintenance ──────────────────────────────────────────────────────
 
     // There is no `updateKeys`. It rotated the nullifier and encryption keys but never the
-    // spending pubkey — so the one compromise that loses money was the one it could not
+    // spending commitment — so the one compromise that loses money was the one it could not
     // address, behind a name that implied otherwise. Offering an alias to yourself and
     // accepting it with fresh keys rotates all three, which is strictly more, and once
     // {offerAlias} carries a signature the whole rotation is relayable: exactly what someone
@@ -544,7 +556,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         controlled, leaving the recipient owning a name whose payments arrive for
     ///         someone else. The contract cannot detect that: keys come from an EIP-191
     ///         wallet signature through Poseidon, so there is no on-chain relationship
-    ///         between an address and a pubkey.
+    ///         between an address and a spending commitment.
     ///
     ///         Only the recipient can assert which keys are theirs, so only the recipient can
     ///         complete a transfer. Until then this changes nothing at all — the seller keeps
@@ -553,7 +565,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///
     ///         Offering an alias to yourself is the key-rotation path: accept it with fresh
     ///         keys and {HaliasRegistry-reassign} replaces all three, including the spending
-    ///         pubkey. Signing both halves makes the whole rotation relayable.
+    ///         spending commitment. Signing both halves makes the whole rotation relayable.
     function offerAlias(
         bytes32 aliasHash,
         address to,
@@ -614,7 +626,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         the same alias to the same address.
     function acceptAlias(
         bytes32 aliasHash,
-        bytes32 newSpendingPubkey,
+        bytes32 newSpendingCommitment,
         bytes32 newNullifierKeyHash,
         bytes32 newEncryptionPubkey,
         uint256 deadline,
@@ -629,7 +641,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         // The shared half is the check itself.
         _consumeAuthorization(to, aliasHash, keccak256(abi.encode(
             ACCEPT_ALIAS_TYPEHASH, aliasHash,
-            newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey,
+            newSpendingCommitment, newNullifierKeyHash, newEncryptionPubkey,
             to, aliasNonce[aliasHash], deadline
         )), deadline, signature);
 
@@ -637,7 +649,7 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         delete pendingAliasOwner[aliasHash];
 
         _transfer(ownerOf(uint256(aliasHash)), to, uint256(aliasHash));
-        registry.reassign(aliasHash, newSpendingPubkey, newNullifierKeyHash, newEncryptionPubkey);
+        registry.reassign(aliasHash, newSpendingCommitment, newNullifierKeyHash, newEncryptionPubkey);
     }
 
 

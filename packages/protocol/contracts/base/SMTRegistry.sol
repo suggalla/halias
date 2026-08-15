@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
 pragma solidity 0.8.28;
 
 import { PoseidonT3 } from "poseidon-solidity/PoseidonT3.sol";
@@ -91,7 +92,7 @@ abstract contract SMTRegistry {
             // silently stops holding the moment the depth is reduced: a slot past
             // 2^REGISTRY_LEVELS still fits a uint32, and `pathKey >> i` would alias an
             // existing path, corrupting the tree rather than reverting.
-            if (uint256(slot) > (uint256(1) << REGISTRY_LEVELS)) revert RegistryFull();
+            if (uint256(slot) > _registryCapacity()) revert RegistryFull();
             aliasSlot[aliasHash] = slot;
         }
         uint256 pathKey = slot - 1;
@@ -130,7 +131,42 @@ abstract contract SMTRegistry {
 
     // Siblings for a given slot (for off-chain proof construction). Takes the slot, not
     // the alias — resolve it with aliasSlot(aliasHash) - 1.
+    /// @dev How many aliases this registry can hold. Virtual only so a test can reach
+    ///      {RegistryFull}, which otherwise needs 2^32 registrations — the same reasoning as
+    ///      {MerkleTreeWithHistory-_treeCapacity}. REGISTRY_LEVELS itself stays fixed: it must
+    ///      agree with the compiled circuit, so only the ceiling moves and the tree keeps its
+    ///      real depth, real zeros and real root derivation.
+    function _registryCapacity() internal view virtual returns (uint256) {
+        return uint256(1) << REGISTRY_LEVELS;
+    }
+
     function getSmtSiblings(uint32 pathKey) external view returns (bytes32[REGISTRY_LEVELS] memory siblings) {
+        siblings = _siblings(pathKey);
+    }
+
+    /// @notice Sibling paths for several slots at once.
+    /// @dev    This exists for privacy, not for round trips. Asking for one slot's path is a
+    ///         statement about one person: slot↔alias is public from {AliasRegistered}, so a
+    ///         node answering `getSmtSiblings` learns who the caller is about to pay, moments
+    ///         before a transfer that publishes nothing.
+    ///
+    ///         Asking for a whole prefix group's worth of slots says only "someone in this
+    ///         group". Paired with {HaliasRegistry-getAliasesByPrefix} over the same group the
+    ///         two calls disclose the same set, so the second reveals nothing the first did
+    ///         not — which is the point. Two k-anonymous queries over *different* partitions
+    ///         would intersect, and the intersection is much smaller than either.
+    ///
+    ///         See docs/rpc-surface.md.
+    function getSmtSiblingsBatch(uint32[] calldata pathKeys)
+        external view returns (bytes32[REGISTRY_LEVELS][] memory siblings)
+    {
+        siblings = new bytes32[REGISTRY_LEVELS][](pathKeys.length);
+        for (uint256 n = 0; n < pathKeys.length; n++) {
+            siblings[n] = _siblings(pathKeys[n]);
+        }
+    }
+
+    function _siblings(uint32 pathKey) private view returns (bytes32[REGISTRY_LEVELS] memory siblings) {
         for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
             uint256 siblingPath = (uint256(pathKey) >> i) ^ 1;
             bytes32 s = _smtNodes[i][siblingPath];
