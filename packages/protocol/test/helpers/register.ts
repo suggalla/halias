@@ -1,18 +1,19 @@
 import { ethers } from "hardhat";
+import { registrationCommitment } from "halias-sdk";
 
 /// Register through the commit-reveal flow.
 ///
 /// Registration is two transactions now: a commitment, then the reveal at least
-/// MIN_COMMIT_AGE blocks later. Tests go through here rather than calling `register`
+/// MAX_RESERVATION_AGE blocks later. Tests go through here rather than calling `register`
 /// directly so that the delay is applied consistently — a test that skips it fails with
-/// CommitTooNew, which looks like a bug in the thing under test rather than in the test.
+/// ReservationTooNew, which looks like a bug in the thing under test rather than in the test.
 export async function registerAlias(
   domain: any,
   signer: any,
   /// The plaintext, including the .hls suffix. The contract derives the alias hash from it;
   /// there is no separate hash argument to disagree with it.
   name: string,
-  spendingPubkey: string,
+  spendingCommitment: string,
   nullifierKeyHash: string,
   encryptionPubkey: string,
   fee: bigint,
@@ -24,14 +25,19 @@ export async function registerAlias(
   const d = domain.connect(signer);
   const salt = ethers.hexlify(ethers.randomBytes(32));
   const holder = owner ?? signer.address;
-  const commitment = await d.registrationCommitment(
-    name, spendingPubkey, nullifierKeyHash, encryptionPubkey, holder, salt,
+  // The SDK's encoding, not the contract's — which makes every registration in the suite a
+  // round-trip proof that the two agree. A drift shows up as NoReservation on the reveal.
+  const commitment = registrationCommitment(
+    name, BigInt(spendingCommitment), BigInt(nullifierKeyHash), BigInt(encryptionPubkey),
+    holder, salt,
   );
-  await (await d.commitRegistration(commitment)).wait();
-  // Hardhat mines one block per transaction, so the commit itself does not satisfy
-  // MIN_COMMIT_AGE — the reveal would land in the very next block. One empty block does.
+  await (await d.reserveRegistration(commitment)).wait();
+  // The reveal must land in a strictly later block than the reservation, which a timestamp
+  // comparison enforces because every transaction in a block shares one. Hardhat mines a block
+  // per transaction, so the reveal would otherwise be the very next — one empty block separates
+  // them and moves the clock on.
   await ethers.provider.send("evm_mine", []);
-  return d.register(name, spendingPubkey, nullifierKeyHash, encryptionPubkey, holder, salt,
+  return d.revealRegistration(name, spendingCommitment, nullifierKeyHash, encryptionPubkey, holder, salt,
                     { value: fee });
 }
 
@@ -100,7 +106,7 @@ export async function acceptAliasAs(
   domain: any,
   recipient: any,
   aliasHash: string,
-  spendingPubkey: string,
+  spendingCommitment: string,
   nullifierKeyHash: string,
   encryptionPubkey: string,
   submitter?: any,
@@ -110,15 +116,15 @@ export async function acceptAliasAs(
   const sig = await recipient.signTypedData(
     { name: "Halias", version: "1", chainId: Number(net.chainId), verifyingContract: await domain.getAddress() },
     { AcceptAlias: [
-      { name: "aliasHash", type: "bytes32" }, { name: "spendingPubkey", type: "bytes32" },
+      { name: "aliasHash", type: "bytes32" }, { name: "spendingCommitment", type: "bytes32" },
       { name: "nullifierKeyHash", type: "bytes32" }, { name: "encryptionPubkey", type: "bytes32" },
       { name: "to", type: "address" }, { name: "nonce", type: "uint256" },
       { name: "deadline", type: "uint256" },
     ] },
-    { aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey,
+    { aliasHash, spendingCommitment, nullifierKeyHash, encryptionPubkey,
       to: recipient.address, nonce: await domain.aliasNonce(aliasHash), deadline },
   );
   return domain.connect(submitter ?? recipient).acceptAlias(
-    aliasHash, spendingPubkey, nullifierKeyHash, encryptionPubkey, deadline, sig,
+    aliasHash, spendingCommitment, nullifierKeyHash, encryptionPubkey, deadline, sig,
   );
 }

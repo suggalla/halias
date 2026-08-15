@@ -4,6 +4,7 @@ import { registerAlias } from "./helpers/register";
 import { mine, time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
+import { deployStack as sharedStack } from "./helpers/stack";
 
 // Root acceptance rules. Pool roots and registry roots deliberately differ:
 // a stale pool root is harmless because nullifiers stop double spends, but a stale
@@ -29,15 +30,8 @@ describe("Root history", function () {
   }
 
   async function deployStack() {
-    const { PoseidonT3: t3, PoseidonT4: t4 } = await ensurePoseidon();
-    const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
-    const dep = await (await ethers.getContractFactory("HaliasDeployer", {
-      libraries: { PoseidonT3: t3, PoseidonT4: t4 },
-    })).deploy(await mv.getAddress(), (await ethers.getSigners())[0].address);
-    const pool     = await ethers.getContractAt("HaliasPool",       await dep.pool());
-    const registry = await ethers.getContractAt("HaliasRegistry",   await dep.registry());
-    const domain   = await ethers.getContractAt("HaliasController", await dep.controller());
-    return { pool, registry, domain, MAX_AGE: await registry.REGISTRY_ROOT_MAX_AGE() };
+    const { pool, registry, controller } = await sharedStack();
+    return { pool, registry, domain: controller, MAX_AGE: await registry.REGISTRY_ROOT_MAX_AGE() };
   }
 
   beforeEach(async function () {

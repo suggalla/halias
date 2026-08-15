@@ -1,7 +1,8 @@
 import { ethers } from "ethers";
 import * as path from "path";
 import * as fs from "fs";
-import { Halias, FileCache, MnemonicSource, decodeRelayBlob, quoteRelay, submitRelay } from "halias-sdk";
+import { Halias, FileCache, MnemonicSource, decodeRelayBlob, quoteRelay, submitRelay,
+         POOL_REGISTRY_ABI as REGISTRY_ABI } from "halias-sdk";
 import { loadDeployment } from "./deployment";
 
 // The SDK against a live node, over real RPC.
@@ -144,7 +145,7 @@ async function main() {
   const registryContract = new ethers.Contract(cfg.registry, [
     "function getRegistryRoot() view returns (bytes32)",
     "function aliasSlot(bytes32) view returns (uint32)",
-    "function aliases(bytes32) view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint256 registeredAt)",
+    "function aliases(bytes32) view returns (bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint256 registeredAt)",
     "function isRegistered(bytes32) view returns (bool)",
   ], provider);
   const controllerContract = new ethers.Contract(cfg.controller, [
@@ -183,7 +184,7 @@ async function main() {
   // A lookup is what a sender does before paying anyone. If this is wrong, sends go
   // nowhere recoverable.
   const bobKeys = await alice.lookup(`${bobName}.hls`);
-  check("alice can resolve bob's keys", bobKeys.spendingPubkey > 0n);
+  check("alice can resolve bob's keys", bobKeys.spendingCommitment > 0n);
 
   // ── deposit ───────────────────────────────────────────────────────────────
   console.log(`\ndeposit  1.0 ETH  (real proof, expect ~3s)`);
@@ -208,7 +209,53 @@ async function main() {
   const poolBefore    = await balanceOf(provider, cfg.pool);
   const bobBeforeSend   = (await bob.balance()).total;
   const aliceBeforeSend = (await alice.balance()).total;
-  await alice.send(`${bobName}.hls`, "0.4");
+
+  // What this send tells the node answering it.
+  //
+  // The product's claim is that a private payment does not announce its recipient, and the
+  // client used to break that before the proof was even built: `aliasSlot`, `getSmtSiblings`
+  // and `aliases` each carried the recipient's alias hash to whatever RPC endpoint answered.
+  // Names are published at registration, so that hash is a name in plaintext.
+  //
+  // All three are now answered from scanned data — the tree included — and this is the only
+  // check that can tell. SdkPreimage.test.ts proves the mirror matches the contract; nothing
+  // there proves the client *uses* it, because falling back to fetching still produces a
+  // correct proof and a passing test. Watching the wire is the difference.
+  //
+  // Hooked at `_send` rather than `send`: ethers routes internal reads through the former, so
+  // wrapping the public method sees almost nothing. See docs/rpc-surface.md.
+  // Checked by selector, not by scanning calldata for the hash. Two of the three reads did
+  // carry it and would be caught that way, but `getSmtSiblings` takes a slot number — so a
+  // regression there would leak just as much (slot↔alias is public) while looking clean.
+  // Selectors taken from the SDK's own ABI rather than retyped here. A signature copied by
+  // hand and mistyped yields a selector nothing can ever match, and the check passes forever
+  // while watching for a call that does not exist.
+  const registryIface = new ethers.Interface(REGISTRY_ABI);
+  const forbidden = new Map(["aliasSlot", "getSmtSiblings", "aliases"].map(
+    n => [registryIface.getFunction(n)!.selector.toLowerCase(), n]));
+  const bobAliasHash = ethers.keccak256(ethers.toUtf8Bytes(`${bobName}.hls`)).slice(2).toLowerCase();
+
+  const sendCalls: string[] = [];
+  const rawSend = (provider as any)._send.bind(provider);
+  (provider as any)._send = (payload: any) => {
+    for (const p of Array.isArray(payload) ? payload : [payload]) {
+      if (p?.method === "eth_call") sendCalls.push(String(p.params?.[0]?.data ?? "").toLowerCase());
+    }
+    return rawSend(payload);
+  };
+  try {
+    await alice.send(`${bobName}.hls`, "0.4");
+  } finally {
+    (provider as any)._send = rawSend;
+  }
+  const leaked = sendCalls
+    .map(d => forbidden.get(d.slice(0, 10)))
+    .filter(Boolean) as string[];
+  check(`a send makes no targeted registry read (${sendCalls.length} eth_calls watched)`,
+        sendCalls.length > 0 && leaked.length === 0, leaked.join(", "));
+  // Belt as well: nothing at all on the wire spells out who is being paid, whatever the shape.
+  check("and no call carries the recipient's alias hash",
+        !sendCalls.some(d => d.includes(bobAliasHash)));
 
   eq("pool balance unchanged by a private transfer",
      await balanceOf(provider, cfg.pool), poolBefore);
@@ -477,10 +524,11 @@ async function main() {
      ethers.formatEther(ethers.parseEther("0.3") - (await pauper.registrationFee()) - claimFee));
 
   // ── a prepared claim survives concurrent registry writes (F1) ────────────
-  // A claim's change note is a non-zero output, so it needs registry membership for an
-  // alias not yet in the tree. This used to predict the post-registration root, and any
-  // registry write landing in between invalidated it — this assertion used to be that the
-  // claim DIED, which encoded the bug as expected behaviour.
+  // A claim's change note is a non-zero output, so it needs registry membership for an alias
+  // not yet in the tree. Predicting the post-registration root would let any registry write
+  // landing in between invalidate the claim, so the proof carries the insertion instead —
+  // against a root that already exists. This section asserts the claim SURVIVES a concurrent
+  // write, which is the property; asserting that it dies would encode the bug as behaviour.
   //
   // The proof carries the insertion now: it proves against a root that already exists,
   // shows the target slot empty there, and derives the result. Intervening writes are
@@ -538,10 +586,10 @@ async function main() {
   try { await bob.register(contested); } catch { taken = true; }
   check("an alias cannot be registered twice", taken);
 
-  // 3. The half that used to be exploitable. Registration once carried the alias hash in
-  //    plain calldata, so whoever watched the mempool and landed first owned the name — with
-  //    their own keys, which meant every later payment to it arrived for them. Commit-reveal
-  //    closes it: the commitment is opaque, and a front-runner who only learns the name when
+  // 3. The half a mempool watcher would otherwise win. An alias hash in plain calldata means
+  //    whoever lands first owns the name — with their own keys, so every later payment to it
+  //    arrives for them. Commit-reveal closes it: the commitment is opaque, and a front-runner
+  //    who only learns the name when
   //    the victim reveals cannot manufacture a commitment old enough to use.
   const target = `victim${suffix}`;
   const squatterWallet = new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider);
@@ -551,8 +599,7 @@ async function main() {
   await squatter.init();
 
   const controllerAsSquatter = new ethers.Contract(cfg.controller, [
-    "function register(string,bytes32,bytes32,bytes32,bytes32) external payable",
-    "function registrationCommitment(string,bytes32,bytes32,bytes32,address,bytes32) external pure returns (bytes32)",
+    "function revealRegistration(string,bytes32,bytes32,bytes32,bytes32) external payable",
     "function registrationFee() external view returns (uint256)",
   ], squatterWallet);
 
@@ -571,7 +618,7 @@ async function main() {
   const targetHash = ethers.keccak256(ethers.toUtf8Bytes(`${target}2.hls`));
   let noCommitment = false;
   try {
-    await (await controllerAsSquatter.register(
+    await (await controllerAsSquatter.revealRegistration(
       targetHash, ethers.toBeHex(1n, 32), ethers.toBeHex(2n, 32), ethers.toBeHex(3n, 32), "",
       ethers.hexlify(ethers.randomBytes(32)),
       { value: await controllerAsSquatter.registrationFee() },
@@ -582,8 +629,8 @@ async function main() {
   await alice.refresh();
   const held = await alice.lookup(`${target}.hls`);
   eq("and the name resolves to the keys of whoever committed to it",
-     held.spendingPubkey.toString(),
-     (await alice.lookup(`${target}.hls`)).spendingPubkey.toString());
+     held.spendingCommitment.toString(),
+     (await alice.lookup(`${target}.hls`)).spendingCommitment.toString());
 
   // ── history says what actually happened ──────────────────────────────────
   // Classification had never been asserted, and it was wrong in the UI: "relayed" was read
@@ -681,6 +728,162 @@ async function main() {
   eq("the token change is recoverable",
      ethers.formatEther((await alice.balance(tokenBig)).total), "6.0");
 
+  // ── a token that is not 18 decimals ───────────────────────────────────────
+  // The case everything above misses. Both ERC-20s in this file are 18 decimals, which is
+  // also what `parseEther` assumes — so a client hardcoding it agrees with them by accident
+  // and the disagreement only appears against USDC, USDT or WBTC. Those are the tokens
+  // someone actually wants to send privately, and "1.0" of a 6-decimal token computed at 18
+  // is a million million times too large.
+  //
+  // Asserted in base units rather than through a formatter, so the check does not depend on
+  // the same decimals lookup it is testing.
+  console.log(`\n6-decimal token`);
+  const usdc = await new ethers.ContractFactory(
+    ["constructor(string,string,uint8)", "function mint(address,uint256)",
+     "function balanceOf(address) view returns (uint256)"],
+    require("/tmp/halias-artifacts/contracts/mocks/MockERC20.sol/MockERC20.json").bytecode,
+    tokenDeployer,
+  ).deploy("USD Coin", "USDC", 6);
+  await usdc.waitForDeployment();
+  const usdcAddr = await usdc.getAddress();
+  const usdcBig  = BigInt(usdcAddr);
+  const SIX      = 1_000_000n;
+  await (await (usdc as any).connect(bobWallet).mint(aliceWallet.address, 500n * SIX)).wait();
+
+  const usdcMeta = await alice.tokenInfo(usdcBig);
+  eq("decimals are read from the token, not assumed", String(usdcMeta.decimals), "6");
+  eq("so is the symbol", usdcMeta.symbol, "USDC");
+
+  await alice.deposit("10.0", usdcBig);
+  await alice.refresh();
+  eq("a 6-decimal deposit moves 10 USDC, not 10 trillion",
+     (await (usdc as any).balanceOf(cfg.pool)).toString(), (10n * SIX).toString());
+  eq("and the note is worth the same",
+     (await alice.balance(usdcBig)).total.toString(), (10n * SIX).toString());
+  eq("balance() reports what it is denominated in",
+     String((await alice.balance(usdcBig)).token.decimals), "6");
+
+  await alice.send(bobName, "2.5", usdcBig);
+  await alice.refresh();
+  await bob.refresh();
+  eq("a 6-decimal transfer credits the recipient exactly",
+     (await bob.balance(usdcBig)).total.toString(), (2n * SIX + 500_000n).toString());
+  eq("and leaves the sender the change",
+     (await alice.balance(usdcBig)).total.toString(), (7n * SIX + 500_000n).toString());
+
+  const usdcDest = ethers.Wallet.createRandom().address;
+  await alice.withdraw(usdcDest, "1.25", usdcBig);
+  await alice.refresh();
+  eq("a 6-decimal withdrawal pays out exactly",
+     (await (usdc as any).balanceOf(usdcDest)).toString(), (1n * SIX + 250_000n).toString());
+  eq("the ETH balance is still untouched",
+     ethers.formatEther((await alice.balance()).total), ethers.formatEther(ethBeforeToken));
+
+  // ── invites are enumerable and reclaimable ────────────────────────────────
+  // The secret is derived from the creator's root rather than randomly, so an invite is not
+  // lost when the window that showed it is closed. That is what this section is really
+  // asserting: the funds behind an unclaimed invite are still reachable by the person who
+  // sent them, on any device holding the phrase.
+  console.log(`\ninvite reclaim`);
+
+  const before = (await alice.balance()).total;
+  const made   = await alice.createInvite("0.3");
+  await alice.refresh();
+
+  const listed = await alice.listInvites();
+  check("a created invite appears in the list", listed.length > 0, `${listed.length} listed`);
+  const mine = listed.find(i => i.inviteCode === made.inviteCode)!;
+  check("with the code the creator was handed", mine !== undefined);
+  eq("and the amount it holds", ethers.formatEther(mine.amount!), "0.3");
+  check("marked claimable while unspent", mine.claimable);
+
+  // Recomputed, not remembered — a fresh client with the same phrase finds the same invite.
+  const echo = await alice.listInvites();
+  eq("the secret is derived, so a second read finds the same invite",
+     echo.find(i => i.index === mine.index)!.inviteCode, made.inviteCode);
+
+  await alice.reclaimInvite(mine.index);
+  await alice.refresh();
+
+  const after = (await alice.listInvites()).find(i => i.index === mine.index)!;
+  check("a reclaimed invite is no longer claimable", !after.claimable);
+  eq("and reports no amount", String(after.amount), "null");
+
+  // The registration fee is spent either way, so the balance returns to just under where it
+  // started rather than exactly to it.
+  const recovered = (await alice.balance()).total;
+  check("the funds came back", recovered > before - ethers.parseEther("0.31"),
+        `${ethers.formatEther(before)} -> ${ethers.formatEther(recovered)}`);
+
+  let twice = "";
+  try { await alice.reclaimInvite(mine.index); } catch (e: any) { twice = e?.message ?? ""; }
+  check("reclaiming twice is refused", /already been claimed/.test(twice), twice.slice(0, 50));
+
+  // ── tokens are discovered, not configured ─────────────────────────────────
+  // A note names its own token, so what an alias holds is a fact about its notes. A client
+  // that only knew about a curated list would show zero while the money sat there — and
+  // anyone can send any ERC-20 to any registered alias without asking first.
+  const assets  = await alice.heldTokens();
+  const symbols = assets.map(h => h.token.symbol);
+  check("ETH is always listed, first", symbols[0] === "ETH", symbols.join(", "));
+  check("a token the alias was never configured for is discovered from its notes",
+        symbols.includes("USDC"), symbols.join(", "));
+  eq("and its balance is denominated correctly",
+     assets.find(h => h.token.symbol === "USDC")!.token.decimals.toString(), "6");
+  eq("the discovered total matches a direct read",
+     assets.find(h => h.token.symbol === "USDC")!.total.toString(),
+     (await alice.balance(usdcBig)).total.toString());
+  check("an asset with no notes is not listed",
+        !symbols.includes("TST") || assets.find(h => h.token.symbol === "TST")!.total > 0n,
+        symbols.join(", "));
+
+  // ── a relay fee that is not ETH ───────────────────────────────────────────
+  // The invariant this closes: a relayer is paid out of the note, so the fee is denominated in
+  // whatever that note holds — while the gas it spends is always ETH. Nothing can compare the
+  // two without a price, so a quote that reported a `profit` for a token fee would be
+  // subtracting wei from token base units and presenting the result as money.
+  //
+  // Asserted here rather than left to the UI, because the guard lives in the SDK and the app
+  // only renders it. Before this, the app gated relaying to ETH and RelayWindow labelled every
+  // amount "ETH" — two files agreeing by coincidence, with nothing to break if one changed.
+  console.log(`\ntoken relay fee`);
+  await alice.deposit("50.0", usdcBig);
+  await alice.refresh();
+
+  const usdcRelayFee = 2n * SIX;
+  const usdcPrepared = await alice.withdraw(
+    ethers.Wallet.createRandom().address, "20.0", usdcBig, undefined,
+    { relayerFee: usdcRelayFee, relayer: relayWallet.address, prepare: true },
+  );
+  const usdcPayload = decodeRelayBlob(usdcPrepared.relayBlob!);
+  const usdcQuote   = await quoteRelay(provider, usdcPayload, relayWallet.address);
+
+  eq("the quote carries the token the fee is paid in",
+     usdcQuote.tokenAddress.toLowerCase(), usdcAddr.toLowerCase());
+  eq("and the fee is in that token's units, not ETH's",
+     usdcQuote.fee.toString(), usdcRelayFee.toString());
+  check("profit is refused rather than computed across two assets",
+        usdcQuote.profit === null, String(usdcQuote.profit));
+  check("while an ETH fee still reports one", typeof xferQuote.profit === "bigint");
+  check("the transaction itself is still valid", usdcQuote.valid, usdcQuote.reason ?? "");
+
+  // Submitting must refuse by default — the caller has not said it priced the token.
+  let refusedBlind = "";
+  try {
+    await submitRelay(relayWallet, usdcPayload);
+  } catch (e: any) {
+    refusedBlind = e?.message ?? String(e);
+  }
+  check("submitting a token fee blind is refused", refusedBlind !== "", refusedBlind.slice(0, 60));
+  check("and the refusal explains what to do about it", /minProfit: null/.test(refusedBlind));
+
+  // …and goes through when the caller says it has priced it.
+  const relayerUsdcBefore = await (usdc as any).balanceOf(relayWallet.address);
+  await submitRelay(relayWallet, usdcPayload, { minProfit: null });
+  eq("an explicitly priced token relay pays the relayer in that token",
+     ((await (usdc as any).balanceOf(relayWallet.address)) - relayerUsdcBefore).toString(),
+     usdcRelayFee.toString());
+
   // ── alias maintenance ─────────────────────────────────────────────────────
   // Everything below was unexercised until now. These are the paths a user reaches
   // after the happy flow — rotation, reputation data, handing a name over — and each
@@ -696,7 +899,7 @@ async function main() {
   const rootBefore = await registryContract.getRegistryRoot();
 
   // Key rotation is a handover to yourself. There is no updateKeys: it wrote the nullifier
-  // and encryption keys but never the spending pubkey, so the one compromise that loses funds
+  // and encryption keys but never the spending commitment, so the one compromise that loses funds
   // was the one it could not answer. Fresh keys mean a client at a different derivation index,
   // and offer/accept replaces all three.
   // A second derivation index on the same phrase: fresh keys, and a fresh owner address too.
@@ -721,7 +924,7 @@ async function main() {
   const rotatedKeys = (rotated as any).keys;
   await (await rotateAsRelayer.acceptAlias(
     aliceKey,
-    ethers.toBeHex(rotatedKeys.spendingPubkey, 32),
+    ethers.toBeHex(rotatedKeys.spendingCommitment, 32),
     ethers.toBeHex((rotated as any).myNullifierKeyHash(), 32),
     ethers.hexlify(rotatedKeys.encryption.publicKey),
     rotateAccept.deadline, rotateAccept.signature,
@@ -729,9 +932,9 @@ async function main() {
 
   const rootAfterRotate = await registryContract.getRegistryRoot();
   check("rotating through offer-to-self moves the registry root", rootBefore !== rootAfterRotate);
-  eq("the spending pubkey actually changed — what updateKeys could not do",
-     (await registryContract.aliases(aliceKey)).spendingPubkey,
-     ethers.toBeHex((rotated as any).keys.spendingPubkey, 32));
+  eq("the spending commitment actually changed — what updateKeys could not do",
+     (await registryContract.aliases(aliceKey)).spendingCommitment,
+     ethers.toBeHex((rotated as any).keys.spendingCommitment, 32));
   eq("the alias is owned by the rotated index's own key",
      await controllerContract.ownerOf(BigInt(aliceKey)), rotated.ownerAddress);
   check("and that owner is not any wallet in this test",
@@ -757,8 +960,8 @@ async function main() {
   check("an out-of-field dataHash is rejected", rejectedOutOfField);
 
   // ── transfer ──────────────────────────────────────────────────────────────
-  // Two steps, and the second is the recipient's. A seller cannot nominate the keys, which
-  // is how someone used to end up owning a name whose payments arrived for the seller.
+  // Two steps, and the second is the recipient's. A seller who could nominate the keys would
+  // hand over a name whose payments still arrived for the seller.
   console.log(`\ntransfer ownership`);
   const heirWallet = new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider);
   const heirClient = mk(heirWallet as any);
@@ -787,7 +990,7 @@ async function main() {
   try {
     await (await controllerForStale.acceptAlias(
       aliceAliasHash,
-      ethers.toBeHex(heirKeysEarly.spendingPubkey, 32),
+      ethers.toBeHex(heirKeysEarly.spendingCommitment, 32),
       ethers.toBeHex((heirClient as any).myNullifierKeyHash(), 32),
       ethers.hexlify(heirKeysEarly.encryption.publicKey),
       staleAccept.deadline, staleAccept.signature,
@@ -809,7 +1012,7 @@ async function main() {
   const heirKeys = (heirClient as any).keys;
   await (await controllerAsRelayer.acceptAlias(
     aliceAliasHash,
-    ethers.toBeHex(heirKeys.spendingPubkey, 32),
+    ethers.toBeHex(heirKeys.spendingCommitment, 32),
     ethers.toBeHex((heirClient as any).myNullifierKeyHash(), 32),
     ethers.hexlify(heirKeys.encryption.publicKey),
     accepted.deadline, accepted.signature,
@@ -820,8 +1023,8 @@ async function main() {
   check("and the new owner is a derived key, not the heir's wallet",
         heirClient.ownerAddress.toLowerCase() !== heirWallet.address.toLowerCase());
   eq("and the registry now holds the recipient's own key",
-     (await registryContract.aliases(aliceAliasHash)).spendingPubkey,
-     ethers.toBeHex(heirKeys.spendingPubkey, 32));
+     (await registryContract.aliases(aliceAliasHash)).spendingCommitment,
+     ethers.toBeHex(heirKeys.spendingCommitment, 32));
 
   // The handover is complete only if the seller loses the alias, not merely if the buyer
   // gains it. Asserted rather than assumed, because an owner check that reads a stale field
@@ -900,6 +1103,69 @@ async function main() {
   let replayed = false;
   try { await claimer.claimInvite(invite.secret, `replay${suffix}`); } catch { replayed = true; }
   check("the same invite cannot be claimed twice", replayed);
+
+  // ── consolidation ─────────────────────────────────────────────────────────
+  // The circuit takes two inputs, so a balance spread over three or more notes cannot leave
+  // in one transaction. A wallet paid more often than it spends reaches that state on its
+  // own, and the failure is the worst kind: the money is there, the balance says so, and
+  // every attempt to move it is refused. This is the whole path — that it happens, what the
+  // client reports while it is stuck, and that consolidate() gets out of it.
+  console.log(`\nconsolidation`);
+
+  const fatWallet = new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider);
+  await (await new ethers.Wallet(LOCAL_KEY, provider)
+    .sendTransaction({ to: fatWallet.address, value: ethers.parseEther("5") })).wait();
+  const fat = mk(fatWallet as any);
+  await fat.init();
+  await fat.register(`fat${suffix}`);
+
+  // Four deposits, four notes. Each deposit fills one output slot and pads the other, so
+  // this is exactly how an alias that is paid four times ends up.
+  for (const a of ["0.1", "0.2", "0.3", "0.4"]) await fat.deposit(a);
+
+  const stuck = await fat.balance();
+  eq("four deposits make four notes", stuck.entries.length, 4);
+  eq("the balance is the whole 1.0", ethers.formatEther(stuck.total), "1.0");
+  // The number a UI has to show. 0.4 + 0.3 are the two largest, and that is the ceiling.
+  eq("but only the two largest can move at once",
+     ethers.formatEther(stuck.sendableNow), "0.7");
+  check("so sendableNow is below the balance", stuck.sendableNow < stuck.total);
+
+  // The error a caller sees while stuck. It must name consolidation: calling the balance
+  // insufficient would be false, and sends people looking for money already there.
+  let refusal = "";
+  try { await fat.send(bobName, "1.0"); } catch (e: any) { refusal = String(e?.message ?? e); }
+  check("sending the full balance is refused", refusal.length > 0);
+  check("and the refusal names consolidation rather than blaming the balance",
+        /consolidate/i.test(refusal) && !/less than/i.test(refusal), refusal);
+
+  // Targeted: merge only as far as needed to unblock this payment, not all the way down.
+  const steps: number[] = [];
+  const merged = await fat.consolidate(undefined, {
+    target: ethers.parseEther("1.0"),
+    onProgress: ({ notes }) => steps.push(notes),
+  });
+  check("consolidating took at least one merge", merged.txHashes.length >= 1,
+        `${merged.txHashes.length} merges`);
+  check("and reported progress for each", steps.length === merged.txHashes.length);
+
+  const freed = await fat.balance();
+  eq("no value was created or destroyed", ethers.formatEther(freed.total), "1.0");
+  eq("and the whole balance is now sendable in one transaction",
+     ethers.formatEther(freed.sendableNow), "1.0");
+  check("with fewer notes than before", freed.entries.length < stuck.entries.length,
+        `${stuck.entries.length} -> ${freed.entries.length}`);
+
+  // The point of the exercise: the payment that was refused now goes through.
+  // Bob rather than alice: alice's alias has been rotated to another key index by then, so
+  // her client no longer holds the keys the registry resolves her name to.
+  const bobBeforeFat = (await bob.balance()).total;
+  await fat.send(bobName, "1.0");
+  await bob.refresh();
+  eq("the payment that was blocked now lands",
+     ethers.formatEther((await bob.balance()).total - bobBeforeFat), "1.0");
+  await fat.refresh();
+  eq("and the consolidated wallet is empty", ethers.formatEther((await fat.balance()).total), "0.0");
 
   // ── sweep ─────────────────────────────────────────────────────────────────
   // Empties an alias's shielded balance to an address and hands the name over in one

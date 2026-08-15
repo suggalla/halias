@@ -7,6 +7,8 @@ import { MerkleTree } from "./helpers/merkleTree";
 import { SMT, aliasHashToKey } from "./helpers/smt";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
+import { nullifierFor as nullifierOf, POOL_LEVELS } from "./helpers/nullifier";
+import { FIELD_PRIME } from "./helpers/field";
 
 const snarkjs = require("snarkjs");
 
@@ -22,13 +24,13 @@ const TRANSACT_ZKEY = path.resolve(__dirname, "../circuits/out/transact/ceremony
 // the proof simply does not verify — so this is the only place a preimage or public-signal
 // mistake surfaces.
 //
-// It is also what has to exist before Halias.sol can be deleted. The monolith currently
-// holds all of the project's real-proof coverage.
-const POOL_LEVELS = 16;
-// Global position, matching NoteNullifier: tree * 2^POOL_LEVELS + leaf. Every note in these
-// tests lives in tree 0, which is what makes the multi-tree cases worth testing separately.
+// It is also the only real-proof coverage in the repo. Every other suite runs against
+// MockTransactVerifier, which accepts anything — so a circuit that stopped agreeing with the
+// contracts would be invisible everywhere but here.
+// Every note in these tests lives in tree 0, which is what makes the multi-tree cases in
+// PoolRollover worth testing separately.
 const nullifierFor = (nullifierKey: bigint, leafIndex: number, treeNumber = 0) =>
-  poseidonHash([nullifierKey, (BigInt(treeNumber) << BigInt(POOL_LEVELS)) + BigInt(leafIndex), 1314148940n]);
+  nullifierOf(nullifierKey, leafIndex, treeNumber);
 
 describe("E2E against the real verifier", function () {
   this.timeout(600000);
@@ -93,7 +95,7 @@ describe("E2E against the real verifier", function () {
       inAmount:             o.inputs.map((i: any) => s(i.amount)),
       inPathIndices:        o.inputs.map((i: any) => i.pathIndices.map(String)),
       inPathElements:       o.inputs.map((i: any) => i.pathElements.map(s)),
-      outPubkey:            o.outputs.map((x: any) => s(x.pubkey)),
+      outSpendingCommitment:            o.outputs.map((x: any) => s(x.spendingCommitment)),
       outBlinding:          o.outputs.map((x: any) => s(x.blinding)),
       outAmount:            o.outputs.map((x: any) => s(x.amount)),
       outNullifierKeyHash:  o.outputs.map((x: any) => s(x.nullifierKeyHash)),
@@ -136,9 +138,9 @@ describe("E2E against the real verifier", function () {
   }
 
   function dummyOutput() {
-    const pubkey = poseidonHash([0n]);
+    const spendingCommitment = poseidonHash([0n]);
     return {
-      pubkey, nullifierKeyHash: 0n, blinding: 0n, amount: 0n, dataHash: 0n,
+      spendingCommitment, nullifierKeyHash: 0n, blinding: 0n, amount: 0n, dataHash: 0n,
       aliasHash: 0n, registrySlot: 0, registrySiblings: new Array(32).fill(0n),
     };
   }
@@ -172,28 +174,28 @@ describe("E2E against the real verifier", function () {
   // Registers an alias through the domain and mirrors it into the local SMT.
   async function registerAlias(name: string, spendingPrivateKey: bigint) {
     const aliasHash = ethers.keccak256(ethers.toUtf8Bytes(name));
-    const pubkey = poseidonHash([spendingPrivateKey]);
+    const spendingCommitment = poseidonHash([spendingPrivateKey]);
     const nkHash = DUMMY_NK();
     const enc = ethers.keccak256(ethers.randomBytes(32));
 
     await (await commitAndRegister(
       domain, (await ethers.getSigners())[0],
-      name, ethers.toBeHex(pubkey, 32), ethers.toBeHex(nkHash, 32), enc,
+      name, ethers.toBeHex(spendingCommitment, 32), ethers.toBeHex(nkHash, 32), enc,
       await domain.registrationFee(),
     )).wait();
 
     const slot = Number(await registry.aliasSlot(aliasHash)) - 1;
-    smt.update(slot, aliasHashToKey(aliasHash), poseidonHash([pubkey, nkHash, 0n]));
+    smt.update(slot, aliasHashToKey(aliasHash), poseidonHash([spendingCommitment, nkHash, 0n]));
     expect(BigInt(await registry.getRegistryRoot())).to.equal(smt.root);
 
-    return { aliasHash: aliasHashToKey(aliasHash), pubkey, nkHash, slot, spendingPrivateKey };
+    return { aliasHash: aliasHashToKey(aliasHash), spendingCommitment, nkHash, slot, spendingPrivateKey };
   }
 
   function noteFor(a: any, amount: bigint) {
     const blinding = rand();
-    const commitment = poseidonHash([a.pubkey, a.nkHash, blinding, amount, 0n]);
+    const commitment = poseidonHash([a.spendingCommitment, a.nkHash, blinding, amount, 0n]);
     return {
-      pubkey: a.pubkey, nullifierKeyHash: a.nkHash, blinding, amount, dataHash: 0n,
+      spendingCommitment: a.spendingCommitment, nullifierKeyHash: a.nkHash, blinding, amount, dataHash: 0n,
       aliasHash: a.aliasHash, registrySlot: a.slot,
       registrySiblings: smt.getSiblings(a.slot), commitment,
     };
@@ -208,7 +210,7 @@ describe("E2E against the real verifier", function () {
   it("deposits with a real proof", async function () {
     const out0 = noteFor(alice, DEPOSIT);
     const out1 = dummyOutput();
-    const comm1 = poseidonHash([out1.pubkey, 0n, 0n, 0n, 0n]);
+    const comm1 = poseidonHash([out1.spendingCommitment, 0n, 0n, 0n, 0n]);
 
     const d0 = dummyInput(0), d1 = dummyInput(1);
     const p = params({
@@ -289,10 +291,9 @@ describe("E2E against the real verifier", function () {
     //
     // Worth doing against the real verifier specifically: an index mix-up between pendingLeaf
     // and outputsEmpty would be invisible in the ordering test, where both are zero.
-    const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
     const fresh = noteFor(alice, ethers.parseEther("0.2"));
     const fillIn = dummyOutput();
-    const fillComm = poseidonHash([fillIn.pubkey, 0n, 0n, 0n, 0n]);
+    const fillComm = poseidonHash([fillIn.spendingCommitment, 0n, 0n, 0n, 0n]);
     const dA = dummyInput(7), dB = dummyInput(8);
 
     // Fund a note to exit.
@@ -322,9 +323,9 @@ describe("E2E against the real verifier", function () {
     const nullifier = nullifierFor(NULLIFIER_KEY, freshIndex);
     const dC = dummyInput(9);
     const e0 = dummyOutput(), e1 = dummyOutput();
-    const ec0 = poseidonHash([e0.pubkey, 0n, 0n, 0n, 0n]);
+    const ec0 = poseidonHash([e0.spendingCommitment, 0n, 0n, 0n, 0n]);
     e1.blinding = 1n;
-    const ec1 = poseidonHash([e1.pubkey, 0n, 1n, 0n, 0n]);
+    const ec1 = poseidonHash([e1.spendingCommitment, 0n, 1n, 0n, 0n]);
 
     const ep = params({
       poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0],
@@ -366,7 +367,6 @@ describe("E2E against the real verifier", function () {
   it("withdraws with a relayer fee, paying both destinations from one proof", async function () {
     // The path that changed most in the split: the fee is a struct now, it is committed
     // inside paramsHash, and the pool settles relayer and recipient itself.
-    const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
     const out = aliceNote.amount;
     const fee = ethers.parseEther("0.01");
 
@@ -374,8 +374,8 @@ describe("E2E against the real verifier", function () {
     const nullifier = nullifierFor(NULLIFIER_KEY, aliceLeafIndex);
     const dNull2 = dummyInput(2);
     const d0 = dummyOutput(), d1 = dummyOutput();
-    const c0 = poseidonHash([d0.pubkey, 0n, 0n, 0n, 0n]);
-    const c1 = poseidonHash([d1.pubkey, 0n, 1n, 0n, 0n]);
+    const c0 = poseidonHash([d0.spendingCommitment, 0n, 0n, 0n, 0n]);
+    const c1 = poseidonHash([d1.spendingCommitment, 0n, 1n, 0n, 0n]);
     d1.blinding = 1n;
 
     const p = params({
@@ -420,7 +420,7 @@ describe("E2E against the real verifier", function () {
     const out0 = noteFor(alice, amount);
     const d0 = dummyInput(4), d1 = dummyInput(5);
     const d = dummyOutput();
-    const comm1 = poseidonHash([d.pubkey, 0n, 0n, 0n, 0n]);
+    const comm1 = poseidonHash([d.spendingCommitment, 0n, 0n, 0n, 0n]);
 
     const honest = params({
       poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0],
@@ -444,7 +444,11 @@ describe("E2E against the real verifier", function () {
     await expect(pool.transact(tampered, "0x", "0x", proof, { value: amount }))
       .to.be.revertedWithCustomError(pool, "InvalidProof");
 
-    // ...and the untampered one still works, so the rejection was the tampering.
-    await expect(pool.transact(honest, "0x", "0x", proof, { value: amount })).to.not.be.reverted;
+    // ...and the untampered one still works, so the rejection was the tampering rather than
+    // anything else about the proof. Asserted on the event: this is the control that gives the
+    // revert above its meaning, so it has to show the transaction did its work, not merely
+    // that it survived.
+    await expect(pool.transact(honest, "0x", "0x", proof, { value: amount }))
+      .to.emit(pool, "Transact");
   });
 });
