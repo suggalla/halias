@@ -1,15 +1,15 @@
 import { ethers } from "ethers";
+import { FIELD_PRIME } from "./entry";
 
-const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 // The pool, the registry and the domain are three separate contracts.
 //
-// Splitting the monolith split this file too. The shapes below are load-bearing in a way
-// ordinary ABI fragments are not: `TransactParams` is hashed into `paramsHash`, a public
-// signal the circuit constrains, so a field in the wrong order or the wrong type does not
-// produce a decoding error — it produces a proof the pool rejects, with nothing to say why.
-// SdkAbi.test.ts compares fragments against the compiled artifacts, and Alignment pins the
-// hash itself against the contract's own computeParamsHash.
+// The shapes below are load-bearing in a way ordinary ABI fragments are not:
+// `TransactParams` is hashed into `paramsHash`, a public signal the circuit constrains, so a
+// field in the wrong order or the wrong type does not produce a decoding error — it produces
+// a proof the pool rejects, with nothing to say why. SdkPreimage.test.ts pins the hash itself
+// against the contract's own computeParamsHash, and compares every fragment against the
+// compiled artifacts.
 
 // TransactParams, as the pool declares it. Every member is fixed-size, so the struct is
 // statically encoded — `relayerFee` is a two-member static struct, which preserves that.
@@ -20,7 +20,7 @@ const TRANSACT_PARAMS =
   "bool outputsEmpty)";
 
 const REGISTRATION =
-  "(address owner, bytes32 aliasHash, bytes32 spendingPubkey, bytes32 nullifierKeyHash, " +
+  "(address owner, bytes32 aliasHash, bytes32 spendingCommitment, bytes32 nullifierKeyHash, " +
   "bytes32 encryptionPubkey)";
 
 export const POOL_ABI = [
@@ -47,7 +47,7 @@ export const POOL_ABI = [
 ];
 
 export const REGISTRY_ABI = [
-  "function aliases(bytes32 aliasHash) external view returns (bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint256 registeredAt)",
+  "function aliases(bytes32 aliasHash) external view returns (bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint256 registeredAt)",
   "function aliasSlot(bytes32 aliasHash) external view returns (uint32)",
   "function nextAliasSlot() external view returns (uint32)",
   "function isRegistered(bytes32 aliasHash) external view returns (bool)",
@@ -56,23 +56,22 @@ export const REGISTRY_ABI = [
   "function isKnownRegistryRoot(bytes32) external view returns (bool)",
   "function getSmtSiblings(uint32 slot) external view returns (bytes32[32] memory siblings)",
   "function controller() external view returns (address)",
-  "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 leaf, bytes32 encryptionPubkey, uint32 slot)",
+  "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 leaf, bytes32 encryptionPubkey, uint32 slot)",
   "event AliasDataUpdated(bytes32 indexed aliasHash, bytes32 dataHash, bytes32 leaf)",
-  "event AliasReassigned(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 leaf, bytes32 encryptionPubkey)",
+  "event AliasReassigned(bytes32 indexed aliasHash, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 leaf, bytes32 encryptionPubkey)",
 ];
 
 export const CONTROLLER_ABI = [
-  "function register(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner, bytes32 salt) external payable",
+  "function revealRegistration(string name, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner, bytes32 salt) external payable",
   "function aliasToHash(string name) external pure returns (bytes32)",
-  "function registerDirect(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner) external payable",
-  "function commitRegistration(bytes32 commitment) external",
-  "function registrationCommitment(string name, bytes32 spendingPubkey, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner, bytes32 salt) external pure returns (bytes32)",
-  "function MIN_COMMIT_AGE() external view returns (uint256)",
+  "function directRegistration(string name, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner) external payable",
+  "function reserveRegistration(bytes32 commitment) external",
+  "function MAX_RESERVATION_AGE() external view returns (uint256)",
   `function claim(${REGISTRATION} r, ${TRANSACT_PARAMS} p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, string name) external`,
   "function updateAliasData(bytes32 aliasHash, bytes32 newDataHash, uint256 deadline, bytes signature) external",
   "function offerAlias(bytes32 aliasHash, address to, uint256 deadline, bytes signature) external",
   "function cancelOffer(bytes32 aliasHash, uint256 deadline, bytes signature) external",
-  "function acceptAlias(bytes32 aliasHash, bytes32 newSpendingPubkey, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey, uint256 deadline, bytes signature) external",
+  "function acceptAlias(bytes32 aliasHash, bytes32 newSpendingCommitment, bytes32 newNullifierKeyHash, bytes32 newEncryptionPubkey, uint256 deadline, bytes signature) external",
   "function pendingAliasOwner(bytes32) external view returns (address)",
   "function aliasNonce(bytes32) external view returns (uint256)",
   "function aliasAuth(bytes32 aliasHash) external view returns (address owner, address pendingOwner, uint256 nonce)",
@@ -114,7 +113,7 @@ export const ZERO_TRANSACT_PARAMS: TransactParams = {
 export interface Registration {
   owner:            string;
   aliasHash:        bigint;
-  spendingPubkey:   bigint;
+  spendingCommitment:   bigint;
   nullifierKeyHash: bigint;
   encryptionPubkey: bigint;
 }
@@ -219,29 +218,56 @@ export async function transact(
 /// public mempool anyone can register it first with their own keys and receive every payment
 /// meant for whoever asked for it — which is what {register}'s two steps exist to prevent.
 /// Nothing here defaults to this; a caller has to choose it.
-export async function registerDirect(
+export async function directRegistration(
   domain: ethers.Contract,
   name: string,
-  spendingPubkey: bigint,
+  spendingCommitment: bigint,
   nullifierKeyHash: bigint,
   encryptionPubkey: bigint,
   fee: bigint,
   /// Who will hold the name — the client's derived owner address, not the payer.
   owner: string,
 ): Promise<ethers.ContractTransactionResponse> {
-  return domain.registerDirect(
-    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey), owner,
+  return domain.directRegistration(
+    name, h32(spendingCommitment), h32(nullifierKeyHash), h32(encryptionPubkey), owner,
     { value: fee },
   );
 }
 
+/// The commitment a registration reveals against, computed locally.
+///
+/// Mirrors `HaliasController.registrationCommitment`, which is
+/// `keccak256(abi.encode(aliasToHash(name), spendingCommitment, nullifierKeyHash,
+/// encryptionPubkey, owner, salt))` with `aliasToHash` being `keccak256(bytes(name))` over the
+/// full name including its suffix.
+///
+/// Every field is bound, which is what makes a reveal unstealable: change the owner, a key, or
+/// the salt and the result hashes to a commitment that was never made.
+export function registrationCommitment(
+  name: string,
+  spendingCommitment: bigint,
+  nullifierKeyHash: bigint,
+  encryptionPubkey: bigint,
+  owner: string,
+  salt: string,
+): string {
+  const aliasHash = ethers.keccak256(ethers.toUtf8Bytes(name));
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes32", "bytes32", "bytes32", "bytes32", "address", "bytes32"],
+      [aliasHash, h32(spendingCommitment), h32(nullifierKeyHash), h32(encryptionPubkey),
+       owner, salt],
+    ),
+  );
+}
+
 /// Register `name`. The alias hash is derived from it by the contract rather than passed
-/// alongside it — the two used to be separate arguments checked against each other, which is
-/// only a way for them to disagree.
+/// alongside it. Passing both and checking them against each other is only a way for them to
+/// disagree.
 export async function register(
   domain: ethers.Contract,
   name: string,
-  spendingPubkey: bigint,
+  spendingCommitment: bigint,
   nullifierKeyHash: bigint,
   encryptionPubkey: bigint,
   fee: bigint,
@@ -256,46 +282,57 @@ export async function register(
   /// which leaves the user staring at a second unexplained prompt.
   onStep?: (step: "commit" | "register") => void,
 ): Promise<ethers.ContractTransactionResponse> {
-  const commitment = await domain.registrationCommitment(
-    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey),
-    owner, salt,
-  ) as string;
+  // Computed here, never asked for over RPC.
+  //
+  // `registrationCommitment` is `pure`, so calling it is an eth_call — and its first argument
+  // is the plaintext name. That hands the name to the RPC provider *before* the commitment is
+  // broadcast, which defeats the entire mechanism: commit-reveal exists so that nobody learns
+  // the name until front-running it is impossible, and a provider watching this call also sees
+  // the mempool it would be front-run in. The round trip bought nothing — the encoding is four
+  // lines and this file already reproduces harder ones.
+  //
+  // The contract's version stays as the reference. SdkPreimage.test.ts asserts the two agree
+  // for random inputs, which is where a round trip belongs: in a test, not in the flow whose
+  // secrecy is the point.
+  const commitment = registrationCommitment(
+    name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner, salt,
+  );
 
   // Must be mined, not merely sent: the reveal reads the commitment from state, and
-  // MIN_COMMIT_AGE requires it to be at least one block old.
+  // MAX_RESERVATION_AGE requires it to be at least one block old.
   // A commitment that already exists is not a failure.
   //
   // Anyone may commit — the hash is opaque and only the bound owner can ever reveal it — so
   // a griefer can watch for a commit and front-run it with the identical hash purely to make
-  // this transaction revert with CommitmentPending. The commitment is live either way, which
+  // this transaction revert with ReservationPending. The commitment is live either way, which
   // is all the reveal needs, so treating that revert as fatal would hand them a denial of
   // service over a transaction that did exactly what we wanted.
   let commitTx: ethers.ContractTransactionResponse | null;
   onStep?.("commit");
   try {
-    const sent = await domain.commitRegistration(commitment);
+    const sent = await domain.reserveRegistration(commitment);
     await sent.wait();
     commitTx = sent;
   } catch (e: any) {
-    const already = JSON.stringify(e?.info ?? e?.message ?? "").includes("CommitmentPending");
+    const already = JSON.stringify(e?.info ?? e?.message ?? "").includes("ReservationPending");
     if (!already) throw e;
     commitTx = null;
   }
 
   // No client-side wait. The reveal is a separate transaction, so it lands in a later block
-  // than the commit by construction, and MIN_COMMIT_AGE is 1. Polling for the block to
+  // than the commit by construction, and MAX_RESERVATION_AGE is 1. Polling for the block to
   // advance hangs forever on a chain that only mines on demand — there is nothing to mine
   // while we wait — and adds nothing on a live one.
   //
-  // If a builder does pack both into one block the contract reverts with CommitTooNew, which
+  // If a builder does pack both into one block the contract reverts with ReservationTooNew, which
   // is the protection working: that is precisely the position a front-runner is in.
   // Nonce taken from the commit rather than looked up. ethers caches the account's
   // transaction count, and two sends from one wallet in the same tick reuse the stale value
   // — "Nonce too low. Expected 16 but got 15" — even when the first was awaited. Deriving it
   // from the transaction we just mined is exact and costs no extra call.
   onStep?.("register");
-  return domain.register(
-    name, h32(spendingPubkey), h32(nullifierKeyHash), h32(encryptionPubkey), owner, salt,
+  return domain.revealRegistration(
+    name, h32(spendingCommitment), h32(nullifierKeyHash), h32(encryptionPubkey), owner, salt,
     // Nonce from the commit when we sent one; otherwise let ethers resolve it, since no
     // second send is racing it.
     commitTx ? { value: fee, nonce: commitTx.nonce + 1 } : { value: fee },
@@ -307,7 +344,7 @@ export async function register(
 // Each of these has two callers. The owner submitting for themselves passes no signature and
 // the contract reads `msg.sender`; anyone else submits a signature the owner produced
 // off-chain. There is no `updateKeys` — rotating keys is offering the alias to yourself and
-// accepting with fresh ones, which replaces the spending pubkey too.
+// accepting with fresh ones, which replaces the spending commitment too.
 
 /// The contract reads an empty signature as "the sender is the owner".
 
@@ -439,7 +476,7 @@ export async function signCancelOffer(
 export async function acceptAlias(
   domain: ethers.Contract,
   aliasHash: bigint,
-  keys: { spendingPubkey: bigint; nullifierKeyHash: bigint; encryptionPubkey: bigint },
+  keys: { spendingCommitment: bigint; nullifierKeyHash: bigint; encryptionPubkey: bigint },
   recipient: ethers.Signer,
   opts: { deadlineSeconds?: number; nonce?: bigint } = {},
 ): Promise<{ signature: string; deadline: bigint; submit: (submitter?: ethers.Signer) => Promise<ethers.ContractTransactionResponse> }> {
@@ -450,7 +487,7 @@ export async function acceptAlias(
   const types = {
     AcceptAlias: [
       { name: "aliasHash",        type: "bytes32" },
-      { name: "spendingPubkey",   type: "bytes32" },
+      { name: "spendingCommitment",   type: "bytes32" },
       { name: "nullifierKeyHash", type: "bytes32" },
       { name: "encryptionPubkey", type: "bytes32" },
       { name: "to",               type: "address" },
@@ -460,7 +497,7 @@ export async function acceptAlias(
   };
   const value = {
     aliasHash:        h32(aliasHash),
-    spendingPubkey:   h32(keys.spendingPubkey),
+    spendingCommitment:   h32(keys.spendingCommitment),
     nullifierKeyHash: h32(keys.nullifierKeyHash),
     encryptionPubkey: h32(keys.encryptionPubkey),
     to,
@@ -477,7 +514,7 @@ export async function acceptAlias(
     submit: (submitter?: ethers.Signer) => {
       const d = submitter ? domain.connect(submitter) as ethers.Contract : domain;
       return d.acceptAlias(
-        h32(aliasHash), h32(keys.spendingPubkey), h32(keys.nullifierKeyHash),
+        h32(aliasHash), h32(keys.spendingCommitment), h32(keys.nullifierKeyHash),
         h32(keys.encryptionPubkey), deadline, signature,
       );
     },
@@ -487,10 +524,10 @@ export async function acceptAlias(
 export async function lookupAlias(
   registry: ethers.Contract,
   aliasHash: bigint,
-): Promise<{ spendingPubkey: bigint; nullifierKeyHash: bigint; encryptionPubkey: bigint; dataHash: bigint }> {
+): Promise<{ spendingCommitment: bigint; nullifierKeyHash: bigint; encryptionPubkey: bigint; dataHash: bigint }> {
   const r = await registry.aliases(h32(aliasHash));
   return {
-    spendingPubkey:   BigInt(r.spendingPubkey),
+    spendingCommitment:   BigInt(r.spendingCommitment),
     nullifierKeyHash: BigInt(r.nullifierKeyHash),
     encryptionPubkey: BigInt(r.encryptionPubkey),
     dataHash:         BigInt(r.dataHash),
@@ -505,7 +542,7 @@ export function registrationTuple(r: Registration) {
   return {
     owner:            r.owner,
     aliasHash:        h32(r.aliasHash),
-    spendingPubkey:   h32(r.spendingPubkey),
+    spendingCommitment:   h32(r.spendingCommitment),
     nullifierKeyHash: h32(r.nullifierKeyHash),
     encryptionPubkey: h32(r.encryptionPubkey),
   };
@@ -546,10 +583,10 @@ export async function claim(
 
 /// Mirrors HaliasPool._computeParamsHash exactly.
 ///
-/// The pool hashes `p.relayerFee` as a struct, which ABI-encodes as two inline words. It
-/// used to be one packed `bytes32`, so anything still producing the old preimage builds
-/// proofs that verify against nothing. `contractAddress` is the POOL — not the domain —
-/// because the pool hashes its own `address(this)`.
+/// The pool hashes `p.relayerFee` as a struct, which ABI-encodes as two inline words — not as
+/// one packed `bytes32`. Get that wrong and the preimage differs, which produces proofs that
+/// verify against nothing rather than an error anyone can read. `contractAddress` is the POOL,
+/// not the controller, because the pool hashes its own `address(this)`.
 export function computeParamsHash(
   params: TransactParams,
   encryptedOutput0: string,

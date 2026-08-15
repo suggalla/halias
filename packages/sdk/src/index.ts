@@ -8,8 +8,12 @@ export type { ViewKeys } from "./viewkey";
 export type { SeedSource } from "./seed";
 
 export { MerkleTree } from "./merkle";
+// The registry mirror. Exported because the client now derives membership paths from it
+// rather than asking the chain for them, which only holds if it reproduces the contract's
+// tree exactly — SdkPreimage.test.ts asserts that against a live registry.
+export { SMT, rootFromSiblings, aliasHashToSmtKey } from "./smt";
 
-export { buildEntry, computeNullifier, randomBlinding, ETH_TOKEN_ADDRESS, NULLIFIER_DOMAIN } from "./entry";
+export { buildEntry, computeNullifier, randomBlinding, ETH_TOKEN_ADDRESS, NULLIFIER_DOMAIN, POOL_LEVELS, FIELD_PRIME } from "./entry";
 export type { Entry, OwnedEntry } from "./entry";
 
 export { proveTransact, dummyInput, dummyOutput } from "./proof";
@@ -22,7 +26,7 @@ export {
   getPool, getRegistry, getController,
   transact, register, acceptAlias, lookupAlias, claim,
   signUpdateAliasData, signOfferAlias, signCancelOffer,
-  computeParamsHash, encodeRegistration, buildTransactParams,
+  computeParamsHash, encodeRegistration, buildTransactParams, registrationCommitment,
   ZERO_TRANSACT_PARAMS, NO_RELAYER,
 } from "./contract";
 export type { TransactParams, RelayerFee, Registration } from "./contract";
@@ -32,7 +36,7 @@ export { normalizeAlias, fullAlias, isValidAlias, InvalidAliasError, AliasTakenE
 export { encodeRelayBlob, decodeRelayBlob, quoteRelay, submitRelay, suggestRelayFee } from "./relay";
 export type { RelayPayload, RelayQuote } from "./relay";
 export type { HistoryEntry, PrivacyContext } from "./halias";
-export type { HaliasConfig, DepositResult, SendResult, WithdrawResult, BalanceResult, LookupResult } from "./halias";
+export type { HaliasConfig, DepositResult, SendResult, WithdrawResult, BalanceResult, LookupResult, TokenInfo } from "./halias";
 
 
 export { FileCache, BrowserCache } from "./cache";

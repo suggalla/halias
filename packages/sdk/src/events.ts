@@ -12,11 +12,11 @@ export const TRANSACT_ABI = [
   "event PoolExit(uint256 publicAmount, address indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1)",
 ];
 export const REGISTRY_ABI = [
-  "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 leaf, bytes32 encryptionPubkey, uint32 slot)",
+  "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 leaf, bytes32 encryptionPubkey, uint32 slot)",
   "event AliasDataUpdated(bytes32 indexed aliasHash, bytes32 dataHash, bytes32 leaf)",
   // Renamed with the split: the registry moves keys, the domain moves ownership, so
   // the previous/new owner arguments are no longer part of this event.
-  "event AliasReassigned(bytes32 indexed aliasHash, bytes32 spendingPubkey, bytes32 leaf, bytes32 encryptionPubkey)",
+  "event AliasReassigned(bytes32 indexed aliasHash, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 leaf, bytes32 encryptionPubkey)",
 ];
 
 // Pool commitments are addressed by (tree, leaf). A single ordering key keeps sorting and map
@@ -57,7 +57,10 @@ export interface RegistryEntry {
   txHash: string;
   blockNumber: number;
   registrySlot: number;        // position in the SMT, assigned at registration and never reused
-  spendingPubkey: bigint;
+  spendingCommitment: bigint;
+  /// Poseidon(nullifierKey, 1). Public, and published in AliasRegistered so a client can
+  /// resolve a recipient without asking a node about them by name.
+  nullifierKeyHash: bigint;
   encryptionPubkey: Uint8Array;
   dataHash: bigint;
 }
@@ -72,7 +75,7 @@ export interface ScanResult {
   /// One-shot and set at registration, so this never goes stale. An alias registered without
   /// a name — an invite account, whose aliasHash is random — simply has no entry.
   namesByAlias: Map<string, string>;
-  /// Spending pubkey → the block at which it became an alias's key.
+  /// Spending spendingCommitment → the block at which it became an alias's key.
   ///
   /// Not the same as the alias's registration block. A handover installs the new owner's
   /// keys, and notes sent before that were encrypted to the previous owner's — so for a
@@ -229,19 +232,23 @@ export async function scanEvents(
     } else if (topic === regTopic) {
       const e = regIface.parseLog({ topics: log.topics as string[], data: log.data })!;
       const aliasHash      = e.args[0] as string;
-      const spendingPubkey = BigInt(e.args[1]);
+      const spendingCommitment = BigInt(e.args[1]);
       const entry: RegistryEntry = {
         aliasHash,
         txHash:            log.transactionHash,
         blockNumber:       log.blockNumber,
-        registrySlot:      Number(e.args[4]) - 1,  // stored offset by one on-chain
-        spendingPubkey,
-        encryptionPubkey:  ethers.getBytes(e.args[3]),
+        registrySlot:      Number(e.args[5]) - 1,  // stored offset by one on-chain
+        spendingCommitment,
+        // Carried by the event so a recipient can be resolved from logs. Without it the only
+        // way to obtain one is `aliases(aliasHash)` — a targeted read naming the person you
+        // are about to pay. See docs/rpc-surface.md.
+        nullifierKeyHash:  BigInt(e.args[2]),
+        encryptionPubkey:  ethers.getBytes(e.args[4]),
         dataHash:          0n,
       };
       registryByAlias.set(aliasHash, entry);
-      keyActiveFrom.set(entry.spendingPubkey, log.blockNumber);
-      aliasHashByPubkey.set(spendingPubkey, BigInt(aliasHash));
+      keyActiveFrom.set(entry.spendingCommitment, log.blockNumber);
+      aliasHashByPubkey.set(spendingCommitment, BigInt(aliasHash));
 
     } else if (topic === dataUpdTopic) {
       const e = regIface.parseLog({ topics: log.topics as string[], data: log.data })!;
@@ -259,28 +266,29 @@ export async function scanEvents(
     } else if (topic === transferTopic) {
       const e = regIface.parseLog({ topics: log.topics as string[], data: log.data })!;
       const aliasHash = e.args[0] as string;
-      // AliasReassigned is (aliasHash, spendingPubkey, leaf, encryptionPubkey). The old
-      // AliasTransferred carried the two owner addresses as well, so every index here
-      // shifted by two when the registry stopped tracking ownership.
-      const newSpendingPubkey = BigInt(e.args[1]);
+      // AliasReassigned is (aliasHash, spendingCommitment, nullifierKeyHash, leaf,
+      // encryptionPubkey) — the same shape as AliasRegistered, because a rotation replaces
+      // every key and a client rebuilding from logs needs all of them.
+      const newSpendingCommitment = BigInt(e.args[1]);
       const existing = registryByAlias.get(aliasHash);
       const entry: RegistryEntry = {
         aliasHash,
         txHash:           existing ? existing.txHash : log.transactionHash,
         blockNumber:      existing ? existing.blockNumber : log.blockNumber,
         registrySlot:     existing ? existing.registrySlot : 0,  // reassignment keeps the slot
-        spendingPubkey:  newSpendingPubkey,
-        encryptionPubkey: ethers.getBytes(e.args[3]),
+        spendingCommitment:  newSpendingCommitment,
+        nullifierKeyHash: BigInt(e.args[2]),
+        encryptionPubkey: ethers.getBytes(e.args[4]),
         dataHash:         0n,
       };
       registryByAlias.set(aliasHash, entry);
-      keyActiveFrom.set(entry.spendingPubkey, log.blockNumber);
+      keyActiveFrom.set(entry.spendingCommitment, log.blockNumber);
       if (existing) {
-        aliasHashByPubkey.delete(existing.spendingPubkey);
-        keyActiveFrom.delete(existing.spendingPubkey);
+        aliasHashByPubkey.delete(existing.spendingCommitment);
+        keyActiveFrom.delete(existing.spendingCommitment);
       }
-      aliasHashByPubkey.set(newSpendingPubkey, BigInt(aliasHash));
-      keyActiveFrom.set(newSpendingPubkey, log.blockNumber);
+      aliasHashByPubkey.set(newSpendingCommitment, BigInt(aliasHash));
+      keyActiveFrom.set(newSpendingCommitment, log.blockNumber);
 
     }
   }
@@ -323,7 +331,7 @@ export async function scanEvents(
 
 export function findMyOutputs(
   outputs: Output[],
-  spendingPubkey: bigint,
+  spendingCommitment: bigint,
   nullifierKey: bigint,   // raw key — hashed internally before commitment check
   encryptionPrivKey: Uint8Array,
   // Undefined means every asset. Defaulting to ETH here silently discarded every ERC-20
@@ -339,7 +347,7 @@ export function findMyOutputs(
     if (!decoded) continue;
     const decrypted = tryDecryptOutput(decoded, encryptionPrivKey);
     if (!decrypted) continue;
-    const entry = buildEntry(spendingPubkey, nullifierKeyHash, decrypted.blinding, decrypted.amount, out.tokenAddress);
+    const entry = buildEntry(spendingCommitment, nullifierKeyHash, decrypted.blinding, decrypted.amount, out.tokenAddress);
     if (entry.commitment !== out.commitment) continue;
     found.push({ ...entry, treeNumber: out.treeNumber, leafIndex: out.leafIndex });
   }

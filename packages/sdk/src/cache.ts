@@ -44,7 +44,8 @@ interface SerializedCache {
     registrySlot: number;
     txHash: string;
     blockNumber: number;
-    spendingPubkey: string;
+    spendingCommitment: string;
+    nullifierKeyHash: string;
     encryptionPubkey: string;
     dataHash: string;
   }>;
@@ -81,7 +82,8 @@ export function serializeCache(d: CacheData): string {
       registrySlot:     e.registrySlot,
       txHash:           e.txHash,
       blockNumber:      e.blockNumber,
-      spendingPubkey:   "0x" + e.spendingPubkey.toString(16),
+      spendingCommitment:   "0x" + e.spendingCommitment.toString(16),
+      nullifierKeyHash: "0x" + e.nullifierKeyHash.toString(16),
       encryptionPubkey: ethers.hexlify(e.encryptionPubkey),
       dataHash:         "0x" + e.dataHash.toString(16),
     })),
@@ -133,7 +135,11 @@ export function deserializeCache(raw: string): CacheData {
     txHash:           String((e as any).txHash ?? ""),
     blockNumber:      Number((e as any).blockNumber ?? 0),
     registrySlot:     Number((e as any).registrySlot ?? 0),
-    spendingPubkey:   BigInt(e.spendingPubkey),
+    spendingCommitment:   BigInt(e.spendingCommitment),
+    // Absent from caches written before the field was published in AliasRegistered. Zero
+    // rather than a throw: a stale cache should degrade to one extra lookup, not refuse to
+    // load — and a rescan repopulates it.
+    nullifierKeyHash: BigInt((e as any).nullifierKeyHash ?? 0),
     encryptionPubkey: ethers.getBytes(e.encryptionPubkey),
     dataHash:         BigInt(e.dataHash),
   }));

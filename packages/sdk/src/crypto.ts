@@ -16,7 +16,7 @@ export interface NaclKeypair {
 
 export interface HaliasKeys {
   spendingPrivKey: bigint;  // private circuit witness
-  spendingPubkey: bigint;   // Poseidon(spendingPrivKey) — registered on-chain
+  spendingCommitment: bigint;   // Poseidon(spendingPrivKey) — registered on-chain
   viewingPrivKey: bigint;   // private circuit witness
   nullifierKey: bigint;     // Poseidon(viewingPrivKey) — nk: baked into commitments + nullifiers
   encryption: NaclKeypair;  // X25519 keypair for NaCl box output encryption
@@ -28,9 +28,9 @@ export interface HaliasKeys {
   /// exactly the link separate keys exist to avoid: `ownerOf` is public, so a shared owner
   /// would tie all of someone's aliases together on chain.
   ///
-  /// This is what decouples an identity from any EOA. The name used to be held by whichever
-  /// wallet paid to register it, which put a real address next to the alias in public state
-  /// and meant switching wallets left the name behind.
+  /// This is what decouples an identity from any EOA. A name held by whichever wallet paid to
+  /// register it would put a real address beside the alias in public state, and switching
+  /// wallets would leave the name behind.
   owner: OwnerKey;
 }
 
@@ -61,7 +61,7 @@ export function poseidonHash(inputs: bigint[]): bigint {
 /// Derive the keys for one alias.
 ///
 /// `aliasIndex` separates aliases held by the same wallet: each gets its own spending key,
-/// nullifier key and encryption key, so the registry no longer publishes one shared pubkey
+/// nullifier key and encryption key, so the registry no longer publishes one shared spendingCommitment
 /// across every name an EOA owns. One signature still unlocks all of them, so the prompt
 /// count does not change.
 ///
@@ -93,7 +93,7 @@ export function deriveKeysFromRoot(root: bigint, aliasIndex: number = 0): Halias
 
   return {
     spendingPrivKey,
-    spendingPubkey: poseidonHash([spendingPrivKey]),
+    spendingCommitment: poseidonHash([spendingPrivKey]),
     viewingPrivKey,
     nullifierKey:   poseidonHash([viewingPrivKey]),
     encryption:     { privateKey: encPriv, publicKey: encKeypair.publicKey },

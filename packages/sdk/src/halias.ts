@@ -1,12 +1,12 @@
 import { ethers } from "ethers";
 import { normalizeAlias, AliasTakenError } from "./alias";
 import { deriveKeysFromRoot, poseidonHash } from "./crypto";
-import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS } from "./entry";
+import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS, FIELD_PRIME } from "./entry";
 import { PoolTrees } from "./merkle";
 import { aliasHashToSmtKey } from "./smt";
 import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
 import { findMyOutputs, Output } from "./events";
-import { deriveInviteKeys, InviteKeys, encodeInviteCode } from "./invite";
+import { deriveInviteKeys, inviteSecretAt, InviteKeys, encodeInviteCode } from "./invite";
 import { encodeViewKey, viewKeysFrom } from "./viewkey";
 import {
   
@@ -14,7 +14,7 @@ import {
   
   transact as contractTransact,
   register as contractRegister,
-  registerDirect as contractRegisterDirect,
+  directRegistration as contractDirectRegistration,
   signOfferAlias as contractSignOfferAlias,
   signCancelOffer as contractSignCancelOffer,
   signUpdateAliasData as contractSignUpdateAliasData,
@@ -29,7 +29,6 @@ import {
   NO_RELAYER,
 } from "./contract";
 
-const FIELD_PRIME = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 import { HaliasCore } from "./client-core";
 import { encodeRelayBlob } from "./relay";
@@ -38,8 +37,22 @@ import { buildTransactParams } from "./contract";
 // see them on the same module as the class that returns them.
 import type {
   HaliasConfig, DepositResult, SendResult, WithdrawResult,
-  BalanceResult, LookupResult, InviteResult, ScanEntry,
+  BalanceResult, LookupResult, InviteResult, ScanEntry, ConsolidateResult, TokenInfo,
 } from "./client-core";
+/// One invite this wallet created, and whether it can still be taken back.
+export interface InviteSummary {
+  /// Its derivation index — what {reclaimInvite} takes.
+  index: number;
+  secret: bigint;
+  inviteCode: string;
+  /// The alias it registered, derived from the secret.
+  name: string;
+  /// What it still holds, or null once the note has been spent.
+  amount: bigint | null;
+  /// False once claimed. Says nothing about who claimed it — nothing on chain does.
+  claimable: boolean;
+}
+
 export interface PrivacyContext {
   /// Total commitments in the pool — the crowd a withdrawal hides in.
   anonymitySet: number;
@@ -78,7 +91,7 @@ export interface HistoryEntry {
 
 export type {
   HaliasConfig, DepositResult, SendResult, WithdrawResult,
-  BalanceResult, LookupResult, InviteResult, ScanEntry,
+  BalanceResult, LookupResult, InviteResult, ScanEntry, ConsolidateResult, TokenInfo,
 };
 
 /// The public surface: everything a caller can do with an alias or a note.
@@ -87,8 +100,8 @@ export class Halias extends HaliasCore {
 
   /// Register `alias` under this client's alias index.
   ///
-  /// The name is always published. It used to be optional, on the reasoning that an
-  /// unpublished alias is unguessable — which it is not. `aliasHash` is keccak of the name
+  /// The name is always published, and withholding it is not offered. An unpublished alias is
+  /// not unguessable: `aliasHash` is keccak of the name
   /// and is public in the registration event regardless, so for any name a person would
   /// choose and be able to type, a wordlist recovers it immediately. Withholding the
   /// plaintext buys resistance only for a name with enough entropy that its holder cannot
@@ -103,7 +116,7 @@ export class Halias extends HaliasCore {
   /// directly.
   ///
   /// The index is not stored on chain — it does not need to be. Recovery rederives indices
-  /// and matches them against the spending pubkeys the registry publishes; see
+  /// and matches them against the spending commitments the registry publishes; see
   /// {aliasIndexOf}.
   ///
   /// Throws {AliasTakenError} without sending anything if the name is already registered.
@@ -111,7 +124,7 @@ export class Halias extends HaliasCore {
     alias: string,
     onStep?: (step: "commit" | "register") => void,
     /// One transaction instead of two, and no front-running protection. Only correct where
-    /// the mempool is not public; see {registerDirect} on the contract. Defaults off, and
+    /// the mempool is not public; see {directRegistration} on the contract. Defaults off, and
     /// deliberately not surfaced by the CLI.
     opts: { direct?: boolean } = {},
   ): Promise<{ txHash: string }> {
@@ -131,7 +144,7 @@ export class Halias extends HaliasCore {
       throw new AliasTakenError(`${cleanAlias}.hls is already registered`);
     }
 
-    const spendingBytes32 = this.keys!.spendingPubkey;
+    const spendingBytes32 = this.keys!.spendingCommitment;
     const encBytes32      = BigInt(ethers.hexlify(this.keys!.encryption.publicKey));
 
     // The commit-reveal secret, derived rather than random, so nothing has to survive
@@ -151,7 +164,7 @@ export class Halias extends HaliasCore {
     const nullifierKeyHash = poseidonHash([this.keys!.nullifierKey, 1n]);
     const fee = await this.domain.registrationFee() as bigint;
     const tx = opts.direct
-      ? await contractRegisterDirect(
+      ? await contractDirectRegistration(
           this.domain, `${cleanAlias}.hls`, spendingBytes32, nullifierKeyHash, encBytes32,
           fee, this.keys!.owner.address)
       : await contractRegister(
@@ -160,7 +173,7 @@ export class Halias extends HaliasCore {
     return { txHash: await this.settle(tx) };
   }
 
-  /// The alias this client's keys belong to, found by matching its spending pubkey against
+  /// The alias this client's keys belong to, found by matching its spending commitment against
   /// what the registry publishes.
   ///
   /// {myAliases} cannot answer this for a view key: it asks who *owns* the alias NFT, and a
@@ -169,7 +182,7 @@ export class Halias extends HaliasCore {
   async selfAlias(): Promise<{ aliasHash: string; name: string | null; slot: number } | null> {
     this.ensureInit();
     await this.ensureSync();
-    const hash = this.aliasHashByPubkey.get(this.keys!.spendingPubkey);
+    const hash = this.aliasHashByPubkey.get(this.keys!.spendingCommitment);
     if (hash === undefined) return null;
     const h = "0x" + hash.toString(16).padStart(64, "0");
     const entry = this.registryEntries.find(
@@ -212,7 +225,7 @@ export class Halias extends HaliasCore {
     await this.ensureSync();
     const selfProof = await this.selfRegistryProof();
     return this._deposit(amountEth, tokenAddress, {
-      pubkey:           this.keys!.spendingPubkey,
+      spendingCommitment:           this.keys!.spendingCommitment,
       nullifierKeyHash: this.myNullifierKeyHash(),
       encryptionPubkey: undefined,   // sealNote defaults to our own viewing key
       proof:            selfProof,
@@ -240,9 +253,9 @@ export class Halias extends HaliasCore {
     await this.ensureSync();
 
     const recipient = await this.lookup(recipientName);
-    const proof     = await this.registryProof(recipient.spendingPubkey);
+    const proof     = await this.registryProof(recipient.spendingCommitment);
     return this._deposit(amountEth, tokenAddress, {
-      pubkey:           recipient.spendingPubkey,
+      spendingCommitment:           recipient.spendingCommitment,
       nullifierKeyHash: recipient.nullifierKeyHash,
       encryptionPubkey: recipient.encryptionPubkey,
       proof,
@@ -253,15 +266,19 @@ export class Halias extends HaliasCore {
     amountEth: string,
     tokenAddress: bigint,
     to: {
-      pubkey: bigint;
+      spendingCommitment: bigint;
       nullifierKeyHash: bigint;
       encryptionPubkey?: Uint8Array;
       proof: { aliasHash: bigint; registrySlot: number; siblings: bigint[]; dataHash: bigint; registryRoot: bigint };
     },
   ): Promise<DepositResult> {
-    const amount   = ethers.parseEther(amountEth);
+    // Decimals first: `amountEth` is a human figure and means nothing without them. USDC's
+    // 6 make "1.0" a millionth of what 18 would compute.
+    await this.tokenInfo(tokenAddress);
+
+    const amount   = this.parseAmount(amountEth, tokenAddress);
     const blinding = randomBlinding();
-    const entry    = buildEntry(to.pubkey, to.nullifierKeyHash, blinding, amount, tokenAddress);
+    const entry    = buildEntry(to.spendingCommitment, to.nullifierKeyHash, blinding, amount, tokenAddress);
 
     // The pool pulls tokens with safeTransferFrom, so a deposit needs an allowance first.
     // Without this an ERC-20 deposit reverts inside the pool after the proof has already
@@ -303,7 +320,7 @@ export class Halias extends HaliasCore {
       inputs: [dummy0.input, dummy1.input],
       outputs: [
         {
-          pubkey:           to.pubkey,
+          spendingCommitment:           to.spendingCommitment,
           nullifierKeyHash: to.nullifierKeyHash,
           registrySlot:     to.proof.registrySlot,
           blinding,
@@ -348,7 +365,9 @@ export class Halias extends HaliasCore {
     this.ensureSpendable();
     await this.ensureSync();
 
-    const sendAmount = ethers.parseEther(amountEth);
+    await this.tokenInfo(tokenAddress);
+
+    const sendAmount = this.parseAmount(amountEth, tokenAddress);
     const keys = this.keys!;
     const selfNullifierKeyHash = this.myNullifierKeyHash();
 
@@ -357,30 +376,27 @@ export class Halias extends HaliasCore {
       throw new Error("relayerFee requires a relayer address to pay it to");
 
     const recipient  = await this.lookup(recipientName);
-    // The fee comes out of the same note, so the note has to cover both.
-    const entry      = this.selectEntry(sendAmount + relayerFeeAmount, tokenAddress);
-    const nullifier  = computeNullifier(keys.nullifierKey, entry.treeNumber, entry.leafIndex);
-    const recProof   = await this.registryProof(recipient.spendingPubkey);
+    // The fee comes out of the same notes, so they have to cover both. Two of them whenever
+    // two exist — see selectEntries: filling both input slots is what keeps a wallet's note
+    // count falling instead of climbing.
+    const spend      = this.selectEntries(sendAmount + relayerFeeAmount, tokenAddress);
+    const inputs     = this.buildInputs(spend);
+    const recProof   = await this.registryProof(recipient.spendingCommitment);
     const selfProof  = await this.selfRegistryProof();
 
     const recipientBlinding = randomBlinding();
     const changeBlinding    = randomBlinding();
-    const changeAmount = entry.amount - sendAmount - relayerFeeAmount;
+    const changeAmount = inputs.total - sendAmount - relayerFeeAmount;
 
-    const recipientEntry = buildEntry(recipient.spendingPubkey, recipient.nullifierKeyHash, recipientBlinding, sendAmount, tokenAddress);
-    const changeEntry    = buildEntry(keys.spendingPubkey, selfNullifierKeyHash, changeBlinding, changeAmount, tokenAddress);
+    const recipientEntry = buildEntry(recipient.spendingCommitment, recipient.nullifierKeyHash, recipientBlinding, sendAmount, tokenAddress);
+    const changeEntry    = buildEntry(keys.spendingCommitment, selfNullifierKeyHash, changeBlinding, changeAmount, tokenAddress);
 
     const recEncKey = recipient.encryptionPubkey;
     const recBlob = this.sealNote(recipientBlinding, sendAmount, recEncKey);
     const chgBlob = this.sealNote(changeBlinding, changeAmount);
 
-    const anchor    = this.poolAnchor(entry.treeNumber);
-    const poolProof = this.poolTrees.tree(entry.treeNumber).getProof(entry.leafIndex);
-    const dBase     = this.consumeDummyIdx(1);
-    const dummy     = dummyInput(anchor.tree, dBase, POOL_LEVELS);
-
     const recipientOut: TransactOutput = {
-      pubkey:           recipient.spendingPubkey,
+      spendingCommitment:           recipient.spendingCommitment,
       nullifierKeyHash: recipient.nullifierKeyHash,
       registrySlot:     recProof.registrySlot,
       blinding:         recipientBlinding,
@@ -390,7 +406,7 @@ export class Halias extends HaliasCore {
       registrySiblings: recProof.siblings,
     };
     const changeOut: TransactOutput = {
-      pubkey:           keys.spendingPubkey,
+      spendingCommitment:           keys.spendingCommitment,
       nullifierKeyHash: selfNullifierKeyHash,
       registrySlot:     selfProof.registrySlot,
       blinding:         changeBlinding,
@@ -417,27 +433,18 @@ export class Halias extends HaliasCore {
     const publicAmount = relayerFeeAmount > 0n ? FIELD_PRIME - relayerFeeAmount : 0n;
 
     const { proofBytes } = await proveTransact({
-      poolRoot: [anchor.root, anchor.root], treeNumber: [anchor.tree, anchor.tree], registryRoot, publicAmount, tokenAddress, paramsHash,
-      inputNullifiers:   [nullifier, dummy.nullifier],
+      poolRoot: inputs.poolRoots, treeNumber: inputs.treeNumbers,
+      registryRoot, publicAmount, tokenAddress, paramsHash,
+      inputNullifiers:   inputs.nullifiers,
       outputCommitments: [comm0, comm1],
-      inputs: [
-        {
-          spendingPrivKey: keys.spendingPrivKey,
-          viewingPrivKey:  keys.viewingPrivKey,
-          blinding:  entry.blinding,
-          amount:    entry.amount,
-          pathIndices:  poolProof.pathIndices,
-          pathElements: poolProof.pathElements,
-        },
-        dummy.input,
-      ],
+      inputs:            inputs.inputs,
       outputs: [out0, out1],
     }, this.getArtifacts());
 
     if (opts.prepare) {
       const built = buildTransactParams(
-        [anchor.root, anchor.root], [anchor.tree, anchor.tree], registryRoot, publicAmount, tokenAddress,
-        [nullifier, dummy.nullifier], [comm0, comm1], sendParams,
+        inputs.poolRoots, inputs.treeNumbers, registryRoot, publicAmount, tokenAddress,
+        inputs.nullifiers, [comm0, comm1], sendParams,
       );
       return {
         txHash: "",
@@ -457,13 +464,164 @@ export class Halias extends HaliasCore {
     }
 
     const tx = await contractTransact(
-      this.pool, [anchor.root, anchor.root], [anchor.tree, anchor.tree], registryRoot, publicAmount, tokenAddress,
-      [nullifier, dummy.nullifier],
+      this.pool, inputs.poolRoots, inputs.treeNumbers, registryRoot, publicAmount, tokenAddress,
+      inputs.nullifiers,
       [comm0, comm1],
       sendParams,
       blob0, blob1, proofBytes,
     );
     return { txHash: await this.settle(tx), commitment: recipientEntry.commitment, amount: sendAmount };
+  }
+
+  /// Merge two notes into one.
+  ///
+  /// A transfer to nobody: both inputs are the caller's, the single output is the caller's,
+  /// and `publicAmount` is zero, so no value enters or leaves the pool. On chain it is
+  /// indistinguishable from any other transfer — two nullifiers, two commitments, one of
+  /// which happens to be a zero-value filler exactly as a change-free transfer produces.
+  private async mergeNotes(
+    pair: OwnedEntry[],
+    tokenAddress: bigint,
+    relayerFeeAmount: bigint,
+    relayer?: string,
+  ): Promise<string> {
+    const keys      = this.keys!;
+    const inputs    = this.buildInputs(pair);
+    const selfProof = await this.selfRegistryProof();
+
+    const merged   = inputs.total - relayerFeeAmount;
+    const blinding = randomBlinding();
+    const entry    = buildEntry(keys.spendingCommitment, this.myNullifierKeyHash(), blinding, merged, tokenAddress);
+    const blob     = this.sealNote(blinding, merged);
+
+    const mergedOut: TransactOutput = {
+      spendingCommitment:           keys.spendingCommitment,
+      nullifierKeyHash: this.myNullifierKeyHash(),
+      registrySlot:     selfProof.registrySlot,
+      blinding,
+      amount:           merged,
+      aliasHash:        selfProof.aliasHash,
+      dataHash:         selfProof.dataHash,
+      registrySiblings: selfProof.siblings,
+    };
+    const { out: fill, commitment: fillComm } = this.filler(tokenAddress);
+
+    // Which slot the real output lands in is randomised for the same reason it is on a
+    // transfer: a fixed position would make consolidations recognisable as a class.
+    const flip = Math.random() < 0.5;
+    const [out0, out1]   = flip ? [fill, mergedOut] : [mergedOut, fill];
+    const [comm0, comm1] = flip ? [fillComm, entry.commitment] : [entry.commitment, fillComm];
+    const [blob0, blob1] = flip ? ["0x", blob] : [blob, "0x"];
+
+    const params: TransactParams = relayerFeeAmount > 0n
+      ? { recipient: ethers.ZeroAddress,
+          relayerFee: { relayer: relayer!, amount: relayerFeeAmount },
+          externalData: ethers.ZeroHash }
+      : ZERO_TRANSACT_PARAMS;
+    const paramsHash   = computeParamsHash(params, blob0, blob1, BigInt(this.config.chainId), this.config.poolAddress);
+    const publicAmount = relayerFeeAmount > 0n ? FIELD_PRIME - relayerFeeAmount : 0n;
+
+    const { proofBytes } = await proveTransact({
+      poolRoot: inputs.poolRoots, treeNumber: inputs.treeNumbers,
+      registryRoot: selfProof.registryRoot, publicAmount, tokenAddress, paramsHash,
+      inputNullifiers:   inputs.nullifiers,
+      outputCommitments: [comm0, comm1],
+      inputs:            inputs.inputs,
+      outputs: [out0, out1],
+    }, this.getArtifacts());
+
+    const tx = await contractTransact(
+      this.pool, inputs.poolRoots, inputs.treeNumbers, selfProof.registryRoot, publicAmount,
+      tokenAddress, inputs.nullifiers, [comm0, comm1], params, blob0, blob1, proofBytes,
+    );
+    return this.settle(tx);
+  }
+
+  /// Merge notes until the balance can be spent in one transaction.
+  ///
+  /// The circuit takes two inputs, so a balance spread across three or more notes cannot be
+  /// paid out in full however it is selected — the wallet holds the money and cannot move it.
+  /// Ordinary spending already fights this (see {selectEntries}, which always fills both
+  /// input slots and so nets one note fewer per transaction), but a wallet paid more often
+  /// than it spends still accumulates, and this is the deliberate fix.
+  ///
+  /// With `target`, merges only until two notes cover that amount — the fewest transactions
+  /// that unblock a specific payment. Without one, merges all the way down to a single note.
+  ///
+  /// Each merge is a separate transaction with its own proof, so this is slow and costs gas
+  /// per step; `onProgress` is called before each so a caller can say so. It is safe to
+  /// interrupt — every merge that landed stands on its own.
+  async consolidate(
+    tokenAddress: bigint = ETH_TOKEN_ADDRESS,
+    opts: {
+      target?: bigint;
+      relayerFee?: bigint;
+      relayer?: string;
+      onProgress?: (p: { step: number; of: number; notes: number }) => void;
+    } = {},
+  ): Promise<ConsolidateResult> {
+    this.ensureInit();
+    this.ensureSpendable();
+    await this.ensureSync();
+    await this.tokenInfo(tokenAddress);
+
+    const fee = opts.relayerFee ?? 0n;
+    if (fee > 0n && !opts.relayer)
+      throw new Error("relayerFee requires a relayer address to pay it to");
+
+    const target = opts.target;
+    const txHashes: string[] = [];
+
+    // Recomputed each round rather than planned up front: every merge is a real transaction,
+    // and notes may arrive while it runs.
+    const done = () => {
+      const notes = this.spendable(tokenAddress);
+      if (target === undefined) return notes.length <= 1;
+      // Sorted ascending, so the last two are the largest.
+      if (notes.length <= 2) return true;
+      return notes[notes.length - 1].amount + notes[notes.length - 2].amount >= target;
+    };
+
+    if (target !== undefined) {
+      const total = this.spendable(tokenAddress).reduce((s, e) => s + e.amount, 0n);
+      // Every merge burns a fee, so the reachable total is what is left after all of them.
+      const worst = BigInt(Math.max(0, this.spendable(tokenAddress).length - 1)) * fee;
+      if (total - worst < target)
+        throw new Error(
+          `Balance ${this.formatAmount(total, tokenAddress)} ${this.symbolOf(tokenAddress)} ` +
+          `cannot cover ${this.formatAmount(target, tokenAddress)} after ` +
+          `${this.formatAmount(worst, tokenAddress)} of consolidation fees`);
+    }
+
+    // What is left to do, for the progress report. Reaching a target needs the two largest
+    // merged, so the count is how many notes must disappear from the top; tidying to one
+    // note is simply every note but the last.
+    const remaining = () => {
+      const notes = this.spendable(tokenAddress);
+      if (target === undefined) return Math.max(0, notes.length - 1);
+      let sum = 0n, n = 0;
+      for (let i = notes.length - 1; i >= 0 && sum < target; i--) { sum += notes[i].amount; n++; }
+      return Math.max(0, n - 2);
+    };
+
+    const of = remaining();
+    for (let step = 0; !done(); step++) {
+      const notes = this.spendable(tokenAddress);
+      opts.onProgress?.({ step, of: Math.max(of, step + 1), notes: notes.length });
+
+      // Which pair to merge depends on what is being asked for. Reaching a target wants the
+      // two largest, because that is the fastest route to a pair that covers it. Tidying
+      // wants the two smallest, so an interrupted run has still cleared the dust — the note
+      // count falls by one either way, but the notes that go are the ones worth losing.
+      const pair = target === undefined
+        ? [notes[0], notes[1]]
+        : [notes[notes.length - 1], notes[notes.length - 2]];
+
+      txHashes.push(await this.mergeNotes(pair, tokenAddress, fee, opts.relayer));
+    }
+
+    const left = this.spendable(tokenAddress);
+    return { txHashes, notes: left.length, total: left.reduce((s, e) => s + e.amount, 0n) };
   }
 
   /// Move value out of the pool.
@@ -488,17 +646,14 @@ export class Halias extends HaliasCore {
     this.ensureSpendable();
     await this.ensureSync();
 
-    const amount          = ethers.parseEther(amountEth);
+    await this.tokenInfo(tokenAddress);
+
+    const amount          = this.parseAmount(amountEth, tokenAddress);
     const keys            = this.keys!;
     const nullifierKeyHash = this.myNullifierKeyHash();
-    const entry           = this.selectEntry(amount, tokenAddress);
-    const nullifier       = computeNullifier(keys.nullifierKey, entry.treeNumber, entry.leafIndex);
-    const changeAmount    = entry.amount - amount;
-
-    const anchor    = this.poolAnchor(entry.treeNumber);
-    const poolProof = this.poolTrees.tree(entry.treeNumber).getProof(entry.leafIndex);
-    const dBase     = this.consumeDummyIdx(1);
-    const dummy     = dummyInput(anchor.tree, dBase, POOL_LEVELS);
+    const spend           = this.selectEntries(amount, tokenAddress);
+    const inputs          = this.buildInputs(spend);
+    const changeAmount    = inputs.total - amount;
 
     let out0: TransactOutput;
     let comm0: bigint;
@@ -510,10 +665,10 @@ export class Halias extends HaliasCore {
 
     if (changeAmount > 0n) {
       const changeBlinding = randomBlinding();
-      const changeEntry    = buildEntry(keys.spendingPubkey, nullifierKeyHash, changeBlinding, changeAmount, tokenAddress);
+      const changeEntry    = buildEntry(keys.spendingCommitment, nullifierKeyHash, changeBlinding, changeAmount, tokenAddress);
       encBlob0 = this.sealNote(changeBlinding, changeAmount);
       out0 = {
-        pubkey:           keys.spendingPubkey,
+        spendingCommitment:           keys.spendingCommitment,
         nullifierKeyHash,
         registrySlot:     selfProof.registrySlot,
         blinding:         changeBlinding,
@@ -525,7 +680,7 @@ export class Halias extends HaliasCore {
       comm0 = changeEntry.commitment;
     } else {
       out0  = dummyOutput(randomBlinding());
-      comm0 = poseidonHash([out0.pubkey, out0.nullifierKeyHash, out0.blinding, out0.amount, tokenAddress]);
+      comm0 = poseidonHash([out0.spendingCommitment, out0.nullifierKeyHash, out0.blinding, out0.amount, tokenAddress]);
     }
 
     const { out: out1, commitment: comm1 } = this.filler(tokenAddress);
@@ -564,27 +719,18 @@ export class Halias extends HaliasCore {
     const publicAmount = FIELD_PRIME - amount;
 
     const { proofBytes } = await proveTransact({
-      poolRoot: [anchor.root, anchor.root], treeNumber: [anchor.tree, anchor.tree], registryRoot, publicAmount, tokenAddress, paramsHash,
-      inputNullifiers:   [nullifier, dummy.nullifier],
+      poolRoot: inputs.poolRoots, treeNumber: inputs.treeNumbers,
+      registryRoot, publicAmount, tokenAddress, paramsHash,
+      inputNullifiers:   inputs.nullifiers,
       outputCommitments: [comm0, comm1],
-      inputs: [
-        {
-          spendingPrivKey: keys.spendingPrivKey,
-          viewingPrivKey:  keys.viewingPrivKey,
-          blinding:  entry.blinding,
-          amount:    entry.amount,
-          pathIndices:  poolProof.pathIndices,
-          pathElements: poolProof.pathElements,
-        },
-        dummy.input,
-      ],
+      inputs:            inputs.inputs,
       outputs: [out0, out1],
       outputsEmpty: exit,
     }, this.getArtifacts());
 
     const built = buildTransactParams(
-      [anchor.root, anchor.root], [anchor.tree, anchor.tree], registryRoot, publicAmount, tokenAddress,
-      [nullifier, dummy.nullifier], [comm0, comm1], withdrawParams, 0n, exit,
+      inputs.poolRoots, inputs.treeNumbers, registryRoot, publicAmount, tokenAddress,
+      inputs.nullifiers, [comm0, comm1], withdrawParams, 0n, exit,
     );
 
     // Hand it over instead of sending it. Everything above is identical either way — the
@@ -614,13 +760,54 @@ export class Halias extends HaliasCore {
   async balance(tokenAddress: bigint = ETH_TOKEN_ADDRESS): Promise<BalanceResult> {
     this.ensureInit();
     await this.ensureSync();
-    const entries = this.myEntries.filter(e =>
-      e.amount > 0n &&
-      e.tokenAddress === tokenAddress &&
-      !this.spentNullifiers.has(computeNullifier(this.keys!.nullifierKey, e.treeNumber, e.leafIndex))
-    );
-    const total = entries.reduce((s, e) => s + e.amount, 0n);
-    return { total, entries };
+    const token = await this.tokenInfo(tokenAddress);
+    const entries = this.spendable(tokenAddress);
+    const total   = entries.reduce((s, e) => s + e.amount, 0n);
+    return {
+      token, total, entries,
+      sendableNow: entries.slice(-2).reduce((s, e) => s + e.amount, 0n),
+    };
+  }
+
+  /// Every token this alias actually holds a spendable note in, with what it holds.
+  ///
+  /// Discovered rather than configured. A note names its own token — it is bound into the
+  /// commitment and published as an indexed field on {Transact} — so the set of assets someone
+  /// holds is a fact about their notes, not something an app has to be told. Anyone can send
+  /// this alias any ERC-20, and a client that only knows about a curated list would show a
+  /// balance of zero while the money sat there unspendable.
+  ///
+  /// Costs nothing extra: the notes are already decrypted by the time this is reachable, so
+  /// this walks memory. Only the symbol and decimals are read from chain, once per token.
+  ///
+  /// ETH is always included even at zero, because it is the asset every deployment holds and
+  /// an empty list reads as "something is broken" rather than "you have not been paid yet".
+  async heldTokens(): Promise<BalanceResult[]> {
+    this.ensureInit();
+    await this.ensureSync();
+
+    const seen = new Set<bigint>([ETH_TOKEN_ADDRESS]);
+    for (const e of this.myEntries) {
+      if (e.amount > 0n) seen.add(e.tokenAddress);
+    }
+
+    const out: BalanceResult[] = [];
+    for (const t of seen) {
+      // A token whose contract will not answer `decimals()` cannot be denominated, and
+      // guessing 18 would misreport the balance rather than omit it. Skipped, and skipped
+      // loudly enough to find: ETH can never take this path.
+      try {
+        out.push(await this.balance(t));
+      } catch {
+        if (t === ETH_TOKEN_ADDRESS) throw new Error("ETH balance could not be read");
+      }
+    }
+    // ETH first, then by what is held — the assets someone actually has, before the ones they
+    // merely could have.
+    return out.sort((a, b) =>
+      a.token.address === ETH_TOKEN_ADDRESS ? -1
+      : b.token.address === ETH_TOKEN_ADDRESS ? 1
+      : b.total > a.total ? 1 : b.total < a.total ? -1 : 0);
   }
 
   // The aliasHash this account's spending key is registered under, or null if it has
@@ -629,7 +816,7 @@ export class Halias extends HaliasCore {
   async myAliasHash(): Promise<bigint | null> {
     this.ensureInit();
     await this.ensureSync();
-    return this.aliasHashByPubkey.get(this.keys!.spendingPubkey) ?? null;
+    return this.aliasHashByPubkey.get(this.keys!.spendingCommitment) ?? null;
   }
 
   // Current registration fee, read from the contract rather than assumed — it is
@@ -646,7 +833,7 @@ export class Halias extends HaliasCore {
   /// Every alias this wallet owns, paired with the index that derives its keys.
   ///
   /// The index is never stored anywhere — not on chain, not locally. It is recovered by
-  /// deriving candidates and matching against the `spendingPubkey` the registry published
+  /// deriving candidates and matching against the `spendingCommitment` the registry published
   /// at registration, which means a wallet alone is enough to restore everything. An alias
   /// whose index is not found within `maxIndex` comes back as `null`: it is still owned and
   /// still visible, but this wallet cannot currently spend from it.
@@ -655,9 +842,9 @@ export class Halias extends HaliasCore {
   /// to a single alias.
   /// Every alias this root can act as, whether or not the connected address owns the name.
   ///
-  /// Enumerated by key, not by ownership. It used to list what `ownerOf` said the wallet held
-  /// and then match indices to it, which tied the answer to one EOA — switch accounts and
-  /// aliases you can still spend from vanished. Ownership and spending are separate powers:
+  /// Enumerated by key, not by ownership. Listing what `ownerOf` says the connected wallet
+  /// holds would tie the answer to one EOA, so switching accounts would hide aliases you can
+  /// still spend from. Ownership and spending are separate powers:
   /// only updateAliasData, offerAlias and cancelOffer check the NFT, while the pool checks
   /// nullifiers, roots and a proof that your spending key is the one registered here.
   ///
@@ -690,8 +877,8 @@ export class Halias extends HaliasCore {
     for (let i = 0; i < maxIndex; i++) {
       // Derived from the root the probe already obtained, so this loop costs nothing beyond
       // hashing — deriving per index from a seed source would re-run PBKDF2 `maxIndex` times.
-      const pubkey = deriveKeysFromRoot(derived, i).spendingPubkey;
-      const aliasHash = probe.aliasHashByPubkey.get(pubkey);
+      const spendingCommitment = deriveKeysFromRoot(derived, i).spendingCommitment;
+      const aliasHash = probe.aliasHashByPubkey.get(spendingCommitment);
       if (aliasHash === undefined) continue;
 
       const h = "0x" + aliasHash.toString(16).padStart(64, "0");
@@ -726,7 +913,7 @@ export class Halias extends HaliasCore {
 
   /// Aliases these keys control.
   ///
-  /// Matched by spending pubkey against the registry, not by asking who holds the NFT. Since
+  /// Matched by spending commitment against the registry, not by asking who holds the NFT. Since
   /// the owner is derived from the phrase and never transacts, "who owns it" is no longer a
   /// question the connected wallet can answer — and it was never the question a wallet list
   /// wanted. Ownership travels alongside for the three operations that need it.
@@ -735,7 +922,7 @@ export class Halias extends HaliasCore {
   > {
     this.ensureInit();
     await this.ensureSync();
-    const hash = this.aliasHashByPubkey.get(this.keys!.spendingPubkey);
+    const hash = this.aliasHashByPubkey.get(this.keys!.spendingCommitment);
     if (hash === undefined) return [];
 
     const h = "0x" + hash.toString(16).padStart(64, "0");
@@ -757,10 +944,37 @@ export class Halias extends HaliasCore {
     this.ensureInit();
     const cleanAlias = normalizeAlias(alias);
     const aliasHash = this.aliasHashOf(alias);
+
+    // From the scan first, and the reason is privacy rather than latency.
+    //
+    // `aliases(aliasHash)` is a targeted read: it tells whatever node answers which alias this
+    // client is interested in, and since names are published at registration the hash reverses
+    // trivially. On the send path that is the recipient of a payment which publishes nothing —
+    // the one call that undoes what the rest of this is for.
+    //
+    // Nothing has to be fetched to avoid it. Every field of a registration is carried by
+    // AliasRegistered, which this client already scans in bulk into `registryEntries`, so the
+    // answer is usually sitting in memory. See docs/rpc-surface.md.
+    await this.ensureSync();
+    const known = this.registryEntries.find(
+      (e) => BigInt(e.aliasHash) === aliasHash && e.nullifierKeyHash !== 0n,
+    );
+    if (known) {
+      return {
+        spendingCommitment: known.spendingCommitment,
+        nullifierKeyHash:   known.nullifierKeyHash,
+        encryptionPubkey:   known.encryptionPubkey,
+        dataHash:           known.dataHash,
+      };
+    }
+
+    // Not in the scan: registered after this client's cursor, or read from a cache written
+    // before the event carried `nullifierKeyHash`. Falling back keeps lookups working rather
+    // than failing on a stale cache — a rescan repopulates it and the leak stops.
     const r = await contractLookupAlias(this.registry, aliasHash);
-    if (r.spendingPubkey === 0n) throw new Error(`"${cleanAlias}.hls" is not registered`);
+    if (r.spendingCommitment === 0n) throw new Error(`"${cleanAlias}.hls" is not registered`);
     return {
-      spendingPubkey:   r.spendingPubkey,
+      spendingCommitment:   r.spendingCommitment,
       nullifierKeyHash: r.nullifierKeyHash,
       encryptionPubkey: ethers.getBytes(ethers.toBeHex(r.encryptionPubkey, 32)),
       dataHash:         r.dataHash,
@@ -768,7 +982,7 @@ export class Halias extends HaliasCore {
   }
 
   // There is no `updateKeys`. It rotated the nullifier and encryption keys but never the
-  // spending pubkey, so the one compromise that loses funds was the one it could not answer.
+  // spending commitment, so the one compromise that loses funds was the one it could not answer.
   //
   // Rotation is a handover to yourself, and needs no method of its own because keys come from
   // the derivation index — fresh keys mean a client at a different one:
@@ -843,7 +1057,7 @@ export class Halias extends HaliasCore {
       this.domain,
       aliasHash,
       {
-        spendingPubkey:   keys.spendingPubkey,
+        spendingCommitment:   keys.spendingCommitment,
         nullifierKeyHash: this.myNullifierKeyHash(),
         encryptionPubkey: BigInt(ethers.hexlify(keys.encryption.publicKey)),
       },
@@ -961,14 +1175,21 @@ export class Halias extends HaliasCore {
       !this.spentNullifiers.has(computeNullifier(keys.nullifierKey, e.treeNumber, e.leafIndex))
     );
     for (const entry of unspent) {
-      const result = await this.withdraw(recipientAddress, ethers.formatEther(entry.amount));
+      // Each note names its own token, and a sweep has to honour that. Withdrawing on the
+      // default would have moved an ERC-20 note as if it were ETH — the wrong asset, and the
+      // wrong scale with it once the token is not 18 decimals.
+      await this.tokenInfo(entry.tokenAddress);
+      const result = await this.withdraw(
+        recipientAddress,
+        this.formatAmount(entry.amount, entry.tokenAddress),
+        entry.tokenAddress,
+      );
       sweepTxHashes.push(result.txHash);
     }
 
-    // The nonce is ethers' to resolve again. This used to be chained from the sweep, because
-    // sweeping and offering were two sends with nothing between them and the provider's view
-    // of the pending nonce lagged. Signing the offer now reads the owner and the alias nonce
-    // first, which is the delay that hack was standing in for — and a hard-coded nonce is
+    // The nonce is ethers' to resolve, not this function's to carry forward from the sweep.
+    // Signing the offer reads the owner and the alias nonce first, and that round trip is
+    // enough for the provider's view of the pending nonce to catch up — a hard-coded one is
     // worse than none once anything else can land in between.
     const auth = await this.ownerSigner(this.aliasHashOf(alias));
     const signed = await contractSignOfferAlias(
@@ -997,7 +1218,18 @@ export class Halias extends HaliasCore {
     await this.ensureSync();
 
     const amount = ethers.parseEther(amountEth);
-    const secret = randomBlinding();
+
+    // Derived from this wallet's root, not random. A random secret exists only in the value
+    // this function returns: close the window without saving it and the note is stranded
+    // forever, on the one flow whose entire purpose is funding someone who has nothing. From
+    // the root it can be recomputed on any device holding the phrase, which is what makes
+    // {listInvites} and {reclaimInvite} possible at all.
+    //
+    // The index is the first whose invite alias is unregistered. Registration is the record —
+    // there is no separate ledger to keep in step, and an invite created on another device
+    // shows up here because the chain already knows about it.
+    const index  = await this.nextInviteIndex();
+    const secret = inviteSecretAt(this.derivationRoot, index);
     const temp   = deriveInviteKeys(secret);
 
     // The invite account needs a registry entry — its note is a non-zero output, and those
@@ -1030,14 +1262,14 @@ export class Halias extends HaliasCore {
       ethers.toBeHex(secret, 32), ethers.toUtf8Bytes(inviteName),
     ]));
     const regTx = await contractRegister(
-      this.domain, inviteName, temp.spendingPubkey,
+      this.domain, inviteName, temp.spendingCommitment,
       temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
       temp.ownerAddress, inviteSalt,
     );
     await regTx.wait();
     await this.refresh();
 
-    const entry = buildEntry(temp.spendingPubkey, temp.nullifierKeyHash, temp.blinding, amount, ETH_TOKEN_ADDRESS);
+    const entry = buildEntry(temp.spendingCommitment, temp.nullifierKeyHash, temp.blinding, amount, ETH_TOKEN_ADDRESS);
 
     // Encrypted to the temp key derived from the secret, so holding the secret is
     // sufficient to discover and decrypt the note — nothing else is transmitted.
@@ -1051,7 +1283,7 @@ export class Halias extends HaliasCore {
     const dummy1 = dummyInput(anchor.tree, dBase + 1, POOL_LEVELS);
 
     const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, encryptedOutput0, "0x", BigInt(this.config.chainId), this.config.poolAddress);
-    const tempProof    = await this.registryProof(temp.spendingPubkey, "Invite account");
+    const tempProof    = await this.registryProof(temp.spendingCommitment, "Invite account");
     const registryRoot = tempProof.registryRoot;
     const siblings     = tempProof.siblings;
 
@@ -1061,7 +1293,7 @@ export class Halias extends HaliasCore {
       outputCommitments: [entry.commitment, comm1],
       inputs: [dummy0.input, dummy1.input],
       outputs: [
-        { pubkey: temp.spendingPubkey, nullifierKeyHash: temp.nullifierKeyHash, blinding: temp.blinding,
+        { spendingCommitment: temp.spendingCommitment, nullifierKeyHash: temp.nullifierKeyHash, blinding: temp.blinding,
           amount, aliasHash: tempAliasHash, registrySlot: tempProof.registrySlot,
           dataHash: 0n, registrySiblings: siblings },
         out1,
@@ -1137,17 +1369,17 @@ export class Halias extends HaliasCore {
     // could spend the claimer's remainder or buy another name with it. Tried, caught by
     // "the same invite cannot be claimed twice", reverted. Do not re-attempt.
     //
-    // So the claimer's own alias has to be in the tree the proof checks against, and it is
-    // not registered yet. This used to predict the post-registration root, which meant any
-    // other registry write landing in between invalidated the claim (F1) — cheap to trigger
-    // on purpose, and worst on the onboarding path.
+    // So the claimer's own alias has to be in the tree the proof checks against, and it is not
+    // registered yet. Predicting the post-registration root is the obvious answer and the wrong
+    // one: any other registry write landing in between invalidates the claim (F1) — cheap to
+    // trigger on purpose, and worst on the onboarding path.
     //
-    // Nothing is predicted now. The proof carries the insertion: it proves against the
+    // Nothing is predicted. The proof carries the insertion: it proves against the
     // CURRENT root, shows the target slot is empty there, and derives the tree that results
     // from adding this leaf. Whatever else lands afterwards, that root stays valid for the
     // freshness window, and the derivation is unaffected by it.
     const ownSlot     = Number(await this.registry.nextAliasSlot() as bigint);
-    const leafValue   = poseidonHash([keys.spendingPubkey, nullifierKeyHash, 0n]);
+    const leafValue   = poseidonHash([keys.spendingCommitment, nullifierKeyHash, 0n]);
     const pendingLeaf = poseidonHash([smtKey, leafValue, 1n]);
     // The claim reads its witness straight from the registry, which is the case that looked
     // like it needed a local tree and does not. `ownSlot` is unassigned — nobody holds it
@@ -1169,18 +1401,18 @@ export class Halias extends HaliasCore {
     const changeAmount = note.amount - absAmount;
     const changeBlind  = randomBlinding();
     const changeOut = changeAmount > 0n
-      ? { pubkey: keys.spendingPubkey, nullifierKeyHash, blinding: changeBlind, amount: changeAmount,
+      ? { spendingCommitment: keys.spendingCommitment, nullifierKeyHash, blinding: changeBlind, amount: changeAmount,
           aliasHash: smtKey, registrySlot: ownSlot, dataHash: 0n,
           registrySiblings: pendingSiblings }
       : dummyOutput(randomBlinding());
-    const comm0 = poseidonHash([changeOut.pubkey, changeOut.nullifierKeyHash, changeOut.blinding, changeOut.amount, ETH_TOKEN_ADDRESS]);
+    const comm0 = poseidonHash([changeOut.spendingCommitment, changeOut.nullifierKeyHash, changeOut.blinding, changeOut.amount, ETH_TOKEN_ADDRESS]);
 
     // Encrypt the change to the claimer's own key.
     //
-    // This used to pass "0x" for both ciphertexts, which lost the remainder permanently:
-    // the commitment lands in the pool but there is no blob to decrypt, so findMyOutputs
-    // can never see it, and the blinding is generated here and never persisted. The note
-    // was unspendable by anyone, including its owner — on the flow whose entire purpose is
+    // Both ciphertexts must be real. Passing "0x" loses the remainder permanently: the
+    // commitment lands in the pool but there is no blob to decrypt, so findMyOutputs can never
+    // see it, and the blinding is generated here and never persisted. The note would be
+    // unspendable by anyone, including its owner — on the flow whose entire purpose is
     // onboarding someone with no funds.
     const changeBlob = changeAmount > 0n
       ? (() => {
@@ -1204,7 +1436,7 @@ export class Halias extends HaliasCore {
     const registration = {
       owner:            await this.config.signer.getAddress(),
       aliasHash,
-      spendingPubkey:   keys.spendingPubkey,
+      spendingCommitment:   keys.spendingCommitment,
       nullifierKeyHash,
       encryptionPubkey: encBytes32,
     };
@@ -1272,6 +1504,159 @@ export class Halias extends HaliasCore {
   // Locate the unspent pool note belonging to an invite's temp keypair. The note is a
   // perfectly ordinary output encrypted to the temp encryption key, so the normal
   // decrypt-and-match path finds it — no special-case scanning.
+  /// The name an invite registers, which is a pure function of its secret.
+  private inviteNameFor(secret: bigint): string {
+    return `invite-${ethers.keccak256(ethers.toBeHex(secret, 32)).slice(2, 34)}.hls`;
+  }
+
+  /// The registry key for an invite's name.
+  ///
+  /// Hashed directly rather than through {aliasHashOf}, which normalises first and rejects the
+  /// hyphen: user aliases are alphanumeric, and `invite-…` is deliberately outside that set so
+  /// nobody can type one by hand. The registration hashes the raw string, so this must too —
+  /// anything else looks up a name that was never written.
+  private inviteAliasHash(name: string): string {
+    return ethers.keccak256(ethers.toUtf8Bytes(name));
+  }
+
+  /// The first invite index this wallet has not used.
+  ///
+  /// Read off the chain rather than from local state. The invite's alias registration *is* the
+  /// record, so an invite created from another device — or before this browser's cache was
+  /// cleared — is already accounted for, and two devices cannot pick the same index.
+  private async nextInviteIndex(limit = 256): Promise<number> {
+    for (let i = 0; i < limit; i++) {
+      const name = this.inviteNameFor(inviteSecretAt(this.derivationRoot, i));
+      const taken = await this.registry.isRegistered(this.inviteAliasHash(name)) as boolean;
+      if (!taken) return i;
+    }
+    throw new Error(`No free invite index below ${limit}`);
+  }
+
+  /// Every invite this wallet has created, and whether it is still claimable.
+  ///
+  /// Enumerable because the secrets are derived rather than random — see {inviteSecretAt}.
+  /// Walks indices until it finds `gap` consecutive unregistered ones, which tolerates a
+  /// registration that reverted mid-flow without scanning to the limit every time.
+  ///
+  /// `claimable` is the question worth asking: an invite whose note has been spent is done,
+  /// whoever spent it. It says nothing about *who* claimed it, because nothing on chain does —
+  /// the claimer's change note is addressed to their own alias and is indistinguishable from
+  /// any other output.
+  async listInvites(opts: { limit?: number; gap?: number } = {}): Promise<InviteSummary[]> {
+    this.ensureInit();
+    await this.ensureSync();
+
+    const limit = opts.limit ?? 256;
+    const gap   = opts.gap ?? 3;
+    const out: InviteSummary[] = [];
+    let missed = 0;
+
+    for (let i = 0; i < limit && missed < gap; i++) {
+      const secret = inviteSecretAt(this.derivationRoot, i);
+      const name   = this.inviteNameFor(secret);
+      if (!(await this.registry.isRegistered(this.inviteAliasHash(name)) as boolean)) {
+        missed++;
+        continue;
+      }
+      missed = 0;
+
+      const temp = deriveInviteKeys(secret);
+      const note = await this.findInviteNote(temp);
+      out.push({
+        index: i,
+        secret,
+        inviteCode: encodeInviteCode(secret),
+        name,
+        // Null once spent: the note is gone, so there is no amount left to report.
+        amount: note?.amount ?? null,
+        claimable: note !== null,
+      });
+    }
+    return out;
+  }
+
+  /// Take back an unclaimed invite, returning its funds to this alias.
+  ///
+  /// A transfer whose input is the invite note and whose output is this client's own note.
+  /// The invite's spending key comes from the secret, which this wallet can recompute — so
+  /// this needs nothing that was written down at the time.
+  ///
+  /// Racy by nature and safely so: if the recipient claims between the proof and its
+  /// inclusion, the nullifier is already spent and the pool refuses this. Nobody loses
+  /// anything but the gas.
+  async reclaimInvite(index: number): Promise<{ txHash: string; amount: bigint }> {
+    this.ensureInit();
+    this.ensureSpendable();
+    await this.ensureSync();
+
+    const secret = inviteSecretAt(this.derivationRoot, index);
+    const temp   = deriveInviteKeys(secret);
+    const note   = await this.findInviteNote(temp);
+    if (!note) throw new Error(`Invite ${index} has already been claimed, or was never created`);
+
+    const keys             = this.keys!;
+    const nullifierKeyHash = this.myNullifierKeyHash();
+    const selfProof        = await this.selfRegistryProof();
+
+    // One real input — the invite's — padded to the circuit's two.
+    const anchor    = this.poolAnchor(note.treeNumber);
+    const poolProof = this.poolTrees.tree(note.treeNumber).getProof(note.leafIndex);
+    const dBase     = this.consumeDummyIdx(1);
+    const dummy     = dummyInput(anchor.tree, dBase, POOL_LEVELS);
+    const nullifier0 = computeNullifier(temp.nullifierKey, note.treeNumber, note.leafIndex);
+
+    const blinding = randomBlinding();
+    const out0 = {
+      spendingCommitment: keys.spendingCommitment,
+      nullifierKeyHash,
+      blinding,
+      amount:         note.amount,
+      aliasHash:      selfProof.aliasHash,
+      registrySlot:   selfProof.registrySlot,
+      dataHash:       selfProof.dataHash,
+      registrySiblings: selfProof.siblings,
+    };
+    const comm0 = poseidonHash([
+      out0.spendingCommitment, out0.nullifierKeyHash, out0.blinding, out0.amount, ETH_TOKEN_ADDRESS,
+    ]);
+    const blob0 = this.sealNote(blinding, note.amount);
+    const { out: out1, commitment: comm1 } = this.filler(ETH_TOKEN_ADDRESS);
+
+    const params: TransactParams = {
+      recipient:    ethers.ZeroAddress,
+      relayerFee:   NO_RELAYER,
+      externalData: ethers.ZeroHash,
+    };
+    const paramsHash = computeParamsHash(
+      params, blob0, "0x", BigInt(this.config.chainId), this.config.poolAddress,
+    );
+
+    const { proofBytes } = await proveTransact({
+      poolRoot: [anchor.root, anchor.root], treeNumber: [note.treeNumber, anchor.tree],
+      registryRoot: selfProof.registryRoot, publicAmount: 0n,
+      tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
+      inputNullifiers:   [nullifier0, dummy.nullifier],
+      outputCommitments: [comm0, comm1],
+      inputs: [
+        { spendingPrivKey: temp.spendingPrivKey, viewingPrivKey: temp.viewingPrivKey,
+          blinding: note.blinding, amount: note.amount,
+          pathIndices: poolProof.pathIndices, pathElements: poolProof.pathElements },
+        dummy.input,
+      ],
+      outputs: [out0, out1],
+    }, this.getArtifacts());
+
+    const tx = await contractTransact(
+      this.pool,
+      [anchor.root, anchor.root], [note.treeNumber, anchor.tree],
+      selfProof.registryRoot, 0n, ETH_TOKEN_ADDRESS,
+      [nullifier0, dummy.nullifier],
+      [comm0, comm1], params, blob0, "0x", proofBytes,
+    );
+    return { txHash: await this.settle(tx), amount: note.amount };
+  }
+
   private async findInviteNote(temp: InviteKeys): Promise<OwnedEntry | null> {
     // The one place ciphertext is needed after the fact. The cache drops it — it is the bulk
     // of the bytes and its only use is trial decryption, which has already happened for every
@@ -1288,7 +1673,7 @@ export class Halias extends HaliasCore {
       await this.refresh();
     }
     const owned = findMyOutputs(
-      this.allOutputs, temp.spendingPubkey, temp.nullifierKey, temp.encryption.privateKey,
+      this.allOutputs, temp.spendingCommitment, temp.nullifierKey, temp.encryption.privateKey,
     );
     return owned.find(e => !this.spentNullifiers.has(computeNullifier(temp.nullifierKey, e.treeNumber, e.leafIndex))) ?? null;
   }
@@ -1310,6 +1695,7 @@ export class Halias extends HaliasCore {
   async history(tokenAddress: bigint = ETH_TOKEN_ADDRESS): Promise<HistoryEntry[]> {
     this.ensureInit();
     await this.ensureSync();
+    await this.tokenInfo(tokenAddress);
     const keys = this.keys!;
     const mine = new Set(this.myEntries.map((e) => e.commitment));
     const myNullifiers = new Set(
@@ -1329,7 +1715,7 @@ export class Halias extends HaliasCore {
     // invisible to the loop below — but it is the first thing that ever happened to this
     // alias and a history starting at the first deposit reads as though it appeared from
     // nowhere.
-    const selfAlias = this.aliasHashByPubkey.get(keys.spendingPubkey);
+    const selfAlias = this.aliasHashByPubkey.get(keys.spendingCommitment);
     if (selfAlias !== undefined) {
       // aliasHashByPubkey stores the value the SMT keys on, so compare on that rather than
       // on the raw 32 bytes — they differ whenever the hash exceeds the field prime.
@@ -1443,6 +1829,7 @@ export class Halias extends HaliasCore {
   async privacyContext(tokenAddress: bigint = ETH_TOKEN_ADDRESS): Promise<PrivacyContext> {
     this.ensureInit();
     await this.ensureSync();
+    await this.tokenInfo(tokenAddress);
 
     // Counted from the scan rather than read from the pool. There is no single on-chain
     // counter to read: the pool is a sequence of trees, and its `leafIndex` is the position
@@ -1481,6 +1868,7 @@ export class Halias extends HaliasCore {
   async scan(tokenAddress: bigint = ETH_TOKEN_ADDRESS): Promise<ScanEntry[]> {
     this.ensureInit();
     await this.ensureSync();
+    await this.tokenInfo(tokenAddress);
     return this.myEntries
       .filter(e => e.tokenAddress === tokenAddress)
       .map(e => ({

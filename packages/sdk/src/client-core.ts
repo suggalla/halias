@@ -10,10 +10,10 @@ import {
 } from "./crypto";
 import { SeedSource } from "./seed";
 import { ViewKeys, keysFromViewKeys } from "./viewkey";
-import { computeNullifier, randomBlinding, OwnedEntry } from "./entry";
+import { computeNullifier, randomBlinding, OwnedEntry, POOL_LEVELS } from "./entry";
 import { PoolTrees } from "./merkle";
-import { aliasHashToSmtKey } from "./smt";
-import { dummyOutput, TransactOutput } from "./proof";
+import { SMT, aliasHashToSmtKey, rootFromSiblings } from "./smt";
+import { dummyInput, dummyOutput, TransactOutput, TransactInput } from "./proof";
 import { scanEvents, findMyOutputs, Output, RegistryEntry, ScanResult } from "./events";
 import { getPool, getRegistry, getController } from "./contract";
 import { CacheStore, serializeCache, deserializeCache } from "./cache";
@@ -42,6 +42,22 @@ export interface HaliasConfig {
   onProgress?: (pct: number) => void;
 }
 
+/// What a token's base units mean, and what to call it.
+///
+/// Every amount in this SDK is a bigint of base units, which is the only representation the
+/// circuit and the contract ever see. Turning a human "1.5" into base units needs the token's
+/// decimals, and getting that wrong is not a display bug: `parseEther` on a 6-decimal token
+/// computes 10¹² times the intended amount. USDC and USDT are 6, WBTC is 8, and they are
+/// exactly the tokens someone would want to send privately.
+export interface TokenInfo {
+  address: bigint;
+  symbol: string;
+  decimals: number;
+}
+
+/// ETH, which is `address(0)` in a note and never needs a contract call.
+export const ETH_TOKEN_INFO: TokenInfo = { address: 0n, symbol: "ETH", decimals: 18 };
+
 export interface DepositResult  { txHash: string; commitment: bigint; amount: bigint }
 export interface SendResult {
   /// Empty when prepared rather than sent — nothing was broadcast.
@@ -59,8 +75,31 @@ export interface WithdrawResult {
   /// Present only for a prepared withdrawal: the transaction, for someone else to submit.
   relayBlob?: string;
 }
-export interface BalanceResult  { total: bigint; entries: OwnedEntry[] }
-export interface LookupResult   { spendingPubkey: bigint; nullifierKeyHash: bigint; encryptionPubkey: Uint8Array; dataHash: bigint }
+export interface BalanceResult {
+  /// What these amounts are denominated in. Every figure below is base units, so a caller
+  /// that formats without this is guessing at the scale — which is wrong by a factor of a
+  /// million for USDC. Returned rather than looked up separately so a UI cannot render a
+  /// balance it has no decimals for.
+  token: TokenInfo;
+  total: bigint;
+  /// Unspent notes, smallest first.
+  entries: OwnedEntry[];
+  /// The most that can leave in one transaction — the two largest notes, since the circuit
+  /// takes two inputs. Below `total` whenever the balance is spread over three or more
+  /// notes, and the number a UI has to show alongside the balance: offering to send `total`
+  /// when only `sendableNow` can move is a promise the wallet cannot keep. `consolidate()`
+  /// closes the gap.
+  sendableNow: bigint;
+}
+export interface ConsolidateResult {
+  /// One per merge. Empty when the notes already satisfied the goal and nothing was sent.
+  txHashes: string[];
+  /// Spendable notes remaining afterwards.
+  notes: number;
+  /// Their total, which is the balance minus any relayer fees paid along the way.
+  total: bigint;
+}
+export interface LookupResult   { spendingCommitment: bigint; nullifierKeyHash: bigint; encryptionPubkey: Uint8Array; dataHash: bigint }
 // secret is the whole invite — anyone holding it can claim the note. Treat it like cash.
 export interface InviteResult   { txHash: string; secret: bigint; inviteCode: string; amount: bigint }
 export interface ScanEntry      extends OwnedEntry { spent: boolean }
@@ -92,10 +131,32 @@ export abstract class HaliasCore {
     const tree = treeNumber ?? this.poolTrees.latest;
     return { root: this.poolTrees.tree(tree).getRoot(), tree };
   }
-  protected aliasHashByPubkey = new Map<bigint, bigint>(); // spendingPubkey → aliasHash (bigint)
-  protected keyActiveFrom = new Map<bigint, number>();     // spendingPubkey → block it became active
+  protected aliasHashByPubkey = new Map<bigint, bigint>(); // spendingCommitment → aliasHash (bigint)
+  protected keyActiveFrom = new Map<bigint, number>();     // spendingCommitment → block it became active
   protected namesByAlias  = new Map<string, string>();     // aliasHash → published plaintext
   protected registryEntries: RegistryEntry[] = [];
+  /// The registry tree, rebuilt from the same events the entries come from.
+  ///
+  /// Held so a membership path can be derived rather than fetched. `getSmtSiblings(slot)` was
+  /// the last targeted read on the send path — it names the slot, and slot↔alias is public
+  /// from AliasRegistered, so asking told whoever answered who was about to be paid.
+  ///
+  /// Needs no extra request — every field of every registration is already scanned — and the
+  /// cost is CPU, not bandwidth. Measured at 10,000 aliases: 20,022 nodes, 2.4 MB of heap,
+  /// 8 µs to read a path, 1.5 MB serialised, and **1.27 s to build** via {SMT.fromLeaves}.
+  ///
+  /// That last number was 17.9 s until the build stopped calling `update` in a loop, which
+  /// recomputed every ancestor once per descendant — 33 hashes per alias where hashing each
+  /// node exactly once needs 2. Worth stating because the naive version looked reasonable and
+  /// was 14x off, and because it is the number that decides whether this design holds: at
+  /// ~0.13 ms/alias the tree is a fraction of the 541 µs/note the same sync already spends on
+  /// trial decryption, where at 1.85 ms/alias it was competing with it.
+  ///
+  /// Extrapolates to ~13 s at 100k aliases and ~2 min at a million, so it is bounded, not
+  /// unbounded. Persisting it would make even that once per device rather than once per
+  /// session — `serializeNodes`/`fromSerialized` exist and are not yet wired up, and loading
+  /// 10,000 aliases back measures 19 ms. See docs/rpc-surface.md.
+  protected registrySMT: SMT = new SMT();
   protected myEntries: OwnedEntry[] = [];
   protected allOutputs: Output[] = [];
   protected spentNullifiers = new Set<bigint>();
@@ -302,6 +363,7 @@ export abstract class HaliasCore {
 
     this.poolTrees = result.poolTrees;
     this.registryEntries = result.registryEntries;
+    this.rebuildRegistryTree();
     this.aliasHashByPubkey = result.aliasHashByPubkey;
     this.keyActiveFrom = result.keyActiveFrom;
     this.namesByAlias = result.namesByAlias;
@@ -321,13 +383,13 @@ export abstract class HaliasCore {
     // the deployment block: the pool tree needs every commitment to produce a sibling path,
     // so events cannot be skipped, only the decryption attempts.
     const keys = this.keys!;
-    const activeFrom = this.keyActiveFrom.get(keys.spendingPubkey);
+    const activeFrom = this.keyActiveFrom.get(keys.spendingCommitment);
     const candidates = activeFrom === undefined
       ? result.newOutputs
       : result.newOutputs.filter((o) => o.blockNumber >= activeFrom);
     const found = findMyOutputs(
       candidates,
-      keys.spendingPubkey,
+      keys.spendingCommitment,
       keys.nullifierKey,
       keys.encryption.privateKey,
     );
@@ -395,7 +457,7 @@ export abstract class HaliasCore {
     const out = dummyOutput(randomBlinding());
     return {
       out,
-      commitment: poseidonHash([out.pubkey, out.nullifierKeyHash, out.blinding, out.amount, tokenAddress]),
+      commitment: poseidonHash([out.spendingCommitment, out.nullifierKeyHash, out.blinding, out.amount, tokenAddress]),
     };
   }
 
@@ -444,39 +506,91 @@ export abstract class HaliasCore {
   /// field-reduced key hashed into the leaf, registrySlot is the position the contract
   /// assigned. aliasHash must be reduced — a raw 256-bit keccak is >= p about 81% of the
   /// time and would not match the on-chain leaf.
-  protected async registryProof(pubkey: bigint, label = "Recipient pubkey"): Promise<{
+  protected async registryProof(spendingCommitment: bigint, label = "Recipient spendingCommitment"): Promise<{
     aliasHash: bigint;
     registrySlot: number;
     siblings: bigint[];
     dataHash: bigint;
     registryRoot: bigint;
   }> {
-    const aliasHash = this.aliasHashByPubkey.get(pubkey);
+    const aliasHash = this.aliasHashByPubkey.get(spendingCommitment);
     if (aliasHash === undefined) throw new Error(`${label} not found in registry`);
     const h = "0x" + aliasHash.toString(16).padStart(64, "0");
     const blockTag = await this.headBlock();
 
-    // The slot comes first because the sibling lookup needs it. The contract stores it
-    // one-based so that zero reads as "unassigned", and takes the path key, which is one
-    // less — the same derivation its own tree walk uses.
-    const oneBased = Number(await this.registry.aliasSlot(h, { blockTag }) as bigint);
-    if (oneBased === 0) {
-      throw new Error(`${label} is not registered as of block ${blockTag}`);
+    // The slot, from the scan rather than from the chain.
+    //
+    // `aliasSlot(h)` is a targeted read naming the alias this proof is for — on a send, the
+    // recipient — and it was answering a question this client had already answered:
+    // AliasRegistered carries the slot, and every one of those events is scanned into
+    // `registryEntries`. Asking again told a node who was about to be paid and returned a
+    // value already in memory.
+    //
+    // Safe to take locally because a slot is assigned once and never reassigned; a
+    // reassignment keeps it. So unlike the keys or the dataHash there is no staleness to
+    // reason about — a slot read at any block is the slot at every later block.
+    //
+    // See docs/rpc-surface.md.
+    const entry = this.registryEntries.find((e) => BigInt(e.aliasHash) === aliasHash);
+    let slot: number;
+    if (entry) {
+      slot = entry.registrySlot;
+    } else {
+      const oneBased = Number(await this.registry.aliasSlot(h, { blockTag }) as bigint);
+      if (oneBased === 0) {
+        throw new Error(`${label} is not registered as of block ${blockTag}`);
+      }
+      slot = oneBased - 1;
     }
-    const slot = oneBased - 1;
 
-    const [siblings, root, record] = await Promise.all([
+    // The root is the one read that is safe to make: every caller asks for it and every caller
+    // gets the same answer, so it carries nothing about who this client is about to pay. It is
+    // also what makes the rest of this function possible — the check that turns local data from
+    // trusted into verified.
+    const aliasKey = aliasHashToSmtKey(aliasHash);
+    const root = BigInt(await this.registry.getRegistryRoot({ blockTag }) as string);
+
+    // The witness, derived locally and checked against that root.
+    //
+    // `getSmtSiblings(slot)` and `aliases(h)` were the last two targeted reads on the send
+    // path. Between them they named the recipient twice: slot↔alias is public from
+    // AliasRegistered, so asking for a slot's path is asking about a person. Both are
+    // answerable from data already scanned — the tree is rebuilt from the same events
+    // (see {rebuildRegistryTree}), and `dataHash` comes from AliasDataUpdated.
+    //
+    // Local data can be stale, so it is proved rather than assumed. Walking the derived path
+    // from the leaf these fields imply must reproduce the root the chain just reported. That
+    // single comparison covers everything at once: a rotated key, an updated `dataHash`, any
+    // registration landing since the last scan — all of them change the leaf or the path, and
+    // all of them fail here rather than several seconds later as a rejected proof.
+    //
+    // This is strictly more checking than the old code did. Fetching both values and using
+    // them unchecked builds a proof against fields nobody confirmed belonged together.
+    if (entry && entry.nullifierKeyHash !== 0n) {
+      const leaf = poseidonHash([
+        entry.spendingCommitment, entry.nullifierKeyHash, entry.dataHash,
+      ]);
+      const siblings = this.registrySMT.getSiblings(slot);
+      if (rootFromSiblings(aliasKey, leaf, slot, siblings) === root) {
+        return { aliasHash: aliasKey, registrySlot: slot, siblings, dataHash: entry.dataHash,
+                 registryRoot: root };
+      }
+    }
+
+    // Out of date, or scanned before the events carried enough to rebuild the tree. Ask —
+    // once, on the rare path, instead of every time on the common one. Both reads are pinned
+    // to the same block as the root, so the path and the leaf agree with what they must prove
+    // against.
+    const [siblingsRaw, record] = await Promise.all([
       this.registry.getSmtSiblings(slot, { blockTag }) as Promise<string[]>,
-      this.registry.getRegistryRoot({ blockTag }) as Promise<string>,
       this.registry.aliases(h, { blockTag }) as Promise<{ dataHash: string }>,
     ]);
-
     return {
-      aliasHash: aliasHashToSmtKey(aliasHash),
+      aliasHash: aliasKey,
       registrySlot: slot,
-      siblings: siblings.map(BigInt),
+      siblings: siblingsRaw.map(BigInt),
       dataHash: BigInt(record.dataHash),
-      registryRoot: BigInt(root),
+      registryRoot: root,
     };
   }
 
@@ -495,19 +609,232 @@ export abstract class HaliasCore {
     return this.config.provider.getBlockNumber();
   }
 
-  /// This client's own registry witness.
-  protected selfRegistryProof() {
-    return this.registryProof(this.keys!.spendingPubkey, "Account");
+  /// What each slot's leaf was built from, so an unchanged slot costs nothing to skip.
+  ///
+  /// Compared as raw fields rather than as the leaf hash: hashing to discover that nothing
+  /// changed is most of the work this exists to avoid.
+  private appliedLeaves = new Map<number, string>();
+
+  /// Bring the registry tree up to date with scanned registrations.
+  ///
+  /// Runs after every scan, so it does the smaller of two jobs rather than one fixed job.
+  ///
+  /// A slot may be revisited — a rotation or a `dataHash` change rewrites one in place, and
+  /// `registryEntries` carries current state rather than history — but `update` is a write to
+  /// a position, not an append, so replaying only the entries whose fields actually moved is
+  /// exact. Order does not matter: each update recomputes its path from siblings already
+  /// stored. Unchanged slots are skipped on their raw fields, so a scan that found no new
+  /// registrations does no hashing at all.
+  ///
+  /// Entries from a cache written before AliasRegistered carried `nullifierKeyHash` cannot
+  /// produce a leaf. Rather than build a tree that is wrong in a way nothing would notice, the
+  /// whole thing is dropped and {registryProof} falls back to fetching. A rescan fixes it.
+  protected rebuildRegistryTree(): void {
+    const fieldsOf = (e: RegistryEntry) =>
+      `${e.spendingCommitment}:${e.nullifierKeyHash}:${e.dataHash}`;
+    const leafOf = (e: RegistryEntry) => ({
+      slot:  e.registrySlot,
+      key:   aliasHashToSmtKey(BigInt(e.aliasHash)),
+      value: poseidonHash([e.spendingCommitment, e.nullifierKeyHash, e.dataHash]),
+    });
+
+    if (this.registryEntries.some((e) => e.nullifierKeyHash === 0n)) {
+      this.registrySMT = new SMT();
+      this.appliedLeaves.clear();
+      return;
+    }
+
+    const changed = this.registryEntries.filter(
+      (e) => this.appliedLeaves.get(e.registrySlot) !== fieldsOf(e));
+    if (changed.length === 0) return;
+
+    // Patch or rebuild, whichever is fewer hashes.
+    //
+    // `update` costs 33 hashes for one entry — it walks all 32 levels — while `fromLeaves`
+    // costs about 2 per entry for the entire tree, because each node is hashed once instead of
+    // once per descendant. So patching wins until the changed set passes N/16, and past that
+    // rebuilding the whole thing is genuinely cheaper. Measured at 10,000 aliases: 17.9 s of
+    // `update` calls against 1.27 s of `fromLeaves`, same tree.
+    if (changed.length * 33 > this.registryEntries.length * 2) {
+      this.registrySMT = SMT.fromLeaves(this.registryEntries.map(leafOf));
+      this.appliedLeaves.clear();
+      for (const e of this.registryEntries) this.appliedLeaves.set(e.registrySlot, fieldsOf(e));
+      return;
+    }
+
+    for (const e of changed) {
+      const { slot, key, value } = leafOf(e);
+      this.registrySMT.update(slot, key, value);
+      this.appliedLeaves.set(slot, fieldsOf(e));
+    }
   }
 
-  protected selectEntry(amount: bigint, tokenAddress: bigint): OwnedEntry {
-    const entry = this.myEntries.find(e =>
-      e.amount >= amount &&
-      e.tokenAddress === tokenAddress &&
-      !this.spentNullifiers.has(computeNullifier(this.keys!.nullifierKey, e.treeNumber, e.leafIndex))
+  /// This client's own registry witness.
+  protected selfRegistryProof() {
+    return this.registryProof(this.keys!.spendingCommitment, "Account");
+  }
+
+  // ── token metadata ─────────────────────────────────────────────────────────
+  //
+  // Resolved once per token and kept, because it cannot change: `decimals()` and `symbol()`
+  // are fixed for the life of an ERC-20, and a note's token address is part of its
+  // commitment. Two accessors rather than one because the callers differ — an entry point
+  // can await, but the formatting inside a synchronous helper cannot, so every public
+  // operation primes the cache first and the sync readers below are then always warm.
+
+  protected tokenMeta = new Map<bigint, TokenInfo>([[0n, ETH_TOKEN_INFO]]);
+
+  /// Symbol and decimals for a token, cached. ETH needs no call.
+  async tokenInfo(tokenAddress: bigint): Promise<TokenInfo> {
+    const hit = this.tokenMeta.get(tokenAddress);
+    if (hit) return hit;
+
+    const address  = ethers.getAddress(ethers.toBeHex(tokenAddress, 20));
+    const contract = new ethers.Contract(
+      address,
+      ["function decimals() view returns (uint8)", "function symbol() view returns (string)"],
+      this.config.provider,
     );
-    if (!entry) throw new Error("Insufficient balance or no suitable UTXO found");
-    return entry;
+
+    // Decimals must be right — an amount is wrong by orders of magnitude without it, so a
+    // token that will not answer is one this client refuses to denominate anything in.
+    const decimals = Number(await contract.decimals());
+
+    // A symbol is a label. Pre-ERC-20-standard tokens return bytes32 here and revert against
+    // this ABI, which is no reason to refuse to move the funds.
+    let symbol: string;
+    try { symbol = String(await contract.symbol()); }
+    catch { symbol = `${address.slice(0, 6)}…${address.slice(-4)}`; }
+
+    const info: TokenInfo = { address: tokenAddress, symbol, decimals };
+    this.tokenMeta.set(tokenAddress, info);
+    return info;
+  }
+
+  /// Cached decimals, for the synchronous paths. Falls back to 18 — the ERC-20 default and
+  /// always correct for ETH — which only matters if a caller reaches one of these before any
+  /// entry point has primed the cache.
+  protected decimalsOf(tokenAddress: bigint): number {
+    return this.tokenMeta.get(tokenAddress)?.decimals ?? 18;
+  }
+
+  /// Cached symbol, for error messages and display.
+  protected symbolOf(tokenAddress: bigint): string {
+    return this.tokenMeta.get(tokenAddress)?.symbol ?? (tokenAddress === 0n ? "ETH" : "tokens");
+  }
+
+  /// A human amount into base units, in this token's decimals.
+  protected parseAmount(amount: string, tokenAddress: bigint): bigint {
+    return ethers.parseUnits(amount, this.decimalsOf(tokenAddress));
+  }
+
+  /// Base units back into a human amount, in this token's decimals.
+  protected formatAmount(amount: bigint, tokenAddress: bigint): string {
+    return ethers.formatUnits(amount, this.decimalsOf(tokenAddress));
+  }
+
+  /// Unspent notes of one token, smallest first.
+  protected spendable(tokenAddress: bigint): OwnedEntry[] {
+    return this.myEntries
+      .filter(e =>
+        e.amount > 0n &&
+        e.tokenAddress === tokenAddress &&
+        !this.spentNullifiers.has(computeNullifier(this.keys!.nullifierKey, e.treeNumber, e.leafIndex)))
+      .sort((a, b) => (a.amount < b.amount ? -1 : a.amount > b.amount ? 1 : 0));
+  }
+
+  /// The notes to spend for `amount` — one or two, smallest that cover it.
+  ///
+  /// Two, whenever two exist, even when one would do. The circuit takes two inputs and
+  /// produces two outputs, so a transaction that fills both slots consumes two notes and
+  /// creates one payment plus one change: a net loss of one note every time. Filling one slot
+  /// and padding with a dummy leaves that consolidation on the table, and a wallet paid in
+  /// many small amounts slowly becomes unable to spend its own balance.
+  ///
+  /// Smallest-first for the same reason. Taking the largest note that covers the amount pays
+  /// the bill and leaves every small note where it was, forever; taking the smallest that
+  /// cover it drains them.
+  ///
+  /// Two is the ceiling, so a balance spread across three notes cannot be spent in one
+  /// transaction however it is selected. {consolidate} is the answer to that, and the error
+  /// here says so rather than claiming the balance is insufficient — which was the old
+  /// message, and was false.
+  protected selectEntries(amount: bigint, tokenAddress: bigint): OwnedEntry[] {
+    const notes = this.spendable(tokenAddress);
+    const total = notes.reduce((s, e) => s + e.amount, 0n);
+    if (total < amount) {
+      throw new Error(
+        `Balance ${this.formatAmount(total, tokenAddress)} ${this.symbolOf(tokenAddress)} ` +
+        `is less than ${this.formatAmount(amount, tokenAddress)}`);
+    }
+
+    // Smallest pair that covers it. Notes are sorted, so walking outward from the smallest
+    // and pulling the largest partner in only when needed finds it without trying every pair.
+    for (let i = 0; i < notes.length; i++) {
+      for (let j = i + 1; j < notes.length; j++) {
+        if (notes[i].amount + notes[j].amount >= amount) return [notes[i], notes[j]];
+      }
+      // A single note that covers it still pairs with the smallest other note, to consolidate.
+      if (notes[i].amount >= amount) {
+        return notes.length > 1
+          ? [notes[i], notes.find((_, k) => k !== i)!]
+          : [notes[i]];
+      }
+    }
+
+    throw new Error(
+      `Balance ${this.formatAmount(total, tokenAddress)} ${this.symbolOf(tokenAddress)} is ` +
+      `spread across ${notes.length} notes and a transaction spends at most two. ` +
+      `Consolidate first — see consolidate().`);
+  }
+
+  /// The two input slots, filled from `entries` and padded with a dummy if only one is given.
+  ///
+  /// Each input names its own root and tree, so the two notes need not live in the same tree —
+  /// which matters once the pool has rolled over, because the notes a wallet holds will
+  /// straddle the boundary. A dummy borrows the first real input's anchor: it proves nothing,
+  /// but the pool still checks the pair it names.
+  protected buildInputs(entries: OwnedEntry[]): {
+    nullifiers: [bigint, bigint];
+    poolRoots: [bigint, bigint];
+    treeNumbers: [number, number];
+    inputs: [TransactInput, TransactInput];
+    total: bigint;
+  } {
+    const keys = this.keys!;
+    const real = entries.map((e) => {
+      const anchor = this.poolAnchor(e.treeNumber);
+      const proof  = this.poolTrees.tree(e.treeNumber).getProof(e.leafIndex);
+      return {
+        nullifier: computeNullifier(keys.nullifierKey, e.treeNumber, e.leafIndex),
+        root: anchor.root,
+        tree: anchor.tree,
+        input: {
+          spendingPrivKey: keys.spendingPrivKey,
+          viewingPrivKey:  keys.viewingPrivKey,
+          blinding: e.blinding,
+          amount:   e.amount,
+          pathIndices:  proof.pathIndices,
+          pathElements: proof.pathElements,
+        },
+        amount: e.amount,
+      };
+    });
+
+    const anchor = real[0] ? { root: real[0].root, tree: real[0].tree } : this.poolAnchor();
+    const pad = () => {
+      const d = dummyInput(anchor.tree, this.consumeDummyIdx(1), POOL_LEVELS);
+      return { nullifier: d.nullifier, root: anchor.root, tree: anchor.tree, input: d.input, amount: 0n };
+    };
+    const [a, b] = [real[0] ?? pad(), real[1] ?? pad()];
+
+    return {
+      nullifiers:  [a.nullifier, b.nullifier],
+      poolRoots:   [a.root, b.root],
+      treeNumbers: [a.tree, b.tree],
+      inputs:      [a.input, b.input],
+      total:       a.amount + b.amount,
+    };
   }
 
 }

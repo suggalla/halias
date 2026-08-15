@@ -3,7 +3,7 @@ import { ethers } from "ethers";
 import { init, deriveKeysFromRoot, poseidonHash } from "../src/crypto";
 import { generateMnemonic, rootFromMnemonic } from "../src/seed";
 
-// Per-alias key derivation. One identity used to publish a single spendingPubkey for every
+// Per-alias key derivation. One identity used to publish a single spendingCommitment for every
 // alias it registered, which linked them all in the public registry and merged their
 // notes into one balance.
 describe("per-alias key derivation", () => {
@@ -17,7 +17,7 @@ describe("per-alias key derivation", () => {
   it("gives each alias index a completely distinct key set", () => {
     const a = keysFor(0);
     const b = keysFor(1);
-    expect(a.spendingPubkey).to.not.equal(b.spendingPubkey);
+    expect(a.spendingCommitment).to.not.equal(b.spendingCommitment);
     expect(a.spendingPrivKey).to.not.equal(b.spendingPrivKey);
     expect(a.viewingPrivKey).to.not.equal(b.viewingPrivKey);
     expect(a.nullifierKey).to.not.equal(b.nullifierKey);
@@ -26,19 +26,19 @@ describe("per-alias key derivation", () => {
   });
 
   it("is deterministic — the same index always rebuilds the same alias", () => {
-    expect(keysFor(3).spendingPubkey).to.equal(keysFor(3).spendingPubkey);
+    expect(keysFor(3).spendingCommitment).to.equal(keysFor(3).spendingCommitment);
     expect(ethers.hexlify(keysFor(3).encryption.publicKey))
       .to.equal(ethers.hexlify(keysFor(3).encryption.publicKey));
   });
 
   it("defaults to index 0", () => {
-    expect(keysFor().spendingPubkey).to.equal(keysFor(0).spendingPubkey);
+    expect(keysFor().spendingCommitment).to.equal(keysFor(0).spendingCommitment);
   });
 
   it("separates roots as well as aliases", () => {
     const other = rootFromMnemonic(generateMnemonic());
-    expect(keysFor(0).spendingPubkey)
-      .to.not.equal(deriveKeysFromRoot(other, 0).spendingPubkey);
+    expect(keysFor(0).spendingCommitment)
+      .to.not.equal(deriveKeysFromRoot(other, 0).spendingCommitment);
   });
 
   it("no alias seed collides with the spending or viewing key", () => {
@@ -55,16 +55,16 @@ describe("per-alias key derivation", () => {
 
   it("spans many indices without collision", () => {
     const seen = new Set<string>();
-    for (let i = 0; i < 24; i++) seen.add(keysFor(i).spendingPubkey.toString());
+    for (let i = 0; i < 24; i++) seen.add(keysFor(i).spendingCommitment.toString());
     expect(seen.size).to.equal(24);
   });
 
-  it("keeps the spending pubkey the Poseidon image of its private key", () => {
+  it("keeps the spending commitment the Poseidon image of its private key", () => {
     // What the registry publishes and the circuit re-derives. If these ever disagree the
     // alias receives notes it cannot spend.
     for (const i of [0, 5]) {
       const k = keysFor(i);
-      expect(k.spendingPubkey).to.equal(poseidonHash([k.spendingPrivKey]));
+      expect(k.spendingCommitment).to.equal(poseidonHash([k.spendingPrivKey]));
       expect(k.nullifierKey).to.equal(poseidonHash([k.viewingPrivKey]));
     }
   });

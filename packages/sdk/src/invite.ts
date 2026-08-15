@@ -8,7 +8,7 @@ import { poseidonHash } from "./crypto";
 export interface InviteKeys {
   spendingPrivKey:       bigint;
   viewingPrivKey:        bigint;
-  spendingPubkey:        bigint;
+  spendingCommitment:        bigint;
   nullifierKey:          bigint;
   nullifierKeyHash:      bigint;
   blinding:              bigint;
@@ -18,6 +18,26 @@ export interface InviteKeys {
   /// else here, so the inviter's own wallet does not appear as the owner of a throwaway
   /// account — which would tie them to the invite in public state.
   ownerAddress:          string;
+}
+
+/// Domain tag for invite secrets. "INVT" ascii (0x494e5654), verified by derivation in the
+/// SDK tests rather than trusted as a literal — a transposed digit in a domain constant is
+/// invisible on its own, and this repo has already had one comment describe the wrong word.
+export const INVITE_DOMAIN = 0x494e5654n;
+
+/// The secret behind invite number `index`, derived from the creator's root.
+///
+/// Deterministic, and that is the whole point. A random secret exists only in the response
+/// that returned it: close the window without saving the code and the funds are stranded, on
+/// the one flow whose purpose is giving money to someone who has none. Deriving it from the
+/// root instead means the creator can recompute it on any device holding the phrase — so
+/// invites can be listed, their status checked, and unclaimed ones taken back.
+///
+/// The claimer never sees the root. They are handed one secret, which reveals nothing about
+/// the others: Poseidon is preimage-resistant, so `secret(i)` gives no information about
+/// `root`, and therefore none about `secret(j)`.
+export function inviteSecretAt(root: bigint, index: number): bigint {
+  return poseidonHash([root, BigInt(index), INVITE_DOMAIN]);
 }
 
 export function deriveInviteKeys(secret: bigint): InviteKeys {
@@ -38,7 +58,7 @@ export function deriveInviteKeys(secret: bigint): InviteKeys {
   return {
     spendingPrivKey,
     viewingPrivKey,
-    spendingPubkey:        poseidonHash([spendingPrivKey]),
+    spendingCommitment:        poseidonHash([spendingPrivKey]),
     nullifierKey,
     nullifierKeyHash:      poseidonHash([nullifierKey, 1n]),
     blinding,

@@ -27,7 +27,31 @@ function smtHash2(left: bigint, right: bigint): bigint {
   return poseidonHash([left, right]);
 }
 
-// Sparse Merkle Tree (32 levels) mirroring Halias.sol _smtUpdate/_smtZeros.
+/// The root a sibling path implies for a given leaf at a given slot.
+///
+/// The verifier's half of a membership proof, done locally. Its use here is not to check the
+/// contract — it is to check *ourselves*: fields taken from a scan rather than fetched can be
+/// stale, and the cheapest way to find out is to derive the root they imply and compare it
+/// against the one the chain reported. Matching means the local copy was current; differing
+/// means refetch, rather than discovering it as a rejected proof several seconds later.
+///
+/// Mirrors the circuit's walk exactly — smtHash1 for the leaf, smtHash2 upward, path bits
+/// taken from the slot low-bit first.
+export function rootFromSiblings(
+  aliasKey: bigint,
+  value: bigint,
+  slot: number,
+  siblings: bigint[],
+): bigint {
+  let current = smtHash1(aliasKey, value);
+  for (let i = 0; i < siblings.length; i++) {
+    const isRight = ((slot >> i) & 1) === 1;
+    current = isRight ? smtHash2(siblings[i], current) : smtHash2(current, siblings[i]);
+  }
+  return current;
+}
+
+// Sparse Merkle Tree (32 levels), mirroring SMTRegistry's _smtUpdate/_smtZeros.
 // Position = the slot the contract assigned at registration. Value = RegistryLeaf hash.
 // The leaf still hashes aliasKey (aliasHash % FIELD_PRIME), so identity is bound by the
 // leaf while the path follows the slot — matching the circuit exactly.
@@ -62,6 +86,51 @@ export class SMT {
       current = isRight ? smtHash2(sibling, current) : smtHash2(current, sibling);
     }
     this.root = current;
+  }
+
+  /// Build a whole tree at once, bottom-up.
+  ///
+  /// {update} is the wrong tool for the initial build and expensively so. It walks 32 levels
+  /// per call, so N of them recompute every ancestor N times over: 33 hashes per alias, 330,000
+  /// for ten thousand aliases, which measured at 18.5 s. Hashing each node exactly once instead
+  /// costs N leaves plus ~N internal nodes — 20,023 for the same tree, **16.5x fewer**.
+  ///
+  /// Same tree, same node map, so {update} still applies afterwards for the handful of
+  /// registrations a later scan turns up — that path is already cheap because it is a few
+  /// aliases, not all of them.
+  static fromLeaves(leaves: Array<{ slot: number; key: bigint; value: bigint }>): SMT {
+    const smt = new SMT();
+    const zeros = getZeros();
+
+    // Level 0 is the leaf hashes, keyed by slot — the same positions {update} writes.
+    let level = new Map<bigint, bigint>();
+    for (const l of leaves) {
+      const path = BigInt(l.slot);
+      const h = smtHash1(l.key, l.value);
+      smt.nodes.set(`0:${path}`, h);
+      level.set(path, h);
+    }
+
+    // Each level up: pair occupied nodes with their sibling, falling back to the empty subtree
+    // for that height. Only occupied parents are visited, which is what keeps this proportional
+    // to the number of aliases rather than to the 2^32 the tree could hold.
+    for (let i = 0; i < REGISTRY_LEVELS; i++) {
+      const next = new Map<bigint, bigint>();
+      for (const [path, value] of level) {
+        const parent = path >> 1n;
+        if (next.has(parent)) continue;   // the sibling already produced it
+        const sibling = level.get(path ^ 1n) ?? zeros[i];
+        const h = (path & 1n) === 1n
+          ? smtHash2(sibling, value)
+          : smtHash2(value, sibling);
+        next.set(parent, h);
+        smt.nodes.set(`${i + 1}:${parent}`, h);
+      }
+      level = next;
+    }
+
+    smt.root = level.get(0n) ?? zeros[REGISTRY_LEVELS];
+    return smt;
   }
 
   // Snapshot used to build the tree state a pending registration WILL produce.

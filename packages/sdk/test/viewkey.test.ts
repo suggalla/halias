@@ -19,7 +19,7 @@ describe("view keys", () => {
   it("round-trips", () => {
     const v = viewKeysFrom(deriveKeysFromRoot(root, 0));
     const back = decodeViewKey(encodeViewKey(v));
-    expect(back.spendingPubkey).to.equal(v.spendingPubkey);
+    expect(back.spendingCommitment).to.equal(v.spendingCommitment);
     expect(back.viewingPrivKey).to.equal(v.viewingPrivKey);
     expect(ethers.hexlify(back.encryptionPrivKey)).to.equal(ethers.hexlify(v.encryptionPrivKey));
   });
@@ -29,7 +29,7 @@ describe("view keys", () => {
     const rebuilt = keysFromViewKeys(decodeViewKey(encodeViewKey(viewKeysFrom(full))));
 
     // Recognising your own notes, and recognising them as spent.
-    expect(rebuilt.spendingPubkey).to.equal(full.spendingPubkey);
+    expect(rebuilt.spendingCommitment).to.equal(full.spendingCommitment);
     expect(rebuilt.nullifierKey).to.equal(full.nullifierKey);
     // Opening the ciphertexts.
     expect(ethers.hexlify(rebuilt.encryption.privateKey))
@@ -67,13 +67,13 @@ describe("view keys", () => {
     const v = viewKeysFrom(full);
     for (const candidate of [
       v.viewingPrivKey,
-      v.spendingPubkey,
+      v.spendingCommitment,
       poseidonHash([v.viewingPrivKey]),
       poseidonHash([v.viewingPrivKey, 0n]),
       BigInt(ethers.hexlify(v.encryptionPrivKey)),
     ]) {
       expect(candidate).to.not.equal(full.spendingPrivKey);
-      expect(poseidonHash([candidate])).to.not.equal(full.spendingPubkey);
+      expect(poseidonHash([candidate])).to.not.equal(full.spendingCommitment);
     }
   });
 
@@ -121,8 +121,8 @@ describe("view keys", () => {
     });
 
     it("tolerates surrounding whitespace", () => {
-      expect(decodeViewKey(`  ${good()}\n`).spendingPubkey)
-        .to.equal(decodeViewKey(good()).spendingPubkey);
+      expect(decodeViewKey(`  ${good()}\n`).spendingCommitment)
+        .to.equal(decodeViewKey(good()).spendingCommitment);
     });
   });
 });
