@@ -29,7 +29,7 @@
 	// Whether the balance has to leave first is decided by the balance, not by the user.
 	//
 	// A handover replaces the registry entry with the new owner's keys, and every spend that
-	// needs a change output proves the *sender's* pubkey is registered — under this alias,
+	// needs a change output proves the *sender's* spending commitment is registered — under this alias,
 	// which it no longer is. So notes left behind are not merely forgotten, they are stranded:
 	// only an exact-amount withdrawal producing no change could still move them.
 	const mustSweep = $derived((alias?.balance ?? 0n) > 0n);
@@ -119,16 +119,17 @@
 		<div class="form">
 			<label>
 				<span>New owner’s address</span>
-				<input bind:value={newOwner} placeholder="0x…" disabled={busy} />
+				<input class="mono" bind:value={newOwner} placeholder="0x…" disabled={busy} />
 			</label>
 
 			{#if mustSweep}
 				<label>
 					<span>Send this alias’s balance to</span>
-					<input bind:value={sweepTo} placeholder="0x…" disabled={busy} />
+					<input class="mono" bind:value={sweepTo} placeholder="0x…" disabled={busy} />
 				</label>
 				<p class="warn">
-					This alias holds {formatEther(alias?.balance ?? 0n)} ETH, so it is emptied before it
+					This alias holds {formatEther(alias?.balance ?? 0n)} ETH — plus anything it holds in
+					other assets, which the sweep empties too — so it is cleared out before it
 					changes hands. That is not a courtesy — a handover installs the new owner's keys,
 					and afterwards nothing left behind can be spent, because every spend has to prove
 					the sender's key is the one registered here.
@@ -163,7 +164,8 @@
 				<div><dt>New owner</dt><dd class="mono">{newOwner.trim()}</dd></div>
 				{#if mustSweep}
 					<div><dt>Balance to</dt><dd class="mono">{sweepTo.trim()}</dd></div>
-					<div><dt>Emptying</dt><dd>{formatEther(alias?.balance ?? 0n)} ETH</dd></div>
+					<div><dt>Emptying</dt><dd>{formatEther(alias?.balance ?? 0n)} ETH, and every other
+						asset held under this name</dd></div>
 				{/if}
 			</dl>
 
@@ -211,7 +213,7 @@
 		letter-spacing: 0.08em; color: var(--text-dim); }
 	dd { margin: 0; min-width: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
 
-	.mono { font-family: ui-monospace, monospace; font-size: 0.78rem; overflow-wrap: anywhere; }
+	.mono { font-family: var(--font-mono); font-size: 0.78rem; overflow-wrap: anywhere; }
 	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
 	.warn { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--caution);
 		border-left: 2px solid var(--caution); padding-left: 0.6rem; }

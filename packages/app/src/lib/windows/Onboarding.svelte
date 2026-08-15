@@ -15,7 +15,9 @@
 		type VaultEntry,
 		type VaultKind
 	} from '../sdk/vault.js';
-	import { isValidMnemonic } from 'halias-sdk';
+	// From the seed module, not the package root — see the note in sdk/client.ts. Validating a
+	// mnemonic is ethers only; it must not drag the proving stack into the first load.
+	import { isValidMnemonic } from 'halias-sdk/seed';
 
 	// Getting in takes two separate things, and conflating them is why this screen exists
 	// rather than a single Connect button.
@@ -23,11 +25,12 @@
 	//   the phrase  — holds the note keys. Never signs. Never leaves this browser.
 	//   the wallet  — broadcasts and pays gas. Never sees the phrase.
 	//
-	// They used to be one secret: the keys came from a signature, so any site that got you to
-	// sign one fixed string owned everything. A user who does not understand the split will
-	// back up the wrong thing, so the two steps stay numbered and named.
+	// They must never collapse into one. Deriving note keys from a wallet signature would mean
+	// any site that got you to sign one fixed string owned everything you hold — so that is a
+	// standing prohibition, not a design preference. A user who does not understand the split
+	// will back up the wrong thing, which is why the two steps stay numbered and named.
 	//
-	// The phrase is now stored encrypted rather than retyped each session — see vault.ts. The
+	// The phrase is stored encrypted rather than retyped each session — see vault.ts. The
 	// password protects *this browser's copy*; the phrase is what recovers the wallet
 	// anywhere, and the wording below has to keep those apart.
 
@@ -321,9 +324,9 @@
 
 						{#if error}<p class="err">{error}</p>{/if}
 
-						<!-- The way to the mode picker for anyone who already has something stored.
-						     It used to read "Use a different phrase", which described half of what it
-						     now does and hid the other half entirely. -->
+						<!-- The way to the mode picker for anyone who already has something stored. The
+						     label names both halves: this adds a full wallet *or* a view-only key, and a
+						     label mentioning only the phrase would hide the second entirely. -->
 						<div class="alt">
 							<button class="link" onclick={startCreate}>+ Add a wallet or view-only key</button>
 							<button class="link danger" onclick={() => forget(selected!)}>
@@ -603,7 +606,7 @@
 	.check em { display: block; font-style: normal; font-size: 0.76rem; color: var(--text-dim);
 		margin-top: 0.15rem; }
 
-	textarea { font-family: ui-monospace, monospace; font-size: 0.82rem; line-height: 1.6;
+	textarea { font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.6;
 		resize: vertical; }
 	/* A freshly generated phrase should not sit legible on screen while someone finds a pen. */
 	textarea.masked { -webkit-text-security: disc; }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatEther } from 'ethers';
+	import { formatEther, formatUnits } from 'ethers';
 	import { clientState, getClient, run, rescan } from '../sdk/client.js';
 
 	// What this alias has done, reconstructed from chain rather than recorded.
@@ -28,12 +28,20 @@
 	let loadedFor: string | null = null;
 
 	const alias = $derived($clientState.selected);
+	// History is per-token, as balances are: a note names one asset, so entries for another
+	// belong on that token's list. Gas stays in ETH throughout — it is what the chain charges,
+	// not what moved.
+	const sym = $derived($clientState.token.symbol);
+	const fmt = (v: bigint) => formatUnits(v, $clientState.token.decimals);
 	const busy = $derived($clientState.status === 'syncing');
 
-	// Reload whenever the selected alias changes — histories do not merge across aliases.
+	// Reload whenever the selected alias OR the selected token changes — a history does not
+	// merge across either. Keyed on both, because guarding on the alias alone left the previous
+	// token's entries on screen relabelled with the new token's symbol and decimals: the same
+	// numbers, silently reinterpreted at a different scale, which is worse than showing nothing.
 	$effect(() => {
-		const current = alias?.aliasHash ?? null;
-		if (current === loadedFor) return;   // already showing this alias
+		const current = alias ? `${alias.aliasHash}:${$clientState.token.address}` : null;
+		if (current === loadedFor) return;   // already showing this alias and token
 		loadedFor = current;
 
 		if (!current) {
@@ -42,7 +50,7 @@
 			return;
 		}
 		loaded = false;
-		run(() => getClient().history()).then((r) => {
+		run(() => getClient().history(BigInt($clientState.token.address))).then((r) => {
 			if (r) entries = r as Entry[];
 			loaded = true;
 		});
@@ -63,7 +71,7 @@
 	// third party funding this alias, which is not a relay at all.
 	function payerTag(e: Entry): string | null {
 		if (e.relayed) {
-			return e.relayerFee > 0n ? `relayed · fee ${formatEther(e.relayerFee)} ETH` : 'relayed';
+			return e.relayerFee > 0n ? `relayed · fee ${fmt(e.relayerFee)} ${sym}` : 'relayed';
 		}
 		if (sameAddr(e.feePayer, $clientState.address)) return null;
 		if (e.kind === 'deposit') return 'from another wallet';
@@ -97,7 +105,7 @@
 		rescanning = true;
 		rescanned = false;
 		await rescan();
-		const r = await run(() => getClient().history());
+		const r = await run(() => getClient().history(BigInt($clientState.token.address)));
 		if (r) entries = r as Entry[];
 		loaded = true;
 		rescanning = false;
@@ -150,7 +158,7 @@
 							     which is true of the value and wrong about the event. -->
 							<span class="nm">{alias?.name ? `${alias.name}.hls` : '—'}</span>
 						{:else}
-							{SIGN[e.kind]}{formatEther(e.amount)} ETH
+							{SIGN[e.kind]}{fmt(e.amount)} {sym}
 						{/if}
 					</span>
 					<span class="blk">block {e.blockNumber}</span>
@@ -194,19 +202,19 @@
 	.blk { color: var(--text-dim); font-size: 0.75rem; }
 	.meta { grid-column: 1 / -1; font-size: 0.7rem; color: var(--text-dim);
 		font-variant-numeric: tabular-nums; }
-	.payer { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+	.payer { font-family: var(--font-mono); overflow-wrap: anywhere; }
 	.payer.other { opacity: 1; color: var(--info); }
 	.tag { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.07em;
 		border: 1px solid currentColor; border-radius: 3px; padding: 0 0.25rem;
 		color: var(--info); opacity: 0.9; }
 	/* Spans the row: a full hash does not fit beside the rest and is the thing you copy. */
 	.tx { grid-column: 1 / -1; color: var(--text-dim); font-size: 0.7rem;
-		font-family: ui-monospace, monospace; overflow-wrap: anywhere; text-align: left;
+		font-family: var(--font-mono); overflow-wrap: anywhere; text-align: left;
 		background: none; border: none; color: inherit; cursor: pointer; padding: 0; }
 	.tx:hover { opacity: 0.9; }
 	.dim { color: var(--text-dim); }
 	.empty, .note { font-size: 0.8rem; color: var(--text-dim); margin: 0; }
-	.nm { font-family: ui-monospace, monospace; font-size: 0.8rem; color: var(--text-dim);
+	.nm { font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-dim);
 		overflow-wrap: anywhere; }
 	.bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
 		padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }

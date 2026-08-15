@@ -1,6 +1,12 @@
 import { get, writable } from 'svelte/store';
-import { BrowserProvider, Contract, Interface, ZeroAddress, isAddress, keccak256, toUtf8Bytes } from 'ethers';
-import { POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI } from 'halias-sdk';
+import { BrowserProvider, Contract, Interface, ZeroAddress, isAddress, keccak256, toUtf8Bytes, getAddress, toBeHex } from 'ethers';
+const ethers = { getAddress, toBeHex };
+// From the ABI module directly, not the package root. The root re-exports the proving stack,
+// and one static import of it pulls circomlibjs's Poseidon constants and ffjavascript's wasm
+// builder into the initial chunk — about 3.5MB, before the page can render. Nothing on this
+// path needs them: an ABI is a list of strings, and the proving code is already reached
+// through `await import()` at the point something is actually being proved.
+import { POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI } from 'halias-sdk/contract';
 import { findWallet, soleWallet, legacyWallet } from './wallets.js';
 
 // Errors the contracts can revert with that no ABI fragment above declares — the SDK's ABIs
@@ -11,10 +17,10 @@ const ERROR_ABI = [
 	'error AliasKeyTaken()',
 	'error AliasNotRegistered()',
 	'error InvalidAliasHash()',
-	'error InvalidSpendingPubkey()',
+	'error InvalidSpendingCommitment()',
 	'error InvalidNullifierKeyHash()',
 	'error InvalidEncryptionPubkey()',
-	'error PubkeyOutOfField()',
+	'error SpendingCommitmentOutOfField()',
 	'error NullifierKeyHashOutOfField()',
 	'error DataHashOutOfField()',
 	'error NotAliasOwner()',
@@ -48,7 +54,7 @@ const ERROR_ABI = [
 	'error ZeroCommitment()',
 	'error PoolFull()'
 ];
-import { getNetwork, isSplitDeployment, usableNetworks, ARTIFACT_URLS } from './config.js';
+import { ETH_TOKEN, tokensFor, type TokenConfig, getNetwork, isSplitDeployment, usableNetworks, ARTIFACT_URLS } from './config.js';
 import type { NetworkConfig } from './config.js';
 
 // A single live Halias client, created once a wallet is connected.
@@ -95,6 +101,19 @@ export interface ClientState {
 	/// Balance of the selected alias, or zero when none is selected. Balances no longer
 	/// merge across aliases — each has its own keys.
 	balance: bigint;
+	/// The most of that balance that can leave in one transaction. The circuit takes two
+	/// note inputs, so a balance spread over three or more notes cannot all move at once —
+	/// and showing `balance` alone offers an amount the wallet would then refuse to send.
+	/// Equal to `balance` in the ordinary case; below it means consolidation is needed.
+	sendableNow: bigint;
+	/// How many notes make up the balance. Only interesting when it exceeds two.
+	noteCount: number;
+	/// Which asset the three figures above are denominated in. Balances do not merge across
+	/// tokens — a note names exactly one — so every amount on screen belongs to this one and
+	/// switching re-reads rather than converts.
+	token: TokenConfig;
+	/// What this deployment offers. One entry means the selector is not worth showing.
+	tokens: TokenConfig[];
 	/// The connected EOA's public ETH, which is what funds deposits and gas. Distinct from
 	/// anything shielded, and worth showing beside it: reporting only the pool balance
 	/// reads as "you have nothing" to someone whose wallet is full.
@@ -112,6 +131,10 @@ const EMPTY: ClientState = {
 	selected: null,
 	aliases: [],
 	balance: 0n,
+	sendableNow: 0n,
+	noteCount: 0,
+	token: ETH_TOKEN,
+	tokens: [ETH_TOKEN],
 	walletBalance: 0n
 };
 
@@ -126,9 +149,10 @@ let baseConfig: any = null;      // enough to build another one on demand
 // The secret every alias derives from. Held so switching or enumerating aliases does not
 // re-stretch the phrase through PBKDF2 on every client.
 //
-// It no longer comes from a signature. `personal_sign` derivation meant any site that got a
-// user to sign one fixed string owned every key they had — silently, totally, and with no
-// way to remediate notes already on chain. See packages/protocol/docs/key-management.md.
+// It must never come from a wallet signature. `personal_sign` derivation would mean any site
+// that got a user to sign one fixed string owned every key they had — silently, totally, and
+// with no way to remediate notes already on chain. Not even as a fallback. See
+// packages/protocol/docs/key-management.md.
 let root: bigint | null = null;
 
 // Which wallet the session is connected to, so a wallet event reconnects to that one rather
@@ -434,11 +458,16 @@ export async function connectViewOnly(): Promise<void> {
 			status: 'syncing',
 			// No address: there is no account here, only a key that reads one.
 			address: null,
-			chainId: net.chainId
+			chainId: net.chainId,
+			// What this deployment holds. Published with the chain id because they change
+			// together — a token list belongs to one chain and means nothing on another.
+			tokens: tokensFor(net.chainId),
+			token: ETH_TOKEN
 		}));
 
 		const self = await c.selfAlias();
-		const balance = (await c.balance()).total;
+		const view = await c.balance();
+		const balance = view.total;
 		const summary: AliasSummary = {
 			aliasHash: self?.aliasHash ?? '0x',
 			slot: self?.slot ?? 0,
@@ -455,7 +484,9 @@ export async function connectViewOnly(): Promise<void> {
 			status: 'ready',
 			aliases: [summary],
 			selected: summary,
-			balance
+			balance,
+			sendableNow: view.sendableNow,
+			noteCount: view.entries.length
 		}));
 	} catch (e: any) {
 		client = null;
@@ -504,13 +535,12 @@ export async function connect(rdns?: string): Promise<void> {
 		if (!net || !isSplitDeployment(net)) {
 			const target = usableNetworks()[0];
 			if (!target)
-				// Two very different causes, and the old message only named one of them. A dev
-				// server started while deployments/networks/localhost.json did not exist bakes in
-				// an empty glob, so the app keeps reporting this until it is restarted — long
-				// after the file has come back.
+				// The restart is the part worth spelling out. Addresses are inlined at build time,
+				// so a dev server started while deployments/networks/localhost.json did not exist
+				// bakes in an empty glob and keeps reporting this long after the file has come back.
 				throw new Error(
-					'No usable deployment in this build. Sepolia still points at the pre-split ' +
-						'contracts, and no local deployment was found when this build started. Run ' +
+					'No usable deployment in this build. There is no live Sepolia deployment, and ' +
+						'no local one was found when this build started. Run ' +
 						'`npx hardhat run scripts/deploy.ts --network localhost`, then restart the dev ' +
 						'server so it picks the file up.'
 				);
@@ -562,7 +592,16 @@ export async function connect(rdns?: string): Promise<void> {
 
 		// Read after any network switch, since switching re-derives the signer.
 		const address = await signer.getAddress();
-		clientState.update((s) => ({ ...s, status: 'syncing', address, chainId }));
+		// The token list belongs to the chain, so it is published the moment the chain is
+		// known and reset to ETH — a token offered by the previous network may not exist here.
+		clientState.update((s) => ({
+			...s,
+			status: 'syncing',
+			address,
+			chainId,
+			tokens: tokensFor(chainId),
+			token: ETH_TOKEN
+		}));
 
 		// Derived here, explicitly, rather than as a side effect of whichever code path happens
 		// to build a client first — that left it uncached for a wallet with no aliases yet, so
@@ -594,6 +633,23 @@ export function disconnect() {
 }
 
 /// The EOA's own ETH — public, spendable for gas, and not in the pool.
+/// The connected wallet's balance of one token, in that token's base units.
+///
+/// Separate from `walletBalance`, which is ETH and funds gas. A deposit of an ERC-20 spends
+/// this while still needing ETH for gas, so the two are genuinely different questions and
+/// answering the wrong one tells someone they cannot afford a deposit they can.
+export async function tokenBalanceOf(tokenAddress: string): Promise<bigint> {
+	const st = get(clientState);
+	if (!baseConfig || !st.address) return 0n;
+	if (tokenAddress.toLowerCase() === ETH_TOKEN.address) return st.walletBalance;
+	const erc20 = new Contract(
+		tokenAddress,
+		['function balanceOf(address) view returns (uint256)'],
+		baseConfig.provider
+	);
+	return await erc20.balanceOf(st.address);
+}
+
 export async function refreshWalletBalance(): Promise<void> {
 	if (!baseConfig) return;
 	try {
@@ -615,9 +671,16 @@ export async function loadAliases(): Promise<void> {
 	await refreshWalletBalance();
 	const { Halias } = await import('halias-sdk');
 	const found = await Halias.discoverAliases(baseConfig, 32, root ?? undefined);
-	// Who the connected wallet is, so ownership can be reported per alias. Aliases are found
-	// by key now, so this decides what the wallet may do with each — not which ones it sees.
-	const me = await baseConfig.signer.getAddress().catch(() => null);
+	// Whether *this recovery phrase* owns each alias, which is not the same question as which
+	// address is connected.
+	//
+	// An alias is owned by a key derived from the phrase — see crypto.ts, `keys.owner` — and
+	// never by the EVM wallet, which only broadcasts and pays gas. Comparing the on-chain owner
+	// against the connected address therefore answers "does MetaMask happen to hold this name",
+	// which is false for every alias this app creates, and the three owner-only actions were
+	// disabled permanently as a result.
+	//
+	// Resolved per alias below, because each index derives its own owner key.
 	// discoverAliases signs once and returns the root, so every client built below reuses it.
 	if (found.length > 0) root ??= found[0].root;
 	const names = readNameMap();
@@ -642,7 +705,12 @@ export async function loadAliases(): Promise<void> {
 			slot: a.slot,
 			index: a.index,
 			owner: a.owner,
-			ownedHere: !!a.owner && !!me && a.owner.toLowerCase() === me.toLowerCase(),
+			// `index === null` means no client derives this alias, so it is not ours whatever the
+			// registry says — the lookup below would be meaningless rather than merely absent.
+			ownedHere:
+				!!a.owner &&
+				a.index !== null &&
+				a.owner.toLowerCase() === clients.get(a.index)?.ownerAddress?.toLowerCase(),
 			// Chain first. Registration publishes the plaintext in NamePublished — it is the one
 			// moment it can be, and every registration path does it — so the name survives a new
 			// browser, a cleared cache, and a device that never saw it. This read the local map
@@ -662,16 +730,60 @@ export async function loadAliases(): Promise<void> {
 
 // Re-reads chain state and refreshes the derived view. Called after every action so the
 // UI reflects what actually landed rather than what was optimistically assumed.
+
+/// Config list plus anything discovered, matched case-insensitively and without duplicates.
+///
+/// Discovery wins on decimals — it read them off the token contract, while the config carries
+/// whatever the deploy script recorded.
+function mergeTokens(configured: TokenConfig[], discovered: TokenConfig[]): TokenConfig[] {
+	const out = [...configured];
+	for (const d of discovered) {
+		const at = out.findIndex((t) => t.address.toLowerCase() === d.address.toLowerCase());
+		if (at === -1) out.push(d);
+		else out[at] = { ...out[at], symbol: d.symbol, decimals: d.decimals };
+	}
+	return out;
+}
+
 export async function refresh(): Promise<void> {
 	if (!client) return;
 	// Rescan, do not just re-read. balance() goes through ensureSync(), which returns early
 	// once a client has synced — so a client's view of the registry is frozen at whenever it
 	// first loaded. Register an alias on one client and the others never learn it exists,
-	// which surfaces as "Recipient pubkey not found in registry" for a name plainly visible
+	// which surfaces as "Recipient spending commitment not found in registry" for a name plainly visible
 	// in the UI.
 	await client.refresh();
-	const balance = (await client.balance()).total;
+	// Denominated in the selected token. A note names exactly one asset, so there is no
+	// aggregate balance to report — switching token is a re-read, never a conversion.
+	const token = get(clientState).token;
+	const isEth = token.address === ETH_TOKEN.address;
+	const bal = await client.balance(BigInt(token.address));
+	const balance = bal.total;
 	const names = readNameMap();
+
+	// Decimals come back from the SDK, which read them off the token contract. Config only
+	// decides which assets to *offer*; believing its decimals over the chain's would put the
+	// display and the transaction on different scales — the display wrong, the transfer right,
+	// and nothing on screen to show they disagreed. Which is the bug this whole change exists
+	// to remove, so it does not get to reappear one layer up.
+	const resolved: TokenConfig = {
+		address: token.address,
+		symbol: bal.token.symbol,
+		decimals: bal.token.decimals
+	};
+
+	// Everything this alias actually holds, discovered from its own notes rather than from the
+	// deployment's list. Anyone can send any ERC-20 to any registered alias without asking, so
+	// a wallet that only showed configured assets would report zero while the money sat there
+	// unspendable. The config list decides what is offered for *deposit*; this decides what is
+	// visible and spendable, and the two are merged below.
+	const discovered: TokenConfig[] = (await client.heldTokens()).map(
+		(h: { token: { address: bigint; symbol: string; decimals: number } }) => ({
+			address: ethers.getAddress(ethers.toBeHex(h.token.address, 20)),
+			symbol: h.token.symbol,
+			decimals: h.token.decimals
+		})
+	);
 
 	clientState.update((s) => {
 		// The selected alias is the one whose index matches this client. aliasHash is a
@@ -680,13 +792,85 @@ export async function refresh(): Promise<void> {
 			s.aliases.find((a) => a.index === client.index) ?? s.selected;
 		return {
 			...s,
+			token: resolved,
+			// Union, config first. A configured asset keeps its position so the selector does not
+			// reorder under someone mid-flow; anything discovered and not configured is appended.
+			tokens: mergeTokens(
+				s.tokens.map((t) => (t.address === resolved.address ? resolved : t)),
+				discovered
+			),
 			balance,
+			sendableNow: bal.sendableNow,
+			noteCount: bal.entries.length,
 			selected: selected
-				? { ...selected, balance, name: names[selected.aliasHash.toLowerCase()] ?? selected.name }
+				? {
+						...selected,
+						// The alias list is a wallet-level overview and reads in ETH — writing a
+						// token balance into the same field would put two denominations in one
+						// column with nothing on screen to tell them apart.
+						balance: isEth ? balance : selected.balance,
+						name: names[selected.aliasHash.toLowerCase()] ?? selected.name
+					}
 				: null,
-			aliases: s.aliases.map((a) => (a.index === client.index ? { ...a, balance } : a))
+			aliases: isEth
+				? s.aliases.map((a) => (a.index === client.index ? { ...a, balance } : a))
+				: s.aliases
 		};
 	});
+}
+
+/// Offer an arbitrary ERC-20, resolved from its address.
+///
+/// The curated list a deployment ships is about what to *suggest*, never about what the
+/// protocol accepts — the pool takes any token address, and a note simply names the one it
+/// holds. So anyone can deposit or be paid in something this build has never heard of, and
+/// refusing to show it would hide funds that are perfectly spendable.
+///
+/// Symbol and decimals come from the token contract, never from what the user typed. Decimals
+/// especially: taking them on trust is how "1.0" of a 6-decimal token becomes a million times
+/// the intended amount, and there is no way to notice afterwards.
+///
+/// Returns what it added — checksummed address included, so the caller can select it without
+/// re-deriving anything — or throws with something worth showing. An address with no contract
+/// behind it is the common mistake.
+export async function addToken(address: string): Promise<TokenConfig> {
+	if (!isAddress(address)) throw new Error('That is not a valid address');
+	const checksummed = getAddress(address);
+
+	const existing = get(clientState).tokens.find(
+		(t) => t.address.toLowerCase() === checksummed.toLowerCase()
+	);
+	if (existing) return existing;
+
+	if (!client) throw new Error('Connect first');
+	// Read through the SDK so this uses exactly the resolution every amount is denominated
+	// with. A separate call here could disagree with it, which is the whole class of bug.
+	const info = await client.tokenInfo(BigInt(checksummed));
+	const added: TokenConfig = {
+		address: checksummed,
+		symbol: info.symbol,
+		decimals: Number(info.decimals)
+	};
+	clientState.update((st) => ({ ...st, tokens: [...st.tokens, added] }));
+	return added;
+}
+
+/// Switch which asset the alias screen is denominated in, and re-read at that token.
+export async function setToken(address: string): Promise<void> {
+	const next = get(clientState).tokens.find(
+		(t) => t.address.toLowerCase() === address.toLowerCase()
+	);
+	if (!next) return;
+	// Cleared rather than left stale: the old token's figures are wrong for this one, and a
+	// balance that lingers while the read is in flight is a number someone can act on.
+	clientState.update((s) => ({
+		...s,
+		token: next,
+		balance: 0n,
+		sendableNow: 0n,
+		noteCount: 0
+	}));
+	await refresh();
 }
 
 /// Throw away what has been scanned and read the chain again from the alias's first block.

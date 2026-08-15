@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { formatEther, parseEther } from 'ethers';
-	import { clientState, clientFor, run, refreshWalletBalance, rememberName } from '../sdk/client.js';
+	import { formatUnits, parseUnits } from 'ethers';
+	import {
+		clientState, clientFor, run, refreshWalletBalance, rememberName, tokenBalanceOf
+	} from '../sdk/client.js';
+	import { ETH_TOKEN, type TokenConfig } from '../sdk/config.js';
 	import ReviewStep from './ReviewStep.svelte';
 
 	// Paying an alias is not an alias-owner's action.
 	//
-	// It used to sit inside the per-alias screen, which implied you could only fund something
-	// you own. The circuit never said that: an output needs a registry membership proof, but
-	// never one belonging to the sender. So anyone can pay any registered name — no alias, no
-	// notes, no prior involvement — and this screen sits outside the wallet → alias → act
+	// Placing it inside the per-alias screen would imply you can only fund something you own.
+	// The circuit says no such thing: an output needs a registry membership proof, but never one
+	// belonging to the sender. So anyone can pay any registered name — no alias, no notes, no
+	// prior involvement — and this screen sits outside the wallet → alias → act
 	// progression to match.
 
 	// Embedded under an alias, this arrives pointed at that alias; opened from the top bar it
@@ -25,6 +28,29 @@
 	let sent = $state<{ amount: string; target: string; txHash: string } | null>(null);
 	let formError = $state<string | null>(null);
 
+	// Which asset is being deposited. Local rather than the global selection, because paying
+	// someone else's alias is not acting as your own — this screen is reachable with no alias
+	// at all, so there is no per-alias token setting to inherit.
+	let token = $state<TokenConfig>(ETH_TOKEN);
+	let held = $state<bigint>(0n);
+	const isEth = $derived(token.address === ETH_TOKEN.address);
+	const sym = $derived(token.symbol);
+	const parseAmt = (v: string) => parseUnits(v, token.decimals);
+	const fmt = (v: bigint) => formatUnits(v, token.decimals);
+
+	// What the connected wallet holds of it. ETH comes off state that is already tracked;
+	// anything else is a read, redone whenever the choice changes.
+	$effect(() => {
+		const addr = token.address;
+		if (addr === ETH_TOKEN.address) {
+			held = $clientState.walletBalance;
+			return;
+		}
+		let live = true;
+		tokenBalanceOf(addr).then((b) => { if (live) held = b; });
+		return () => { live = false; };
+	});
+
 	const busy = $derived($clientState.status === 'syncing');
 	const mine = $derived($clientState.aliases ?? []);
 	// Paying your own alias from the wallet that owns it is the linkable case, and worth
@@ -38,10 +64,10 @@
 		const amt = amount.trim();
 		if (!target.trim()) return (formError = 'Enter the alias to pay, like bob.hls');
 		if (!amt || !(Number(amt) > 0)) return (formError = 'Enter an amount greater than zero');
-		if (parseEther(amt) > $clientState.walletBalance)
+		if (parseAmt(amt) > held)
 			return (formError =
-				`${$clientState.address} holds ${formatEther($clientState.walletBalance)} ETH — ` +
-				`not enough to deposit ${amt}, before gas`);
+				`${$clientState.address} holds ${fmt(held)} ${sym} — ` +
+				`not enough to deposit ${amt}${isEth ? ', before gas' : ''}`);
 		phase = 'review';
 	}
 
@@ -51,7 +77,7 @@
 		// Index 0 derives keys without needing a registration — which is the whole point: the
 		// payer may have no alias at all.
 		const c = await clientFor(0);
-		const r = await run(() => c.depositTo(to, amt));
+		const r = await run(() => c.depositTo(to, amt, BigInt(token.address)));
 		if (!r) return (phase = 'form');
 		await refreshWalletBalance();
 		// Stays put and reports what happened, rather than clearing back to an empty form.
@@ -75,7 +101,7 @@
 		<header>
 			<h2>Pay an alias</h2>
 			<p class="lede">
-				Move ETH from this wallet into the pool, held under any registered
+				Move funds from this wallet into the pool, held under any registered
 				<code>.hls</code> name. You do not need an alias of your own to pay one.
 			</p>
 		</header>
@@ -99,16 +125,40 @@
 			</div>
 		{/if}
 
+		{#if $clientState.tokens.length > 1}
+			<div class="assets" role="group" aria-label="Asset">
+				<span class="chipLabel">Asset</span>
+				{#each $clientState.tokens as t (t.address)}
+					<button
+						class="chip"
+						class:on={t.address === token.address}
+						disabled={busy}
+						onclick={() => (token = t)}
+					>{t.symbol}</button>
+				{/each}
+			</div>
+		{/if}
+
 		<label>
-			<span>Amount (ETH)</span>
-			<input bind:value={amount} placeholder="0.1" inputmode="decimal" disabled={busy} />
+			<span>Amount ({sym})</span>
+			<input class="mono" bind:value={amount} placeholder="0.1" inputmode="decimal" disabled={busy} />
 		</label>
 
 		<dl class="src">
 			<dt>Paying from</dt>
 			<dd class="mono">{$clientState.address}</dd>
 			<dt>Available</dt>
-			<dd>{formatEther($clientState.walletBalance)} ETH</dd>
+			<dd>{fmt(held)} {sym}</dd>
+			{#if !isEth}
+				<!-- Said before the wallet opens, because it opens twice. The pool pulls tokens
+				     with transferFrom, so an allowance has to exist first, and a second prompt
+				     nobody was told about reads as the app having failed and retried. -->
+				<dt>Approval</dt>
+				<dd>
+					One extra transaction first, letting the pool move {sym} on your behalf. Your
+					wallet will ask twice, and both need ETH for gas.
+				</dd>
+			{/if}
 		</dl>
 
 		<!-- The advice that actually matters here, at the moment the choice is live. The
@@ -131,6 +181,7 @@
 	{:else if phase === 'review'}
 		<ReviewStep
 			mode="deposit"
+			{token}
 			amount={amount.trim()}
 			target={target.trim()}
 			alias={target.trim()}
@@ -144,7 +195,7 @@
 			<h3>Deposited</h3>
 			<dl class="src">
 				<dt>Amount</dt>
-				<dd>{sent.amount} ETH</dd>
+				<dd>{sent.amount} {sym}</dd>
 				<dt>To</dt>
 				<dd class="mono">{sent.target}</dd>
 				<dt>Transaction</dt>
@@ -175,19 +226,24 @@
 		color: var(--text-dim); }
 	.chip { font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px;
 		background: none; color: inherit; border: 1px solid var(--border);
-		cursor: pointer; font-family: ui-monospace, monospace; }
+		cursor: pointer; font-family: var(--font-mono); }
 	.chip:hover:not(:disabled) { border-color: var(--accent); }
+	/* Reuses the chip, because picking an asset is the same kind of choice as picking one of
+	   your own names — a short set of alternatives, one of them current. */
+	.assets { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
+	.chip.on { background: var(--accent); border-color: var(--accent); color: var(--bg-dark);
+		font-weight: 700; }
 	.src { margin: 0; display: grid; grid-template-columns: 8rem 1fr; gap: 0.35rem 1rem;
 		font-size: 0.85rem; }
 	dt { color: var(--text-dim); }
 	dd { margin: 0; overflow-wrap: anywhere; }
-	.mono { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+	.mono { font-family: var(--font-mono); font-size: 0.8rem; }
 	.note { font-size: 0.78rem; line-height: 1.5; padding: 0.7rem 0.8rem;
 		border: 1px solid var(--border); border-left-width: 3px;
 		border-left-color: var(--accent); border-radius: 4px; opacity: 0.9; }
 	.note.warn { border-left-color: var(--caution); }
 	strong { font-weight: 600; }
-	code { font-family: ui-monospace, monospace; }
+	code { font-family: var(--font-mono); }
 	.primary { padding: 0.55rem; }
 	.hint { font-size: 0.8rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
 	.done { display: flex; flex-direction: column; gap: 0.7rem; }

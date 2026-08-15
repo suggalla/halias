@@ -77,7 +77,7 @@
 <style>
 	.vk { display: flex; flex-direction: column; gap: 0.7rem; }
 	.say { margin: 0; font-size: 0.85rem; line-height: 1.55; }
-	.say strong { font-family: ui-monospace, monospace; color: var(--accent-bright);
+	.say strong { font-family: var(--font-mono); color: var(--accent-bright);
 		overflow-wrap: anywhere; }
 	.facts { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column;
 		gap: 0.3rem; font-size: 0.82rem; }
@@ -88,11 +88,11 @@
 	.n { color: var(--bad); }
 	.warn { font-size: 0.8rem; line-height: 1.5; margin: 0; color: var(--caution);
 		border-left: 2px solid var(--caution); padding-left: 0.6rem; }
-	textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.72rem;
+	textarea { width: 100%; font-family: var(--font-mono); font-size: 0.72rem;
 		line-height: 1.5; resize: vertical; word-break: break-all; }
 	.row { display: flex; gap: 0.5rem; }
 	.row .primary { flex: 1; padding: 0.55rem; }
 	.hint { font-size: 0.78rem; color: var(--text-dim); margin: 0; line-height: 1.5; }
-	code { font-family: ui-monospace, monospace; }
+	code { font-family: var(--font-mono); }
 	.err { color: var(--bad); font-size: 0.85rem; margin: 0; }
 </style>
