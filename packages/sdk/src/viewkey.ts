@@ -23,7 +23,7 @@ import { HaliasKeys, poseidonHash } from "./crypto";
 export interface ViewKeys {
   /// Public. Identifies which commitments belong to this alias — it cannot be derived from
   /// the viewing half, so it has to travel.
-  spendingPubkey: bigint;
+  spendingCommitment: bigint;
   /// Yields the nullifier key, which is what makes a spent note recognisable as spent.
   viewingPrivKey: bigint;
   /// X25519. What actually opens the note ciphertexts.
@@ -32,13 +32,13 @@ export interface ViewKeys {
 
 const PREFIX = "hvk1";
 const ZERO_KEY = "0x" + "00".repeat(32);
-const BODY_BYTES = 96;   // 32 pubkey + 32 viewing + 32 x25519
+const BODY_BYTES = 96;   // 32 spendingCommitment + 32 viewing + 32 x25519
 
 /// The view-only half of a key set. The spending key is not included and cannot be recovered
 /// from what is.
 export function viewKeysFrom(keys: HaliasKeys): ViewKeys {
   return {
-    spendingPubkey: keys.spendingPubkey,
+    spendingCommitment: keys.spendingCommitment,
     viewingPrivKey: keys.viewingPrivKey,
     encryptionPrivKey: keys.encryption.privateKey,
   };
@@ -52,7 +52,7 @@ export function viewKeysFrom(keys: HaliasKeys): ViewKeys {
 export function keysFromViewKeys(v: ViewKeys): HaliasKeys {
   return {
     spendingPrivKey: 0n,
-    spendingPubkey: v.spendingPubkey,
+    spendingCommitment: v.spendingCommitment,
     viewingPrivKey: v.viewingPrivKey,
     nullifierKey: poseidonHash([v.viewingPrivKey]),
     encryption: {
@@ -73,7 +73,7 @@ export function keysFromViewKeys(v: ViewKeys): HaliasKeys {
 /// that silently finds no notes — indistinguishable from an alias with no history.
 export function encodeViewKey(v: ViewKeys): string {
   const body = ethers.concat([
-    ethers.toBeHex(v.spendingPubkey, 32),
+    ethers.toBeHex(v.spendingCommitment, 32),
     ethers.toBeHex(v.viewingPrivKey, 32),
     v.encryptionPrivKey,
   ]);
@@ -104,7 +104,7 @@ export function decodeViewKey(code: string): ViewKeys {
     throw new Error("View key failed its checksum — check it was copied in full");
   }
   return {
-    spendingPubkey: BigInt(ethers.hexlify(body.slice(0, 32))),
+    spendingCommitment: BigInt(ethers.hexlify(body.slice(0, 32))),
     viewingPrivKey: BigInt(ethers.hexlify(body.slice(32, 64))),
     encryptionPrivKey: body.slice(64, 96),
   };

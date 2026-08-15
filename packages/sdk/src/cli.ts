@@ -96,6 +96,7 @@ COMMANDS
   send     <alias.hls> <amount>          Private transfer to alias
   withdraw <address>  <amount>           Withdraw to address
   balance                                Show pool balance
+  consolidate [amount]                   Merge notes so more can be spent at once
   scan                                   Show all received notes
   lookup   <alias.hls>                   Lookup alias info
   invite   create <amount>               Create a funded invite link for a new user
@@ -249,9 +250,14 @@ async function main() {
     ? BigInt(flags["token"] as string)
     : 0n;
 
-  const tokenLabel = tokenAddress === 0n
-    ? "ETH"
-    : `ERC-20 (${flags["token"]})`;
+  // Resolved once, before any amount is printed or parsed. Decimals decide what every
+  // figure below means: `formatEther` against a 6-decimal token like USDC is wrong by a
+  // factor of a million, and the symbol beside it would have said "ERC-20" either way, so
+  // nothing on screen would have shown the error.
+  const token      = await halias.tokenInfo(tokenAddress);
+  const tokenLabel = token.symbol;
+  const fmt        = (v: bigint) => ethers.formatUnits(v, token.decimals);
+  const parseAmt   = (v: string) => ethers.parseUnits(v, token.decimals);
 
   // ── register ─────────────────────────────────────────────────────────────
 
@@ -282,7 +288,7 @@ async function main() {
     const result = await withSpinner("Generating proof", () =>
       to ? halias.depositTo(to, amount, tokenAddress) : halias.deposit(amount, tokenAddress));
 
-    if (jsonMode) { outputJson({ amount: ethers.formatEther(result.amount), token: tokenLabel, txHash: result.txHash }); return; }
+    if (jsonMode) { outputJson({ amount: fmt(result.amount), token: tokenLabel, txHash: result.txHash }); return; }
     ok(`Deposited ${amount} ${tokenLabel}`);
     field("tx", result.txHash);
     return;
@@ -325,20 +331,51 @@ async function main() {
 
     if (jsonMode) {
       outputJson({
-        total: ethers.formatEther(result.total),
+        total: fmt(result.total),
+        sendableNow: fmt(result.sendableNow),
         token: tokenLabel,
-        notes: result.entries.map(e => ({ leafIndex: e.leafIndex, amount: ethers.formatEther(e.amount) })),
+        notes: result.entries.map(e => ({ leafIndex: e.leafIndex, amount: fmt(e.amount) })),
       });
       return;
     }
 
     if (result.entries.length === 0) { process.stdout.write(`  No balance.\n`); return; }
-    field("total", `${ethers.formatEther(result.total)} ${tokenLabel}`);
+    field("total", `${fmt(result.total)} ${tokenLabel}`);
     field("notes", String(result.entries.length));
+    // Only worth saying when it bites: a balance across three or more notes cannot leave in
+    // one transaction, and the difference is the part `halias consolidate` recovers.
+    if (result.sendableNow < result.total) {
+      field("sendable now", `${fmt(result.sendableNow)} ${tokenLabel}`);
+      process.stdout.write(`  Run 'halias consolidate' to make the rest sendable.\n`);
+    }
     process.stdout.write("\n");
     for (const e of result.entries) {
-      process.stdout.write(`  #${e.leafIndex}`.padEnd(10) + `${ethers.formatEther(e.amount)} ${tokenLabel}\n`);
+      process.stdout.write(`  #${e.leafIndex}`.padEnd(10) + `${fmt(e.amount)} ${tokenLabel}\n`);
     }
+    return;
+  }
+
+  // ── consolidate ───────────────────────────────────────────────────────────
+
+  if (command === "consolidate") {
+    const target = args[1] ? parseAmt(args[1]) : undefined;
+
+    const result = await halias.consolidate(tokenAddress, {
+      target,
+      onProgress: ({ step, of, notes }) =>
+        process.stderr.write(`  merge ${step + 1}/${of} — ${notes} notes\n`),
+    });
+
+    if (jsonMode) {
+      outputJson({
+        merges: result.txHashes.length, txHashes: result.txHashes,
+        notes: result.notes, total: fmt(result.total), token: tokenLabel,
+      });
+      return;
+    }
+    if (result.txHashes.length === 0) { process.stdout.write(`  Nothing to consolidate.\n`); return; }
+    ok(`Merged into ${result.notes} note${result.notes === 1 ? "" : "s"} in ${result.txHashes.length} transaction${result.txHashes.length === 1 ? "" : "s"}`);
+    field("total", `${fmt(result.total)} ${tokenLabel}`);
     return;
   }
 
@@ -352,7 +389,7 @@ async function main() {
         token: tokenLabel,
         notes: entries.map(e => ({
           leafIndex: e.leafIndex,
-          amount: ethers.formatEther(e.amount),
+          amount: fmt(e.amount),
           spent: e.spent,
         })),
       });
@@ -368,7 +405,7 @@ async function main() {
     process.stdout.write("\n");
     for (const e of entries) {
       const status = e.spent ? `${DIM}spent${RESET}` : `${GREEN}unspent${RESET}`;
-      process.stdout.write(`  #${e.leafIndex}`.padEnd(10) + `${ethers.formatEther(e.amount).padEnd(14)} ${tokenLabel}  ${status}\n`);
+      process.stdout.write(`  #${e.leafIndex}`.padEnd(10) + `${fmt(e.amount).padEnd(14)} ${tokenLabel}  ${status}\n`);
     }
     return;
   }
@@ -387,7 +424,7 @@ async function main() {
         alias: `${clean}.hls`,
         attested: result.dataHash !== 0n,
         dataHash: result.dataHash.toString(),
-        spendingPubkey: result.spendingPubkey.toString(),
+        spendingCommitment: result.spendingCommitment.toString(),
         encryptionPubkey: ethers.hexlify(result.encryptionPubkey),
       });
       return;
@@ -425,7 +462,7 @@ async function main() {
       outputJson({
         token: tokenLabel,
         entries: entries.map(e => ({
-          kind: e.kind, amount: ethers.formatEther(e.amount), txHash: e.txHash,
+          kind: e.kind, amount: fmt(e.amount), txHash: e.txHash,
           blockNumber: e.blockNumber, gasFee: ethers.formatEther(e.gasFee),
         })),
       });
@@ -433,7 +470,7 @@ async function main() {
     }
     if (entries.length === 0) { process.stdout.write("  Nothing yet.\n"); return; }
     for (const e of entries) {
-      const amount = e.kind === "register" ? "" : `${ethers.formatEther(e.amount)} ${tokenLabel}`;
+      const amount = e.kind === "register" ? "" : `${fmt(e.amount)} ${tokenLabel}`;
       process.stdout.write(
         `  ${e.kind.padEnd(9)}${amount.padEnd(22)}${DIM}${e.txHash.slice(0, 12)}…${RESET}\n`);
     }
@@ -553,8 +590,8 @@ async function main() {
     const keys = (halias as any).keys;
     const { ethers: e2 } = await import("ethers");
     const encPubkey = e2.hexlify(keys.encryption.publicKey);
-    if (jsonMode) { outputJson({ spendingPubkey: keys.spendingPubkey.toString(), encryptionPubkey: encPubkey }); return; }
-    field("spendingPubkey",   keys.spendingPubkey.toString(16).slice(0, 16) + "…");
+    if (jsonMode) { outputJson({ spendingCommitment: keys.spendingCommitment.toString(), encryptionPubkey: encPubkey }); return; }
+    field("spendingCommitment",   keys.spendingCommitment.toString(16).slice(0, 16) + "…");
     field("encryptionPubkey", encPubkey);
     return;
   }
@@ -595,6 +632,8 @@ async function main() {
       const secret = decodeInviteCode(code);
 
       // A relayer fee lets a third party broadcast this when the claimer holds no ETH.
+      // Invites are ETH-only — createInvite and claimInvite both pin ETH_TOKEN_ADDRESS — so
+      // parseEther is right here and must not be swapped for the token-aware parseAmt.
       const relayerFee  = flags["relayer-fee"] ? ethers.parseEther(flags["relayer-fee"] as string) : 0n;
       const relayerAddr = (flags["relayer"] as string) || undefined;
 

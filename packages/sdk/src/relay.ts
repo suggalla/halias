@@ -31,7 +31,7 @@ export interface ClaimExtras {
   registration: {
     owner: string;
     aliasHash: string;
-    spendingPubkey: string;
+    spendingCommitment: string;
     nullifierKeyHash: string;
     encryptionPubkey: string;
   };
@@ -108,8 +108,19 @@ export interface RelayQuote {
   gasEstimate: bigint;
   gasPrice: bigint;
   gasCost: bigint;
+  /// What the fee is denominated in. `0x0…0` is ETH.
+  ///
+  /// A relayer is paid out of the note, so the fee is in whatever the note holds — while the
+  /// gas it spends is always ETH. Carrying this is what lets a caller label the amounts
+  /// correctly instead of assuming, and what makes `profit` below refusable rather than wrong.
+  tokenAddress: string;
   /// fee - gasCost. Negative means submitting costs more than it pays.
-  profit: bigint;
+  ///
+  /// **Null when the fee is not in ETH.** Then the two sides are different assets and there is
+  /// no exchange rate here to bridge them; returning a bigint would be subtracting wei from
+  /// token base units and reporting the result as money. A caller that needs the comparison
+  /// has to price the token itself.
+  profit: bigint | null;
   relayer: string;
   recipient: string;
   /// Total leaving the pool; the recipient receives this minus the fee.
@@ -180,6 +191,8 @@ export async function quoteRelay(
   }
 
   const gasCost = gasEstimate * gasPrice;
+  const tokenAddress = payload.params.tokenAddress;
+  const feeIsEth = BigInt(tokenAddress) === 0n;
   return {
     valid,
     reason,
@@ -187,7 +200,10 @@ export async function quoteRelay(
     gasEstimate,
     gasPrice,
     gasCost,
-    profit: fee - gasCost,
+    tokenAddress,
+    // Only when both sides are ETH. Subtracting a gas cost in wei from a fee in USDC base
+    // units produces a number, and every use of that number would be wrong.
+    profit: feeIsEth ? fee - gasCost : null,
     relayer: payload.params.relayerFee.relayer,
     recipient: payload.params.recipient,
     withdrawing: absoluteAmount(BigInt(payload.params.publicAmount)),
@@ -267,18 +283,35 @@ export async function suggestRelayFee(
 export async function submitRelay(
   signer: ethers.Signer,
   payload: RelayPayload,
-  opts: { minProfit?: bigint } = {},
+  // `null` means "I have priced this myself" — the only way to submit a fee denominated in a
+  // token, since nothing here can compare one to a gas cost.
+  opts: { minProfit?: bigint | null } = {},
 ): Promise<{ txHash: string; quote: RelayQuote }> {
   const from = await signer.getAddress();
   const quote = await quoteRelay(signer.provider!, payload, from);
 
   if (!quote.valid) throw new Error(`Will not succeed: ${quote.reason}`);
-  const floor = opts.minProfit ?? 0n;
-  if (quote.profit < floor)
-    throw new Error(
-      `Fee ${ethers.formatEther(quote.fee)} does not cover gas ` +
-        `${ethers.formatEther(quote.gasCost)} (shortfall ${ethers.formatEther(-quote.profit)} ETH)`,
-    );
+
+  // The profit guard only means anything when the fee and the gas are the same asset. For a
+  // token fee `profit` is null, and the choice is between refusing and submitting blind —
+  // refuse, because the caller who knows what the token is worth can pass `minProfit: null` to
+  // say so deliberately. Silently skipping the check is how an automated relayer ends up
+  // paying to move someone else's money.
+  if (quote.profit === null) {
+    if (opts.minProfit !== null) {
+      throw new Error(
+        `This fee is paid in ${quote.tokenAddress}, not ETH, so it cannot be compared against ` +
+        `a gas cost here. Price it yourself and pass minProfit: null to submit anyway.`,
+      );
+    }
+  } else {
+    const floor = opts.minProfit ?? 0n;
+    if (quote.profit < floor)
+      throw new Error(
+        `Fee ${ethers.formatEther(quote.fee)} does not cover gas ` +
+          `${ethers.formatEther(quote.gasCost)} (shortfall ${ethers.formatEther(-quote.profit)} ETH)`,
+      );
+  }
 
   const { contract, method, args } = bind(payload, signer);
   const tx = await contract[method](...args);

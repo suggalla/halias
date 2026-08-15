@@ -19,20 +19,33 @@ export type OwnedEntry = Entry & { treeNumber: number; leafIndex: number };
 // nullifierKeyHash = Poseidon(nullifierKey, 1) — pass the hash, not the raw key.
 // Raw nullifierKey is never stored on-chain; callers compute the hash before building entries.
 export function buildEntry(
-  spendingPubkey: bigint,
+  spendingCommitment: bigint,
   nullifierKeyHash: bigint,
   blinding: bigint,
   amount: bigint,
   tokenAddress: bigint = ETH_TOKEN_ADDRESS,
 ): Entry {
-  const commitment = poseidonHash([spendingPubkey, nullifierKeyHash, blinding, amount, tokenAddress]);
+  const commitment = poseidonHash([spendingCommitment, nullifierKeyHash, blinding, amount, tokenAddress]);
   return { blinding, amount, tokenAddress, commitment };
 }
 
 // Domain tag keeps the nullifier in a different Poseidon arity/domain from
 // nullifierKeyHash = Poseidon(nullifierKey, 1), so the two can never collide.
 // Must stay in sync with NoteNullifier in transact.circom.
-export const NULLIFIER_DOMAIN = 1314148940n; // "NULL" ascii (0x4e554c4c)
+/// The BN254 scalar field, and the modulus every public signal lives in.
+///
+/// One declaration for the whole SDK. It was written out in three places here and nine more
+/// across the tests, with nothing asserting they agreed — and a wrong digit does not fail
+/// loudly: a signal reduced mod the wrong prime produces a proof that verifies against
+/// nothing, or an amount that decodes to something else entirely. Same reasoning as
+/// {NULLIFIER_DOMAIN}, and the same fix.
+///
+/// Must equal `FIELD_PRIME` in contracts/base/Constants.sol.
+export const FIELD_PRIME =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+export const NULLIFIER_DOMAIN = 1314148940n; // "NTRL" ascii (0x4e54524c) — a domain tag, and any value distinct from the other
+// Poseidon inputs would do. Frozen: it is baked into the circuit and the proving key.
 
 /// Nullifier for a note, derivable only after on-chain inclusion — both coordinates come from
 /// the Transact event.

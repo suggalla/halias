@@ -21,7 +21,7 @@ export interface TransactInput {
 }
 
 export interface TransactOutput {
-  pubkey: bigint;              // spendingPubkey of recipient
+  spendingCommitment: bigint;              // spendingCommitment of recipient
   nullifierKeyHash: bigint;    // Poseidon(nullifierKey, 1) — read from registry; raw key never leaves recipient
   blinding: bigint;
   amount: bigint;
@@ -106,7 +106,7 @@ function serializeForCircuit(inp: TransactProveInput): Record<string, unknown> {
     inAmount:             inp.inputs.map(i => s(i.amount)),
     inPathIndices:        inp.inputs.map(i => i.pathIndices.map(String)),
     inPathElements:       inp.inputs.map(i => i.pathElements.map(s)),
-    outPubkey:            inp.outputs.map(o => s(o.pubkey)),
+    outSpendingCommitment:            inp.outputs.map(o => s(o.spendingCommitment)),
     outBlinding:          inp.outputs.map(o => s(o.blinding)),
     outAmount:            inp.outputs.map(o => s(o.amount)),
     outNullifierKeyHash:  inp.outputs.map(o => s(o.nullifierKeyHash)),
@@ -179,7 +179,7 @@ export function dummyInput(
 
 export function dummyOutput(blinding: bigint = 0n): TransactOutput {
   return {
-    pubkey:             poseidonHash([0n]),
+    spendingCommitment:             poseidonHash([0n]),
     nullifierKeyHash:   0n,   // registry proof skipped for zero-amount outputs; value unconstrained
     blinding,
     amount:             0n,

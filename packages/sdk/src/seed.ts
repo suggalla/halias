@@ -2,11 +2,12 @@ import { ethers } from "ethers";
 
 // Where the one secret behind every alias comes from.
 //
-// It used to come from a signature: keccak of `personal_sign("halias key derivation v1…")`.
-// Signatures are deterministic, so any site that talked a user into signing that exact string
-// derived every key for every alias index and could spend everything. That failure is silent
+// Never from a wallet signature, and not as a fallback either. Signatures are deterministic,
+// so keccak of a `personal_sign` over a fixed string means any site that talks a user into
+// signing it derives every key for every alias index and can spend everything. That failure
+// would be silent
 // (no transaction, no approval), total (spending *and* viewing keys), and unremediable —
-// notes bind `pubkey = Poseidon(spendingPrivateKey)`, so rotating keys protects only future
+// notes bind `spendingCommitment = Poseidon(spendingPrivateKey)`, so rotating keys protects only future
 // receipts, never the notes already on chain.
 //
 // A seed the wallet never sees removes the attack rather than warning about it. The wallet

@@ -46,7 +46,7 @@ describe("crypto", () => {
   it("deriveKeysFromRoot returns all expected fields", () => {
     const keys = deriveKeysFromRoot(rootFromMnemonic(generateMnemonic()));
     expect(keys.spendingPrivKey).to.be.a("bigint");
-    expect(keys.spendingPubkey).to.equal(poseidonHash([keys.spendingPrivKey]));
+    expect(keys.spendingCommitment).to.equal(poseidonHash([keys.spendingPrivKey]));
     expect(keys.nullifierKey).to.equal(poseidonHash([keys.viewingPrivKey]));
     expect(keys.encryption.privateKey).to.be.instanceOf(Uint8Array);
     expect(keys.encryption.publicKey).to.be.instanceOf(Uint8Array);
@@ -154,12 +154,12 @@ describe("MerkleTree", () => {
 
 describe("entry", () => {
   it("buildEntry produces correct commitment", () => {
-    const pubkey = poseidonHash([12345n]);
+    const spendingCommitment = poseidonHash([12345n]);
     const nullifierKey = poseidonHash([99999n]);
     const blinding = 999n;
     const amount   = ethers.parseEther("1");
-    const entry = buildEntry(pubkey, nullifierKey, blinding, amount, ETH_TOKEN_ADDRESS);
-    expect(entry.commitment).to.equal(poseidonHash([pubkey, nullifierKey, blinding, amount, ETH_TOKEN_ADDRESS]));
+    const entry = buildEntry(spendingCommitment, nullifierKey, blinding, amount, ETH_TOKEN_ADDRESS);
+    expect(entry.commitment).to.equal(poseidonHash([spendingCommitment, nullifierKey, blinding, amount, ETH_TOKEN_ADDRESS]));
   });
 
   it("computeNullifier depends on leafIndex", () => {
@@ -199,7 +199,7 @@ describe("entry", () => {
     }
   });
 
-  it("different pubkey gives different commitment", () => {
+  it("different spendingCommitment gives different commitment", () => {
     const nk = poseidonHash([0n]);
     const a = buildEntry(poseidonHash([1n]), nk, 0n, 1n, 0n);
     const b = buildEntry(poseidonHash([2n]), nk, 0n, 1n, 0n);
@@ -317,7 +317,7 @@ describe("invite keys", () => {
   it("derives deterministically from the secret", () => {
     const s = 0xdeadbeefn;
     const a = deriveInviteKeys(s), b = deriveInviteKeys(s);
-    expect(a.spendingPubkey).to.equal(b.spendingPubkey);
+    expect(a.spendingCommitment).to.equal(b.spendingCommitment);
     expect(a.nullifierKey).to.equal(b.nullifierKey);
     expect(a.blinding).to.equal(b.blinding);
     expect(ethers.hexlify(a.encryption.publicKey)).to.equal(ethers.hexlify(b.encryption.publicKey));
@@ -325,7 +325,7 @@ describe("invite keys", () => {
 
   it("gives different secrets different keys", () => {
     const a = deriveInviteKeys(1n), b = deriveInviteKeys(2n);
-    expect(a.spendingPubkey).to.not.equal(b.spendingPubkey);
+    expect(a.spendingCommitment).to.not.equal(b.spendingCommitment);
     expect(a.nullifierKey).to.not.equal(b.nullifierKey);
     expect(a.blinding).to.not.equal(b.blinding);
   });
@@ -343,9 +343,9 @@ describe("invite keys", () => {
     expect(k.nullifierKeyHash).to.equal(poseidonHash([k.nullifierKey, 1n]));
   });
 
-  it("derives spendingPubkey as Poseidon(spendingPrivKey), matching the circuit", () => {
+  it("derives spendingCommitment as Poseidon(spendingPrivKey), matching the circuit", () => {
     const k = deriveInviteKeys(777n);
-    expect(k.spendingPubkey).to.equal(poseidonHash([k.spendingPrivKey]));
+    expect(k.spendingCommitment).to.equal(poseidonHash([k.spendingPrivKey]));
   });
 });
 
@@ -417,13 +417,13 @@ describe("claim authorisation", () => {
     // submitter vary it freely.
     const base = {
       owner: "0x" + "11".repeat(20),
-      aliasHash: 1n, spendingPubkey: 2n, nullifierKeyHash: 3n, encryptionPubkey: 4n,
+      aliasHash: 1n, spendingCommitment: 2n, nullifierKeyHash: 3n, encryptionPubkey: 4n,
     };
     const h = encodeRegistration(base);
     for (const v of [
       { ...base, owner: "0x" + "22".repeat(20) },
       { ...base, aliasHash: 9n },
-      { ...base, spendingPubkey: 9n },
+      { ...base, spendingCommitment: 9n },
       { ...base, nullifierKeyHash: 9n },
       { ...base, encryptionPubkey: 9n },
     ]) {

@@ -1,8 +1,16 @@
 {
   "name": "halias-sdk",
+  "license": "GPL-3.0-only",
   "version": "0.1.0",
   "private": true,
   "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./contract": "./dist/contract.js",
+    "./alias": "./dist/alias.js",
+    "./seed": "./dist/seed.js",
+    "./relay": "./dist/relay.js"
+  },
   "types": "dist/index.d.ts",
   "bin": {
     "halias": "dist/cli.js"
