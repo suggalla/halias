@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
 pragma solidity 0.8.28;
 
 /// @notice Payment to whoever submits the transaction, taken out of the value leaving

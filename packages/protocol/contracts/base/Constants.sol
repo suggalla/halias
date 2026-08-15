@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
 pragma solidity 0.8.28;
 
 // BN254 scalar field prime — used for ZK circuit compatibility.

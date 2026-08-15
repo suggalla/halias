@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-3.0
+// Copyright 2026 halias contributors.
 pragma solidity 0.8.28;
 
 import { MerkleTreeWithHistory } from "./MerkleTreeWithHistory.sol";
@@ -76,8 +77,14 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
 
     /// @notice The pool's exact ERC-20 liability: the sum of outstanding notes per token.
     /// @dev    Nothing authorises against it — with no admin there is no rescue path to
-    ///         guard — but it is kept because it makes over-withdrawal impossible: the
-    ///         pool can never pay out more of a token than its notes actually cover.
+    ///         guard. It is kept because it is the pool's own count of what it issued
+    ///         notes for, which `balanceOf` is not: a direct transfer inflates the latter
+    ///         and never the former. {_debitPool} pays out against this, so surplus sent
+    ///         straight to this address is unspendable rather than free to withdraw.
+    ///
+    ///         Not a per-user bound. It says nothing about whose notes make up the total,
+    ///         so it cannot stop one holder over-drawing against another — see
+    ///         {_debitPool} for what this does and does not guarantee.
     mapping(address => uint256) public poolTokenBalance;
 
     /// @dev Who is paid what, resolved once per call from {TransactParams}. Validation and
@@ -209,15 +216,18 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
 
         // An exit creates no notes, so there is nothing to insert and the root does not move.
         //
-        // Two things fall out of that. It is the valve for a full tree: every ordinary
-        // transact inserts, so once the tree cannot accept insertions, deposits, transfers
-        // and withdrawals would all revert together and every note in the pool would be
-        // permanently unspendable, with no admin to rescue it. An exit still works, so a full
-        // pool degrades to withdraw-only instead of locking everyone's funds.
+        // It exists for the gas. Measured with scripts/gasbench.ts: 107,799 against 522,103
+        // for the same withdrawal that inserts, so about 414,000 gas — the tree walk is
+        // LEVELS + 1 Poseidon hashes, plus a root commit and the larger event. Real Groth16
+        // verification adds the same amount to both, so the saving holds while the ratio
+        // falls to roughly half.
         //
-        // And it is much cheaper — the tree walk is 32 Poseidon hashes, about 74% of an
-        // ordinary transact — which is why it is available at any time rather than only when
-        // the tree is full.
+        // It is also the valve for a full pool, but that is now a footnote rather than the
+        // reason. Rolling trees mean insertion only fails at TreeSpaceExhausted — 2^32 leaves,
+        // a bound the circuit enforces on treeNumber, and some two billion transactions away.
+        // An exit would still work there, so the pool would degrade to withdraw-only rather
+        // than freezing every note with no admin to rescue them. Worth having; not worth
+        // designing a per-transaction cost around.
         //
         // It is a real trade, not a free win: an exit is *distinguishable* on chain, so it
         // reveals that this spender kept no change, where every ordinary transact looks
@@ -427,19 +437,31 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     }
 
     /// @dev Reserves value on its way out, before any of it is paid. Unreachable while the
-    ///      circuit is sound — it is the last line of defence for the pool's collateral if
-    ///      it ever is not, and it names itself rather than surfacing as an arithmetic
+    ///      circuit is sound, and it names itself rather than surfacing as an arithmetic
     ///      panic.
     ///
-    ///      The two assets are not equally protected, and the difference is deliberate.
-    ///      Tokens carry an exact ledger, so this rejects any withdrawal exceeding the
-    ///      notes outstanding for that token. ETH has no ledger — only the live balance,
-    ///      which is every depositor's funds pooled together and can additionally be
-    ///      inflated by a forced send. So the ETH branch only catches a withdrawal larger
-    ///      than the entire pool, not one that over-draws against other users' notes.
-    ///      Closing that gap means an ETH ledger and an extra SSTORE on every ETH
-    ///      transact; the circuit's conservation constraint is the real guarantee either
-    ///      way. See docs/contract-split.md.
+    ///      Be precise about what this bounds, because it is weaker than it looks. Both
+    ///      branches cap a withdrawal at the pool's *aggregate* holding of that asset —
+    ///      neither one knows whose notes are whose, so neither can stop a forged proof
+    ///      from over-drawing against other users. Only the circuit's conservation
+    ///      constraint does that. If soundness breaks, this does not contain it.
+    ///
+    ///      What the token ledger adds over `balanceOf` is exactly one thing: it excludes
+    ///      value that arrived outside {_creditPool}. Tokens transferred straight to this
+    ///      address are surplus the pool never issued notes against, and this refuses to
+    ///      pay them out. ETH has no equivalent because a forced send (`selfdestruct`, a
+    ///      coinbase payout) can inflate `address(this).balance` with no call to reject —
+    ///      so the ETH branch only catches a withdrawal larger than everything here.
+    ///
+    ///      That asymmetry is left alone deliberately. Surplus ETH is a donation: claiming
+    ///      it still needs a valid proof, so it sits as over-collateral rather than as a
+    ///      liability, and an ETH ledger would buy a storage write per deposit and
+    ///      withdrawal to forbid spending a donation nobody can reach anyway. Detecting a
+    ///      soundness break is an off-chain job regardless — {Transact}, {PoolExit} and
+    ///      {Withdrawal} carry enough to reconstruct the pool's liability from logs and
+    ///      compare it against the live balance, and that reconstruction is worth more
+    ///      than an on-chain counter, because it is not written by the code path that
+    ///      would be exploited. See SECURITY.md.
     function _debitPool(address token, uint256 amount) private {
         if (token == address(0)) {
             if (address(this).balance < amount) revert PoolBalanceExceeded();
