@@ -34,17 +34,17 @@ async function main() {
   console.log("deploy registry:", (await reg.deploymentTransaction()!.wait())!.gasUsed.toString());
   const ver = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
   const pool = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs }))
-    .deploy(await ver.getAddress(), await reg.getAddress());
+    .deploy(await ver.getAddress(), await ver.getAddress(), await reg.getAddress());
   console.log("deploy pool    :", (await pool.deploymentTransaction()!.wait())!.gasUsed.toString());
 
   const r32 = () => ethers.hexlify(ethers.randomBytes(32));
   // 31 bytes: a full 32 exceeds FIELD_PRIME ~81% of the time and the registry rejects it.
   const rF = () => ethers.zeroPadValue(ethers.hexlify(ethers.randomBytes(31)), 32);
   const base = async (over: any = {}) => ({
-    poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
+    poolRoot: new Array(4).fill((await anchorOf(pool)).root), treeNumber: new Array(4).fill((await anchorOf(pool)).tree),
     registryRoot: await reg.getRegistryRoot(),
     publicAmount: ethers.parseEther("1"), tokenAddress: ethers.ZeroAddress,
-    inputNullifiers: [r32(), r32()], outputCommitments: [r32(), r32()],
+    inputNullifiers: [r32(), r32(), r32(), r32()], outputCommitments: [r32(), r32()],
     recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n },
     externalData: ethers.ZeroHash, pendingLeaf: ethers.ZeroHash, outputsEmpty: false, ...over,
   });
