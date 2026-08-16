@@ -1,0 +1,21 @@
+{
+  "circuit": "transact",
+  "contractName": "TransactVerifier",
+  "power": 17,
+  "paths": {
+    "circuitsDir": "circuits",
+    "outDir": "circuits/out/{circuit}",
+    "ceremonyDir": "circuits/out/{circuit}/ceremony"
+  },
+  "filenames": {
+    "r1cs": "{circuit}.r1cs",
+    "wasm": "{circuit}_js/{circuit}.wasm",
+    "wtns": "{circuit}_js/witness.wtns",
+    "ptauInitial": "pot_0000.ptau",
+    "ptauContributed": "pot_0001.ptau",
+    "ptauFinal": "pot_final.ptau",
+    "zkeyInitial": "{circuit}_0000.zkey",
+    "zkeyFinal": "{circuit}_final.zkey",
+    "verificationKey": "verification_key.json"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "halias-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "halias": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "mocha"
+  },
+  "dependencies": {
+    "circomlibjs": "^0.1.7",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.16.0",
+    "halias-deployments": "*",
+    "snarkjs": "^0.7.6",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^25.2.3",
+    "chai": "^4.3.0",
+    "mocha": "^10.2.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.9.3"
+  }
+}
