@@ -16,15 +16,15 @@ them at the circuit level — the proof spans the identity registry and the paym
 
 The consequence that matters is not "names are nicer than hex". It is that **registry
 membership is a spend condition**. Every non-zero output must prove membership in the registry
-SMT, so the pool will only pay a registered `.hls` alias. Every other mixer is built so the
+SMT, so the pool will only pay a registered `.hls` alias. Most shielded pools are built so the
 recipient is unknowable; here the recipient set is public, permanent and fee-gated, while which
 member received what stays hidden.
 
 The second thing that falls out of it: the system is legible. You pay a name rather than forty
 hex characters you have to trust you copied correctly, one recovery phrase derives every alias
 you hold, and a view key lets you show your whole history to an accountant without letting them
-spend. That readability is downstream of the design rather than painted on afterwards —
-Railgun cannot write this paragraph, because their recipient is a `0zk1…` string.
+spend. That readability is downstream of the design rather than painted on afterwards: a pool
+whose recipients are opaque keys has no name available to show you in the first place.
 
 ## Structure
 
@@ -79,11 +79,20 @@ reachable from that key can address a user's collateral.
 
 Job: prove a transaction is valid without revealing what it was.
 
-2 inputs, 2 outputs, 94,512 constraints, 14 public signals. It proves you own the input
+4 inputs, 2 outputs, 84,023 constraints, 20 public signals. It proves you own the input
 commitments, that each non-zero output's recipient is in the registry, that nullifiers are
 correctly derived and unspent, and that inputs equal outputs.
 
-Why two inputs and not more is recorded in
+Unused input slots are filled with dummies whose nullifiers are published and written like any
+other, so a one-note spend and a four-note spend are indistinguishable on chain.
+
+`transactClaim.circom` is the same template with the claim path compiled in — 117,344
+constraints, the same 20 public signals — for the case where an alias is registered and spent
+in one proof. R1CS has no runtime branching, so the only way to stop ordinary sends paying for
+machinery they never use is a second circuit. The pool routes on `pendingLeaf` and holds both
+verifiers immutably.
+
+Why four inputs and not more is recorded in
 [circuit-shape.md](packages/protocol/docs/circuit-shape.md), along with what wider shapes
 measured at and when that decision stops being reversible.
 
@@ -114,7 +123,7 @@ npx hardhat run scripts/deploy.ts --network localhost
 RPC_URL=http://127.0.0.1:8545 npx hardhat run scripts/e2e-live.ts --network localhost
 ```
 
-146 checks. The local deploy also puts up a 6-decimal mock USDC, so the multi-asset paths are
+157 checks. The local deploy also puts up a 6-decimal mock USDC, so the multi-asset paths are
 exercisable rather than theoretical — 18 decimals is the case that agrees with a hardcoded
 `parseEther` by accident, and hides the bug worth catching.
 
@@ -142,10 +151,10 @@ keys from a wallet signature was removed as phishable and must not come back.
 | | |
 |---|---|
 | Contracts | Feature complete, internally reviewed, **not externally audited** |
-| Circuit | Frozen at 2 in / 2 out |
+| Circuit | Frozen at 4 in / 2 out, with the claim path in a second circuit |
 | Trusted setup | **One contributor. Ours.** Not suitable for real funds |
 | Networks | Local only — there is no live deployment |
-| Tests | 202 hardhat, 86 SDK, 17 app, 146 e2e-live |
+| Tests | 228 hardhat, 86 SDK, 17 app, 157 e2e-live |
 
 Two things gate mainnet and neither is negotiable: an external audit of the circuit and the
 contracts, and a multi-party ceremony over a public Powers of Tau file. A privacy pool whose
@@ -173,7 +182,7 @@ Under `packages/protocol/docs/`:
   what it authorises, and the replay protection on each signed write path.
 - [key-management.md](packages/protocol/docs/key-management.md) — where the recovery phrase
   comes from, how it is stored, and what recovery means.
-- [circuit-shape.md](packages/protocol/docs/circuit-shape.md) — why two inputs, what wider
+- [circuit-shape.md](packages/protocol/docs/circuit-shape.md) — why four inputs, what wider
   shapes cost, and the deadline on changing it.
 - [multi-tree-pool.md](packages/protocol/docs/multi-tree-pool.md) — why the pool is a sequence
   of trees and how the global index works.
@@ -186,6 +195,9 @@ Under `packages/protocol/docs/`:
 - [static-analysis.md](packages/protocol/docs/static-analysis.md) — Slither, Aderyn,
   circomspect and Picus output, triaged.
 - [test-plan.md](packages/protocol/docs/test-plan.md) — coverage by layer.
+
+At the root, [OPEN-ITEMS.md](OPEN-ITEMS.md) — what is known-incomplete, and the decisions
+already taken, in more detail than the roadmap above.
 
 ## Built on
 
@@ -203,6 +215,19 @@ Keys here are Poseidon hashes, not curve points — there is no BabyJubJub anywh
 `spendingCommitment = Poseidon(spendingPrivateKey)`. The only asymmetric cryptography is X25519
 (tweetnacl `nacl.box`), used to encrypt a note to its recipient; the circuit never sees it, and
 it is how a recipient *finds* a note rather than how one is spent.
+
+## How this was built
+
+Developed with heavy AI assistance throughout. The architecture, the design decisions, the
+adversarial review and the rejected alternatives recorded under `docs/` are mine; much of the
+code was generated against them. The commit history is the honest record of how it went — it
+includes the designs that were reverted, the bugs caught in review, and the static analyser
+that turned out to be wrong.
+
+That matters most for the circuit. Underconstrained signals do not fail tests, so a passing
+suite is not evidence of soundness, and this circuit has not had the one thing that would be:
+review by someone who was not involved in writing it. If you know circom, that is the single
+most useful contribution anyone could make here.
 
 ## Contributing
 

@@ -190,10 +190,10 @@ a rolled-over tree cannot re-publish it under a new number. Publish roots only a
 insert, and let the first writer win. Nothing can be proven against an empty root anyway,
 since it has no leaves.
 
-**4. `poolRoot` becomes `poolRoot[nIns]`.** Two inputs may legitimately live in different
-trees, and requiring them to share one would mean a holder could not spend a note from tree 3
+**4. `poolRoot` becomes `poolRoot[nIns]`.** Inputs may legitimately live in different trees,
+and requiring them to share one would mean a holder could not spend a note from tree 3
 alongside one from tree 5 — an arbitrary and user-visible restriction. So each input proves
-against its own root, and the pool checks `isKnownPoolRoot` for both. A zero-amount dummy
+against its own root, and the pool checks `poolRootTree` for every one of them. A zero-amount dummy
 input skips the Merkle check, so its root is unconstrained as before.
 
 Public signals go 11 → 14: `poolRoot[2]` and `treeNumber[2]` in place of a single root.
@@ -310,11 +310,12 @@ from tree 7 with no special handling — that is exactly why `poolRoot` and `tre
 per-input arrays rather than single signals. Both inputs being in the same tree is the same
 code path with equal values.
 
-Two things follow from the 2-in/2-out shape rather than from multi-tree:
+Two things follow from the 4-in/2-out shape rather than from multi-tree:
 
-- **There is no "3+ inputs" case.** At most two notes can be spent per transaction regardless
-  of trees, so consolidating a scattered balance takes several transactions. Outputs always
-  land in the *current* tree, so notes naturally migrate forward over time.
+- **There is no "5+ inputs" case.** At most four notes can be spent per transaction regardless
+  of trees, so consolidating a widely scattered balance still takes several transactions —
+  ⌈(*n*−1)/3⌉ of them. Outputs always land in the *current* tree, so notes naturally migrate
+  forward over time.
 - **Old notes never expire.** Every tree's roots stay in the known set permanently, so a note
   in tree 3 is spendable years later with no refresh.
 

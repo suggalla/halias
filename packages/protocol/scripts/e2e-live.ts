@@ -1109,7 +1109,7 @@ async function main() {
   check("the same invite cannot be claimed twice", replayed);
 
   // ── consolidation ─────────────────────────────────────────────────────────
-  // The circuit takes two inputs, so a balance spread over three or more notes cannot leave
+  // The circuit takes four inputs, so a balance spread over five or more notes cannot leave
   // in one transaction. A wallet paid more often than it spends reaches that state on its
   // own, and the failure is the worst kind: the money is there, the balance says so, and
   // every attempt to move it is refused. This is the whole path — that it happens, what the

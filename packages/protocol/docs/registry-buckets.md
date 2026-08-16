@@ -1,7 +1,14 @@
 # Bucketed registry slots
 
-Status: **proposal**. Nothing implemented. Depends on the mainnet ceremony not having happened,
-which is currently true and will not stay true.
+Status: **rejected, kept for the reasoning.** Nothing here is implemented and nothing here
+should be. The problem it addresses was solved instead by the on-chain prefix index
+(`getAliasesByPrefix` in `HaliasRegistry.sol`), which gives a client the same k-anonymous slice
+of the registry without partitioning the tree, without a capacity cliff per bucket, and without
+touching the circuit at all.
+
+Read it for the analysis of *why* partitioning is the wrong shape here — the capacity/anonymity
+trade-off in particular — not as a plan. Constraint counts and the `Transact(...)` signature
+below predate the widening to four inputs and the claim split.
 
 ## The problem
 
