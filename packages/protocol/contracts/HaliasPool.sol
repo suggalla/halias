@@ -71,6 +71,14 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     ///         three, and costs 11% FEWER constraints than the circuit it replaces, because
     ///         the claim machinery moved out at the same time.
     ///
+    ///         Gas moves the other way, and it is worth being plain about it: two more
+    ///         nullifier writes put ~53,000 on every transaction, +10%, whether or not the
+    ///         extra slots hold real notes — a dummy's nullifier costs the same 20,000 as a
+    ///         real one, which is exactly what buys the indistinguishability above. It pays
+    ///         for itself the moment consolidation is involved: making a six-note wallet
+    ///         fully sendable was 2,557,545 gas across five merges and is now 564,639 across
+    ///         one. A wallet that never fragments pays the 10% and gets nothing back.
+    ///
     ///         One width, not several. Dummy inputs are padded to this count and their
     ///         nullifiers are published and spent exactly like real ones, so an observer
     ///         cannot tell whether a transaction spent one note or four. Offering a second,
@@ -254,7 +262,7 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
 
         // An exit creates no notes, so there is nothing to insert and the root does not move.
         //
-        // It exists for the gas. Measured with scripts/gasbench.ts: 107,799 against 522,103
+        // It exists for the gas. Measured with scripts/gasbench.ts: 161,008 against 575,327
         // for the same withdrawal that inserts, so about 414,000 gas — the tree walk is
         // LEVELS + 1 Poseidon hashes, plus a root commit and the larger event. Real Groth16
         // verification adds the same amount to both, so the saving holds while the ratio
