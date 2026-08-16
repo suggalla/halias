@@ -15,7 +15,8 @@ import { HaliasPool } from "../HaliasPool.sol";
 ///         successful deposit until its owner tried to spend it. Refusing the insert is what
 ///         turns that into a revert, and until now nothing checked that it does.
 contract MockFullTreePool is HaliasPool {
-    constructor(address verifier, address registry) HaliasPool(verifier, registry) {}
+    constructor(address verifier, address claimVerifier_, address registry)
+        HaliasPool(verifier, claimVerifier_, registry) {}
 
     function _treeCapacity() internal pure override returns (uint32) {
         return 4;

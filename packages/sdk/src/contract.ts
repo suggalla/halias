@@ -14,8 +14,8 @@ import { FIELD_PRIME } from "./entry";
 // TransactParams, as the pool declares it. Every member is fixed-size, so the struct is
 // statically encoded — `relayerFee` is a two-member static struct, which preserves that.
 const TRANSACT_PARAMS =
-  "(bytes32[2] poolRoot, uint32[2] treeNumber, bytes32 registryRoot, uint256 publicAmount, address tokenAddress, " +
-  "bytes32[2] inputNullifiers, bytes32[2] outputCommitments, address recipient, " +
+  "(bytes32[4] poolRoot, uint32[4] treeNumber, bytes32 registryRoot, uint256 publicAmount, address tokenAddress, " +
+  "bytes32[4] inputNullifiers, bytes32[2] outputCommitments, address recipient, " +
   "(address relayer, uint256 amount) relayerFee, bytes32 externalData, bytes32 pendingLeaf, " +
   "bool outputsEmpty)";
 
@@ -42,7 +42,7 @@ export const POOL_ABI = [
   "function position() external view returns (uint32 tree, uint32 leaf)",
   "function poolRootTree(bytes32) external view returns (bool known, uint32 tree)",
   // tokenAddress is indexed — omitting that shifts every later argument during decoding.
-  "event Transact(uint256 publicAmount, address indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
+  "event Transact(uint256 publicAmount, address indexed tokenAddress, bytes32[4] inputNullifiers, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
   "event Withdrawal(address indexed recipient, uint256 amount, address indexed relayer, uint256 fee, address indexed tokenAddress)",
 ];
 
@@ -148,24 +148,24 @@ export function getController(address: string, runner: ethers.ContractRunner): e
 /// Assembles the calldata struct. Kept in one place so the field order cannot drift between
 /// the call and the paramsHash preimage — they must agree or the proof is rejected.
 export function buildTransactParams(
-  poolRoot: [bigint, bigint],
-  treeNumber: [number, number],
+  poolRoot: bigint[],
+  treeNumber: number[],
   registryRoot: bigint,
   publicAmount: bigint,
   tokenAddress: bigint,
-  inputNullifiers: [bigint, bigint],
+  inputNullifiers: bigint[],
   outputCommitments: [bigint, bigint],
   params: TransactParams,
   pendingLeaf: bigint = 0n,
   outputsEmpty: boolean = false,
 ) {
   return {
-    poolRoot:          [h32(poolRoot[0]), h32(poolRoot[1])],
+    poolRoot:          poolRoot.map(h32),
     treeNumber,
     registryRoot:      h32(registryRoot),
     publicAmount,
     tokenAddress:      tokenAddr(tokenAddress),
-    inputNullifiers:   [h32(inputNullifiers[0]), h32(inputNullifiers[1])],
+    inputNullifiers:   inputNullifiers.map(h32),
     outputCommitments: [h32(outputCommitments[0]), h32(outputCommitments[1])],
     recipient:         params.recipient,
     relayerFee:        { relayer: params.relayerFee.relayer, amount: params.relayerFee.amount },
@@ -182,12 +182,12 @@ export function buildTransactParams(
 
 export async function transact(
   pool: ethers.Contract,
-  poolRoot: [bigint, bigint],
-  treeNumber: [number, number],
+  poolRoot: bigint[],
+  treeNumber: number[],
   registryRoot: bigint,
   publicAmount: bigint,
   tokenAddress: bigint,
-  inputNullifiers: [bigint, bigint],
+  inputNullifiers: bigint[],
   outputCommitments: [bigint, bigint],
   params: TransactParams,
   encryptedOutput0: string,
@@ -560,11 +560,11 @@ export function encodeRegistration(r: Registration): string {
 export async function claim(
   domain: ethers.Contract,
   registration: Registration,
-  poolRoot: [bigint, bigint],
-  treeNumber: [number, number],
+  poolRoot: bigint[],
+  treeNumber: number[],
   registryRoot: bigint,
   publicAmount: bigint,
-  inputNullifiers: [bigint, bigint],
+  inputNullifiers: bigint[],
   outputCommitments: [bigint, bigint],
   params: TransactParams,
   encryptedOutput0: string,

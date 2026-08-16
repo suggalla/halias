@@ -32,11 +32,11 @@ struct RelayerFee {
 ///         spent. Because `paramsHash` is opaque to the circuit, what goes in here can
 ///         change without a new ceremony.
 struct TransactParams {
-    // Per input: two notes may live in different trees. `treeNumber` is checked against the
+    // Per input: notes may live in different trees. `treeNumber` is checked against the
     // tree each root belongs to — the nullifier keys on a note's global position, so an
     // unbound tree number would let one note be re-spent under a fresh nullifier each time.
-    bytes32[2] poolRoot;
-    uint32[2]  treeNumber;
+    bytes32[4] poolRoot;
+    uint32[4]  treeNumber;
     bytes32    registryRoot;
     uint256    publicAmount;   // signed in the field: positive = deposit, negative = withdraw
     // `address(0)` for ETH. This is a circuit public signal and therefore a field element,
@@ -47,7 +47,7 @@ struct TransactParams {
     // type makes that unrepresentable rather than merely checked. Widened back to a field
     // element only where the verifier wants it — see HaliasPool._verifyTransact.
     address    tokenAddress;
-    bytes32[2] inputNullifiers;
+    bytes32[4] inputNullifiers;
     bytes32[2] outputCommitments;
     address    recipient;      // withdrawal destination; may be zero when the fee consumes the payout
     RelayerFee relayerFee;

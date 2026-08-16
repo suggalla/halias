@@ -61,9 +61,9 @@ describe("E2E against the real verifier", function () {
   const rand = () => BigInt(ethers.hexlify(ethers.randomBytes(31)));
 
   const params = (over: any = {}) => ({
-    poolRoot: [ethers.ZeroHash, ethers.ZeroHash], treeNumber: [0, 0], registryRoot: ethers.ZeroHash,
+    poolRoot: [ethers.ZeroHash, ethers.ZeroHash, ethers.ZeroHash, ethers.ZeroHash], treeNumber: [0, 0, 0, 0], registryRoot: ethers.ZeroHash,
     publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
-    inputNullifiers: [ethers.ZeroHash, ethers.ZeroHash],
+    inputNullifiers: [ethers.ZeroHash, ethers.ZeroHash, ethers.ZeroHash, ethers.ZeroHash],
     outputCommitments: [ethers.ZeroHash, ethers.ZeroHash],
     recipient: ethers.ZeroAddress,
     relayerFee: { relayer: ethers.ZeroAddress, amount: 0n },
@@ -76,9 +76,9 @@ describe("E2E against the real verifier", function () {
   function circuitInput(o: any) {
     const s = (v: bigint) => v.toString();
     return {
-      poolRoot: [s(o.poolRoot), s(o.poolRoot)],
+      poolRoot: [s(o.poolRoot), s(o.poolRoot), s(o.poolRoot), s(o.poolRoot)],
       // Both inputs anchored on one tree; a test that needs two spans them explicitly.
-      treeNumber: [String(o.treeNumber ?? 0), String(o.treeNumber ?? 0)],
+      treeNumber: [String(o.treeNumber ?? 0), String(o.treeNumber ?? 0), String(o.treeNumber ?? 0), String(o.treeNumber ?? 0)],
       registryRoot: s(o.registryRoot), publicAmount: s(o.publicAmount),
       tokenAddress: "0", paramsHash: s(o.paramsHash),
       // Opt-in, not derived: empty outputs do not require the flag, which is what keeps a
@@ -157,7 +157,7 @@ describe("E2E against the real verifier", function () {
 
     const deployer = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
-    })).deploy(verifier, user.address);
+    })).deploy(verifier, verifier, user.address);
 
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
@@ -212,21 +212,21 @@ describe("E2E against the real verifier", function () {
     const out1 = dummyOutput();
     const comm1 = poseidonHash([out1.spendingCommitment, 0n, 0n, 0n, 0n]);
 
-    const d0 = dummyInput(0), d1 = dummyInput(1);
+    const d0 = dummyInput(0), d1 = dummyInput(1), d0p = dummyInput(0+900), d1p = dummyInput(1+900);
     const p = params({
-      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0],
+      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0, 0, 0],
       registryRoot: ethers.toBeHex(smt.root, 32),
       publicAmount: DEPOSIT,
-      inputNullifiers: [ethers.toBeHex(d0.nullifier, 32), ethers.toBeHex(d1.nullifier, 32)],
+      inputNullifiers: [ethers.toBeHex(d0.nullifier, 32), ethers.toBeHex(d1.nullifier, 32), ethers.toBeHex(d0p.nullifier, 32), ethers.toBeHex(d1p.nullifier, 32)],
       outputCommitments: [ethers.toBeHex(out0.commitment, 32), ethers.toBeHex(comm1, 32)],
     });
     const paramsHash = BigInt(await pool.computeParamsHash(p, "0x", "0x"));
 
     const proof = await prove(circuitInput({
       poolRoot: tree.getRoot(), registryRoot: smt.root, publicAmount: DEPOSIT, paramsHash,
-      inputNullifiers: [BigInt(p.inputNullifiers[0]), BigInt(p.inputNullifiers[1])],
+      inputNullifiers: [BigInt(p.inputNullifiers[0]), BigInt(p.inputNullifiers[1]), BigInt(p.inputNullifiers[2]), BigInt(p.inputNullifiers[3])],
       outputCommitments: [out0.commitment, comm1],
-      inputs: [d0.input, d1.input],
+      inputs: [d0.input, d1.input, d0p.input, d1p.input],
       outputs: [out0, out1],
     }));
 
@@ -249,26 +249,26 @@ describe("E2E against the real verifier", function () {
 
     const inProof = tree.getProof(aliceLeafIndex);
     const nullifier = nullifierFor(NULLIFIER_KEY, aliceLeafIndex);
-    const dNull = dummyInput(1);
+    const dNull = dummyInput(1), dNulla = dummyInput(1+700), dNullb = dummyInput(1+800);
 
     const p = params({
-      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0],
+      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0, 0, 0],
       registryRoot: ethers.toBeHex(smt.root, 32),
       publicAmount: 0n,
-      inputNullifiers: [ethers.toBeHex(nullifier, 32), ethers.toBeHex(dNull.nullifier, 32)],
+      inputNullifiers: [ethers.toBeHex(nullifier, 32), ethers.toBeHex(dNull.nullifier, 32), ethers.toBeHex(dNulla.nullifier, 32), ethers.toBeHex(dNullb.nullifier, 32)],
       outputCommitments: [ethers.toBeHex(toBob.commitment, 32), ethers.toBeHex(change.commitment, 32)],
     });
     const paramsHash = BigInt(await pool.computeParamsHash(p, "0x", "0x"));
 
     const proof = await prove(circuitInput({
       poolRoot: tree.getRoot(), registryRoot: smt.root, publicAmount: 0n, paramsHash,
-      inputNullifiers: [nullifier, BigInt(p.inputNullifiers[1])],
+      inputNullifiers: [nullifier, BigInt(p.inputNullifiers[1]), BigInt(p.inputNullifiers[2]), BigInt(p.inputNullifiers[3])],
       outputCommitments: [toBob.commitment, change.commitment],
       inputs: [{
         spendingPrivateKey: alice.spendingPrivateKey, viewingPrivateKey: VIEWING_KEY,
         blinding: aliceNote.blinding, amount: aliceNote.amount,
         pathIndices: inProof.pathIndices, pathElements: inProof.pathElements,
-      }, dNull.input],
+      }, dNull.input, dNulla.input, dNullb.input],
       outputs: [toBob, change],
     }));
 
@@ -294,23 +294,23 @@ describe("E2E against the real verifier", function () {
     const fresh = noteFor(alice, ethers.parseEther("0.2"));
     const fillIn = dummyOutput();
     const fillComm = poseidonHash([fillIn.spendingCommitment, 0n, 0n, 0n, 0n]);
-    const dA = dummyInput(7), dB = dummyInput(8);
+    const dA = dummyInput(7), dB = dummyInput(8), dAp = dummyInput(7+900), dBp = dummyInput(8+900);
 
     // Fund a note to exit.
     const dp = params({
-      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0],
+      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0, 0, 0],
       registryRoot: ethers.toBeHex(smt.root, 32),
       publicAmount: ethers.parseEther("0.2"),
-      inputNullifiers: [ethers.toBeHex(dA.nullifier, 32), ethers.toBeHex(dB.nullifier, 32)],
+      inputNullifiers: [ethers.toBeHex(dA.nullifier, 32), ethers.toBeHex(dB.nullifier, 32), ethers.toBeHex(dAp.nullifier, 32), ethers.toBeHex(dBp.nullifier, 32)],
       outputCommitments: [ethers.toBeHex(fresh.commitment, 32), ethers.toBeHex(fillComm, 32)],
     });
     const dHash = BigInt(await pool.computeParamsHash(dp, "0x", "0x"));
     const dProof = await prove(circuitInput({
       poolRoot: tree.getRoot(), registryRoot: smt.root,
       publicAmount: ethers.parseEther("0.2"), paramsHash: dHash,
-      inputNullifiers: [BigInt(dp.inputNullifiers[0]), BigInt(dp.inputNullifiers[1])],
+      inputNullifiers: [BigInt(dp.inputNullifiers[0]), BigInt(dp.inputNullifiers[1]), BigInt(dp.inputNullifiers[2]), BigInt(dp.inputNullifiers[3])],
       outputCommitments: [fresh.commitment, fillComm],
-      inputs: [dA.input, dB.input],
+      inputs: [dA.input, dB.input, dAp.input, dBp.input],
       outputs: [fresh, fillIn],
     }));
     await (await pool.transact(dp, "0x", "0x", dProof, { value: ethers.parseEther("0.2") })).wait();
@@ -321,17 +321,17 @@ describe("E2E against the real verifier", function () {
     // Now take all of it out, creating nothing.
     const inProof = tree.getProof(freshIndex);
     const nullifier = nullifierFor(NULLIFIER_KEY, freshIndex);
-    const dC = dummyInput(9);
+    const dC = dummyInput(9), dCa = dummyInput(9+700), dCb = dummyInput(9+800);
     const e0 = dummyOutput(), e1 = dummyOutput();
     const ec0 = poseidonHash([e0.spendingCommitment, 0n, 0n, 0n, 0n]);
     e1.blinding = 1n;
     const ec1 = poseidonHash([e1.spendingCommitment, 0n, 1n, 0n, 0n]);
 
     const ep = params({
-      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0],
+      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0, 0, 0],
       registryRoot: ethers.toBeHex(smt.root, 32),
       publicAmount: FIELD_PRIME - ethers.parseEther("0.2"),
-      inputNullifiers: [ethers.toBeHex(nullifier, 32), ethers.toBeHex(dC.nullifier, 32)],
+      inputNullifiers: [ethers.toBeHex(nullifier, 32), ethers.toBeHex(dC.nullifier, 32), ethers.toBeHex(dCa.nullifier, 32), ethers.toBeHex(dCb.nullifier, 32)],
       outputCommitments: [ethers.toBeHex(ec0, 32), ethers.toBeHex(ec1, 32)],
       recipient: recipient.address,
       outputsEmpty: true,
@@ -340,13 +340,13 @@ describe("E2E against the real verifier", function () {
     const eProof = await prove(circuitInput({
       poolRoot: tree.getRoot(), registryRoot: smt.root,
       publicAmount: FIELD_PRIME - ethers.parseEther("0.2"), paramsHash: eHash,
-      inputNullifiers: [nullifier, BigInt(ep.inputNullifiers[1])],
+      inputNullifiers: [nullifier, BigInt(ep.inputNullifiers[1]), BigInt(ep.inputNullifiers[2]), BigInt(ep.inputNullifiers[3])],
       outputCommitments: [ec0, ec1],
       inputs: [{
         spendingPrivateKey: alice.spendingPrivateKey, viewingPrivateKey: VIEWING_KEY,
         blinding: fresh.blinding, amount: fresh.amount,
         pathIndices: inProof.pathIndices, pathElements: inProof.pathElements,
-      }, dC.input],
+      }, dC.input, dCa.input, dCb.input],
       outputs: [e0, e1],
       outputsEmpty: true,
     }));
@@ -372,17 +372,17 @@ describe("E2E against the real verifier", function () {
 
     const inProof = tree.getProof(aliceLeafIndex);
     const nullifier = nullifierFor(NULLIFIER_KEY, aliceLeafIndex);
-    const dNull2 = dummyInput(2);
+    const dNull2 = dummyInput(2), dNull2a = dummyInput(2+700), dNull2b = dummyInput(2+800);
     const d0 = dummyOutput(), d1 = dummyOutput();
     const c0 = poseidonHash([d0.spendingCommitment, 0n, 0n, 0n, 0n]);
     const c1 = poseidonHash([d1.spendingCommitment, 0n, 1n, 0n, 0n]);
     d1.blinding = 1n;
 
     const p = params({
-      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0],
+      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0, 0, 0],
       registryRoot: ethers.toBeHex(smt.root, 32),
       publicAmount: FIELD_PRIME - out,
-      inputNullifiers: [ethers.toBeHex(nullifier, 32), ethers.toBeHex(dNull2.nullifier, 32)],
+      inputNullifiers: [ethers.toBeHex(nullifier, 32), ethers.toBeHex(dNull2.nullifier, 32), ethers.toBeHex(dNull2a.nullifier, 32), ethers.toBeHex(dNull2b.nullifier, 32)],
       outputCommitments: [ethers.toBeHex(c0, 32), ethers.toBeHex(c1, 32)],
       recipient: recipient.address,
       relayerFee: { relayer: relayer.address, amount: fee },
@@ -392,13 +392,13 @@ describe("E2E against the real verifier", function () {
     const proof = await prove(circuitInput({
       poolRoot: tree.getRoot(), registryRoot: smt.root,
       publicAmount: FIELD_PRIME - out, paramsHash,
-      inputNullifiers: [nullifier, BigInt(p.inputNullifiers[1])],
+      inputNullifiers: [nullifier, BigInt(p.inputNullifiers[1]), BigInt(p.inputNullifiers[2]), BigInt(p.inputNullifiers[3])],
       outputCommitments: [c0, c1],
       inputs: [{
         spendingPrivateKey: alice.spendingPrivateKey, viewingPrivateKey: VIEWING_KEY,
         blinding: aliceNote.blinding, amount: aliceNote.amount,
         pathIndices: inProof.pathIndices, pathElements: inProof.pathElements,
-      }, dNull2.input],
+      }, dNull2.input, dNull2a.input, dNull2b.input],
       outputs: [d0, d1],
     }));
 
@@ -418,15 +418,15 @@ describe("E2E against the real verifier", function () {
     // the recipient changed after the proof was made, so paramsHash no longer matches.
     const amount = ethers.parseEther("0.5");
     const out0 = noteFor(alice, amount);
-    const d0 = dummyInput(4), d1 = dummyInput(5);
+    const d0 = dummyInput(4), d1 = dummyInput(5), d0p = dummyInput(4+900), d1p = dummyInput(5+900);
     const d = dummyOutput();
     const comm1 = poseidonHash([d.spendingCommitment, 0n, 0n, 0n, 0n]);
 
     const honest = params({
-      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0],
+      poolRoot: [ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32), ethers.toBeHex(tree.getRoot(), 32)], treeNumber: [0, 0, 0, 0],
       registryRoot: ethers.toBeHex(smt.root, 32),
       publicAmount: amount,
-      inputNullifiers: [ethers.toBeHex(d0.nullifier, 32), ethers.toBeHex(d1.nullifier, 32)],
+      inputNullifiers: [ethers.toBeHex(d0.nullifier, 32), ethers.toBeHex(d1.nullifier, 32), ethers.toBeHex(d0p.nullifier, 32), ethers.toBeHex(d1p.nullifier, 32)],
       outputCommitments: [ethers.toBeHex(out0.commitment, 32), ethers.toBeHex(comm1, 32)],
       recipient: recipient.address,
     });
@@ -434,9 +434,9 @@ describe("E2E against the real verifier", function () {
 
     const proof = await prove(circuitInput({
       poolRoot: tree.getRoot(), registryRoot: smt.root, publicAmount: amount, paramsHash,
-      inputNullifiers: [BigInt(honest.inputNullifiers[0]), BigInt(honest.inputNullifiers[1])],
+      inputNullifiers: [BigInt(honest.inputNullifiers[0]), BigInt(honest.inputNullifiers[1]), BigInt(honest.inputNullifiers[2]), BigInt(honest.inputNullifiers[3])],
       outputCommitments: [out0.commitment, comm1],
-      inputs: [d0.input, d1.input],
+      inputs: [d0.input, d1.input, d0p.input, d1p.input],
       outputs: [out0, d],
     }));
 

@@ -13,7 +13,7 @@ import { ViewKeys, keysFromViewKeys } from "./viewkey";
 import { computeNullifier, randomBlinding, OwnedEntry, POOL_LEVELS } from "./entry";
 import { PoolTrees } from "./merkle";
 import { SMT, aliasHashToSmtKey, rootFromSiblings } from "./smt";
-import { dummyInput, dummyOutput, TransactOutput, TransactInput } from "./proof";
+import { dummyInput, dummyOutput, TransactOutput, TransactInput, ArtifactPaths, POOL_INPUTS } from "./proof";
 import { scanEvents, findMyOutputs, Output, RegistryEntry, ScanResult } from "./events";
 import { getPool, getRegistry, getController } from "./contract";
 import { CacheStore, serializeCache, deserializeCache } from "./cache";
@@ -35,6 +35,10 @@ export interface HaliasConfig {
   artifacts: {
     transactWasm: string;
     transactZkey: string;
+    /// The claim circuit. Optional: a client that never claims an invite never fetches it,
+    /// which matters because it is the larger of the two (51 MB against 39 MB).
+    claimWasm?: string;
+    claimZkey?: string;
   };
   cache?: CacheStore;
   startBlock?: number;
@@ -84,11 +88,10 @@ export interface BalanceResult {
   total: bigint;
   /// Unspent notes, smallest first.
   entries: OwnedEntry[];
-  /// The most that can leave in one transaction — the two largest notes, since the circuit
-  /// takes two inputs. Below `total` whenever the balance is spread over three or more
-  /// notes, and the number a UI has to show alongside the balance: offering to send `total`
-  /// when only `sendableNow` can move is a promise the wallet cannot keep. `consolidate()`
-  /// closes the gap.
+  /// The most that can leave in one transaction — the largest notes the circuit has slots
+  /// for. Below `total` whenever the balance is spread wider than that, and the number a UI
+  /// has to show alongside the balance: offering to send `total` when only `sendableNow` can
+  /// move is a promise the wallet cannot keep. `consolidate()` closes the gap.
   sendableNow: bigint;
 }
 export interface ConsolidateResult {
@@ -420,10 +423,49 @@ export abstract class HaliasCore {
     return start;
   }
 
-  protected getArtifacts(): { wasmPath: string; zkeyPath: string } {
+  /// Real inputs, padded out to the circuit's width with dummies.
+  ///
+  /// Every transaction spends exactly {POOL_INPUTS} inputs whether or not it has that many
+  /// notes to spend. That is not a formality — a dummy's nullifier is published and marked
+  /// spent exactly like a real one, so padding is what stops the number of notes a wallet
+  /// holds from being visible to anyone reading the chain.
+  ///
+  /// A dummy still names a (root, tree) pair the pool will check, so it borrows the anchor.
+  /// Returned as the four parallel arrays both `proveTransact` and `transact` want, from one
+  /// place, because a witness and its calldata disagreeing about input order is a proof that
+  /// verifies against nothing.
+  protected padInputs(
+    real: Array<{ input: TransactInput; nullifier: bigint; root: bigint; tree: number }>,
+    anchor: { root: bigint; tree: number },
+  ): { poolRoot: bigint[]; treeNumber: number[]; inputNullifiers: bigint[]; inputs: TransactInput[] } {
+    if (real.length > POOL_INPUTS) {
+      throw new Error(`a transaction spends at most ${POOL_INPUTS} notes, got ${real.length}`);
+    }
+    const dBase = this.consumeDummyIdx(POOL_INPUTS - real.length);
+    const all = [...real];
+    for (let i = real.length; i < POOL_INPUTS; i++) {
+      const d = dummyInput(anchor.tree, dBase + (i - real.length), POOL_LEVELS);
+      all.push({ input: d.input, nullifier: d.nullifier, root: anchor.root, tree: anchor.tree });
+    }
     return {
-      wasmPath: this.config.artifacts.transactWasm,
-      zkeyPath: this.config.artifacts.transactZkey,
+      poolRoot:        all.map(a => a.root),
+      treeNumber:      all.map(a => a.tree),
+      inputNullifiers: all.map(a => a.nullifier),
+      inputs:          all.map(a => a.input),
+    };
+  }
+
+  protected getArtifacts(): { transact: ArtifactPaths; claim: ArtifactPaths } {
+    const a = this.config.artifacts;
+    return {
+      transact: { wasmPath: a.transactWasm, zkeyPath: a.transactZkey },
+      // Falls back to the ordinary artifacts when unconfigured. Not a silent wrong answer: the
+      // ordinary circuit constrains pendingLeaf to zero, so a claim built against it fails to
+      // prove rather than producing something the pool would accept.
+      claim: {
+        wasmPath: a.claimWasm ?? a.transactWasm,
+        zkeyPath: a.claimZkey ?? a.transactZkey,
+      },
     };
   }
 
@@ -745,20 +787,21 @@ export abstract class HaliasCore {
 
   /// The notes to spend for `amount` — one or two, smallest that cover it.
   ///
-  /// Two, whenever two exist, even when one would do. The circuit takes two inputs and
-  /// produces two outputs, so a transaction that fills both slots consumes two notes and
-  /// creates one payment plus one change: a net loss of one note every time. Filling one slot
-  /// and padding with a dummy leaves that consolidation on the table, and a wallet paid in
-  /// many small amounts slowly becomes unable to spend its own balance.
+  /// As many notes as the circuit will take, whenever that many exist, even when fewer would
+  /// do. The circuit consumes {POOL_INPUTS} inputs and produces two outputs, so a full
+  /// transaction is a net loss of {POOL_INPUTS} - 2 notes: filling the slots consolidates for
+  /// free, and leaving them empty lets a wallet paid in many small amounts slowly become
+  /// unable to spend its own balance.
   ///
-  /// Smallest-first for the same reason. Taking the largest note that covers the amount pays
+  /// Smallest-first for the same reason. Taking the largest notes that cover the amount pays
   /// the bill and leaves every small note where it was, forever; taking the smallest that
   /// cover it drains them.
   ///
-  /// Two is the ceiling, so a balance spread across three notes cannot be spent in one
-  /// transaction however it is selected. {consolidate} is the answer to that, and the error
-  /// here says so rather than claiming the balance is insufficient — which was the old
-  /// message, and was false.
+  /// {POOL_INPUTS} is still a ceiling, so a balance spread wider than that cannot go in one
+  /// transaction however it is selected — but at four rather than two, ten notes now take
+  /// three transactions instead of nine. {consolidate} is the answer past that, and the error
+  /// here says so rather than claiming the balance is insufficient, which was the old message
+  /// and was false.
   protected selectEntries(amount: bigint, tokenAddress: bigint): OwnedEntry[] {
     const notes = this.spendable(tokenAddress);
     const total = notes.reduce((s, e) => s + e.amount, 0n);
@@ -768,37 +811,60 @@ export abstract class HaliasCore {
         `is less than ${this.formatAmount(amount, tokenAddress)}`);
     }
 
-    // Smallest pair that covers it. Notes are sorted, so walking outward from the smallest
-    // and pulling the largest partner in only when needed finds it without trying every pair.
-    for (let i = 0; i < notes.length; i++) {
-      for (let j = i + 1; j < notes.length; j++) {
-        if (notes[i].amount + notes[j].amount >= amount) return [notes[i], notes[j]];
+    // Smallest set that covers it. Notes are sorted ascending, so accumulating from the front
+    // and stopping the moment the running sum suffices gives the smallest-first set; if the
+    // whole window still falls short, drop the smallest and pull in the next largest.
+    //
+    // Then top up to the full width from whatever is left, because unused slots are free
+    // consolidation — spending a note costs nothing extra once its slot is already paid for.
+    const pick = (): OwnedEntry[] | null => {
+      for (let start = 0; start < notes.length; start++) {
+        let sum = 0n;
+        const taken: OwnedEntry[] = [];
+        for (let i = start; i < notes.length && taken.length < POOL_INPUTS; i++) {
+          taken.push(notes[i]);
+          sum += notes[i].amount;
+          if (sum >= amount) return taken;
+        }
+        // The largest POOL_INPUTS notes could not cover it, so no window can.
+        if (start === 0 && notes.length <= POOL_INPUTS) break;
       }
-      // A single note that covers it still pairs with the smallest other note, to consolidate.
-      if (notes[i].amount >= amount) {
-        return notes.length > 1
-          ? [notes[i], notes.find((_, k) => k !== i)!]
-          : [notes[i]];
+      // Fall back to the largest notes available, which is the best any selection can do.
+      const largest = notes.slice(-POOL_INPUTS);
+      return largest.reduce((t, e) => t + e.amount, 0n) >= amount ? largest : null;
+    };
+
+    const chosen = pick();
+    if (chosen) {
+      // Top up with the smallest notes not already taken, for the free consolidation.
+      const used = new Set(chosen);
+      for (const n of notes) {
+        if (chosen.length >= POOL_INPUTS) break;
+        if (!used.has(n)) { chosen.push(n); used.add(n); }
       }
+      return chosen;
     }
 
     throw new Error(
       `Balance ${this.formatAmount(total, tokenAddress)} ${this.symbolOf(tokenAddress)} is ` +
-      `spread across ${notes.length} notes and a transaction spends at most two. ` +
+      `spread across ${notes.length} notes and a transaction spends at most ${POOL_INPUTS}. ` +
       `Consolidate first — see consolidate().`);
   }
 
-  /// The two input slots, filled from `entries` and padded with a dummy if only one is given.
+  /// The circuit's input slots, filled from `entries` and padded with dummies.
   ///
-  /// Each input names its own root and tree, so the two notes need not live in the same tree —
+  /// Each input names its own root and tree, so the notes need not live in the same tree —
   /// which matters once the pool has rolled over, because the notes a wallet holds will
   /// straddle the boundary. A dummy borrows the first real input's anchor: it proves nothing,
   /// but the pool still checks the pair it names.
+  ///
+  /// Always {POOL_INPUTS} slots, however few notes are real. Padding is what keeps the count
+  /// private — a dummy nullifier is published and spent like any other.
   protected buildInputs(entries: OwnedEntry[]): {
-    nullifiers: [bigint, bigint];
-    poolRoots: [bigint, bigint];
-    treeNumbers: [number, number];
-    inputs: [TransactInput, TransactInput];
+    nullifiers: bigint[];
+    poolRoots: bigint[];
+    treeNumbers: number[];
+    inputs: TransactInput[];
     total: bigint;
   } {
     const keys = this.keys!;
@@ -822,18 +888,14 @@ export abstract class HaliasCore {
     });
 
     const anchor = real[0] ? { root: real[0].root, tree: real[0].tree } : this.poolAnchor();
-    const pad = () => {
-      const d = dummyInput(anchor.tree, this.consumeDummyIdx(1), POOL_LEVELS);
-      return { nullifier: d.nullifier, root: anchor.root, tree: anchor.tree, input: d.input, amount: 0n };
-    };
-    const [a, b] = [real[0] ?? pad(), real[1] ?? pad()];
+    const padded = this.padInputs(real, anchor);
 
     return {
-      nullifiers:  [a.nullifier, b.nullifier],
-      poolRoots:   [a.root, b.root],
-      treeNumbers: [a.tree, b.tree],
-      inputs:      [a.input, b.input],
-      total:       a.amount + b.amount,
+      nullifiers:  padded.inputNullifiers,
+      poolRoots:   padded.poolRoot,
+      treeNumbers: padded.treeNumber,
+      inputs:      padded.inputs,
+      total:       real.reduce((t, r) => t + r.amount, 0n),
     };
   }
 

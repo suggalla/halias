@@ -36,7 +36,7 @@ export async function deployStack(opts: { realVerifier?: boolean } = {}): Promis
 
   const deployer = await (await ethers.getContractFactory("HaliasDeployer", {
     libraries: { PoseidonT3: t3, PoseidonT4: t4 },
-  })).deploy(verifierAddr, admin.address);
+  })).deploy(verifierAddr, verifierAddr, admin.address);
 
   return {
     admin,

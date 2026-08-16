@@ -9,7 +9,7 @@ contract MockTransactVerifier {
         uint256[2] calldata,
         uint256[2][2] calldata,
         uint256[2] calldata,
-        uint256[14] calldata
+        uint256[20] calldata
     ) external pure returns (bool) {
         return true;
     }

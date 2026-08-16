@@ -4,12 +4,12 @@ import { buildEntry, OwnedEntry, POOL_LEVELS } from "./entry";
 import { decodeOutputBlob, tryDecryptOutput, poseidonHash } from "./crypto";
 
 export const TRANSACT_ABI = [
-  "event Transact(uint256 publicAmount, address indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
+  "event Transact(uint256 publicAmount, address indexed tokenAddress, bytes32[4] inputNullifiers, bytes32 outputCommitment0, bytes32 outputCommitment1, uint32 outputTreeNumber, uint32 outputLeafIndex0, uint32 outputLeafIndex1, bytes encryptedOutput0, bytes encryptedOutput1)",
   // An exit spent its inputs and created nothing, so it moves the nullifier set but not the
   // tree. Its own event rather than a flag on Transact: a scanner that inserted for one of
   // these would build a tree that silently disagrees with the contract's, and the only
   // symptom is every proof afterwards being rejected.
-  "event PoolExit(uint256 publicAmount, address indexed tokenAddress, bytes32 indexed inputNullifier0, bytes32 indexed inputNullifier1)",
+  "event PoolExit(uint256 publicAmount, address indexed tokenAddress, bytes32[4] inputNullifiers)",
 ];
 export const REGISTRY_ABI = [
   "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 leaf, bytes32 encryptionPubkey, uint32 slot)",
@@ -38,7 +38,7 @@ export interface Output {
   leafIndex: number;
   encryptedBlob: string;
   tokenAddress: bigint;
-  spentNullifiers: [bigint, bigint];
+  spentNullifiers: bigint[];
   blockNumber: number;
   transactionIndex: number;
   logIndex: number;
@@ -194,22 +194,23 @@ export async function scanEvents(
     if (topic === jsTopic) {
       const e = jsIface.parseLog({ topics: log.topics as string[], data: log.data })!;
       const tokenAddress = BigInt(e.args[1]);
-      const null0 = BigInt(e.args[2]);
-      const null1 = BigInt(e.args[3]);
-      spentNullifiers.add(null0);
-      spentNullifiers.add(null1);
+      // One array now, not two topics. All of them are marked spent, dummies included —
+      // which is what makes a transaction spending one note indistinguishable from one
+      // spending four.
+      const nulls = (e.args[2] as readonly string[]).map(BigInt);
+      for (const n of nulls) spentNullifiers.add(n);
 
-      const comm0 = BigInt(e.args[4]);
-      const comm1 = BigInt(e.args[5]);
-      const tree  = Number(e.args[6]);
-      const idx0  = Number(e.args[7]);
-      const idx1  = Number(e.args[8]);
-      const blob0 = e.args[9];
-      const blob1 = e.args[10];
+      const comm0 = BigInt(e.args[3]);
+      const comm1 = BigInt(e.args[4]);
+      const tree  = Number(e.args[5]);
+      const idx0  = Number(e.args[6]);
+      const idx1  = Number(e.args[7]);
+      const blob0 = e.args[8];
+      const blob1 = e.args[9];
 
       const base = {
         treeNumber: tree,
-        spentNullifiers: [null0, null1] as [bigint, bigint],
+        spentNullifiers: nulls,
         tokenAddress,
         blockNumber: log.blockNumber,
         transactionIndex: log.transactionIndex,
@@ -226,8 +227,7 @@ export async function scanEvents(
     } else if (topic === exitTopic) {
       // Nullifiers only. Nothing was inserted, so the tree must not advance here.
       const e = jsIface.parseLog({ topics: log.topics as string[], data: log.data })!;
-      spentNullifiers.add(BigInt(e.args[2]));
-      spentNullifiers.add(BigInt(e.args[3]));
+      for (const n of e.args[2] as readonly string[]) spentNullifiers.add(BigInt(n));
 
     } else if (topic === regTopic) {
       const e = regIface.parseLog({ topics: log.topics as string[], data: log.data })!;

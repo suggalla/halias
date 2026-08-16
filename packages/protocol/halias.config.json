@@ -1,6 +1,5 @@
 {
   "circuit": "transact",
-  "contractName": "TransactVerifier",
   "power": 17,
   "paths": {
     "circuitsDir": "circuits",

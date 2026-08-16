@@ -22,6 +22,7 @@ import { ensurePoseidon, verifyPoseidon } from "./poseidon";
 // Env:
 //   ADMIN            admin for HaliasController (defaults to the deployer)
 //   VERIFIER         reuse an already-deployed TransactVerifier
+//   CLAIM_VERIFIER   reuse an already-deployed TransactClaimVerifier
 
 // Is `addr` running exactly this contract's code?
 //
@@ -169,6 +170,9 @@ async function main() {
   console.log(`  PoseidonT3         canonical ${poseidonT3}`);
   console.log(`  PoseidonT4         canonical ${poseidonT4}`);
   const verifier = await deployOrReuse("TransactVerifier", "verifier", cfg);
+  // The claim circuit's verifier. A separate contract because the two circuits have separate
+  // proving keys — the pool picks between them by the leaf the registry armed.
+  const claimVerifier = await deployOrReuse("TransactClaimVerifier", "claimVerifier", cfg);
 
   // Reuse before redeploying, like every step above.
   //
@@ -196,7 +200,7 @@ async function main() {
     startBlock = await ethers.provider.getBlockNumber();
     const deployerContract = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: poseidonT3, PoseidonT4: poseidonT4 },
-    })).deploy(verifier, admin);
+    })).deploy(verifier, claimVerifier, admin);
     await deployerContract.waitForDeployment();
 
     pool     = await deployerContract.pool();

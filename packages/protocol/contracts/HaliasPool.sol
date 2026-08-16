@@ -64,8 +64,35 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     using Address for address payable;
     using SafeERC20 for IERC20;
 
-    /// @notice Groth16 verifier for the transact circuit.
+    /// @notice How many notes one transaction may spend. Must equal the circuit's `nIns`.
+    /// @dev    Four rather than two. A wallet's balance arrives as one note per payment, and
+    ///         at two inputs spending N notes took N-1 chained merges — nine transactions for
+    ///         a ten-note balance, which users met as "consolidate first". Four takes that to
+    ///         three, and costs 11% FEWER constraints than the circuit it replaces, because
+    ///         the claim machinery moved out at the same time.
+    ///
+    ///         One width, not several. Dummy inputs are padded to this count and their
+    ///         nullifiers are published and spent exactly like real ones, so an observer
+    ///         cannot tell whether a transaction spent one note or four. Offering a second,
+    ///         narrower circuit would give that away — the nullifier count is public, so the
+    ///         choice of circuit is too.
+    uint256 internal constant INPUTS = 4;
+
+    /// @notice Groth16 verifier for an ordinary transaction: deposit, transfer, withdraw.
     ITransactVerifier public immutable transactVerifier;
+
+    /// @notice Groth16 verifier for a claim — a transaction that registers an alias and
+    ///         spends in the same proof.
+    /// @dev    Two circuits rather than one, because R1CS enforces every constraint on every
+    ///         proof: with them merged, an ordinary transfer paid for two registry Merkle
+    ///         proofs and a mux it never used — 33,322 constraints, 35% of the circuit.
+    ///
+    ///         Both take identical public signals, so there is one params struct, one
+    ///         pubSignals array and one event. The only difference is which of these two
+    ///         addresses is called, and that is decided by `pendingLeaf` — which the registry
+    ///         arms and {transact} already requires to match. The ordinary circuit constrains
+    ///         it to zero, so an ordinary proof cannot express a registry insertion at all.
+    ITransactVerifier public immutable claimVerifier;
 
     /// @notice Registry whose published roots outputs are proven against.
     /// @dev    Immutable and admin-less by construction, so it is trusted for the root
@@ -113,11 +140,14 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
 
     // ── Events ─────────────────────────────────────────────────────────────────
 
+    /// @dev Nullifiers are data, not topics. Indexing them would let anyone filter the log
+    ///      stream for one specific nullifier — a targeted question about one note, and the
+    ///      same class of leak the registry's prefix index exists to remove. Clients scan
+    ///      these events in bulk and decode locally, so nothing needed the topics.
     event Transact(
         uint256 publicAmount,
         address indexed tokenAddress,
-        bytes32 indexed inputNullifier0,
-        bytes32 indexed inputNullifier1,
+        bytes32[4] inputNullifiers,
         bytes32 outputCommitment0,
         bytes32 outputCommitment1,
         uint32 outputTreeNumber,
@@ -136,16 +166,15 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     event PoolExit(
         uint256 publicAmount,
         address indexed tokenAddress,
-        bytes32 indexed inputNullifier0,
-        bytes32 indexed inputNullifier1
+        bytes32[4] inputNullifiers
     );
 
     /// @notice Value left the pool. Covers both destinations, because they always move
     ///         together: a relayed withdrawal pays the submitter and the recipient in one
     ///         settlement, and either half may legitimately be zero.
-    /// @dev    Both parties are indexed so each can filter its own history, which is the
-    ///         whole reason this is one event rather than folded into {Transact} —
-    ///         that one has already spent its three topics.
+    /// @dev    Both parties are indexed so each can filter its own history. Public addresses
+    ///         either way — a withdrawal names its destination on chain — so unlike the
+    ///         nullifiers above there is nothing here that topics would give away.
     event Withdrawal(
         address indexed recipient,
         uint256 amount,
@@ -160,16 +189,18 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     ///      deployed first so its address is known here; nothing in the registry points
     ///      back at a pool, which keeps the deployment order linear and the reference
     ///      strictly one-way.
-    constructor(address _transactVerifier, address _registry) {
-        if (_transactVerifier == address(0) || _registry == address(0)) revert ZeroAddress();
+    constructor(address _transactVerifier, address _claimVerifier, address _registry) {
+        if (_transactVerifier == address(0) || _claimVerifier == address(0)
+            || _registry == address(0)) revert ZeroAddress();
 
         transactVerifier = ITransactVerifier(_transactVerifier);
+        claimVerifier    = ITransactVerifier(_claimVerifier);
         registry         = IHaliasRegistry(_registry);
     }
 
     // ── Transact ───────────────────────────────────────────────────────────────
 
-    /// @notice Spend up to two notes and create two new ones, optionally moving value in
+    /// @notice Spend up to four notes and create two new ones, optionally moving value in
     ///         or out of the pool.
     /// @param  p                 Transaction parameters; `publicAmount`'s sign selects
     ///                           deposit, transfer, or withdrawal.
@@ -183,16 +214,24 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
         bytes calldata proof
     ) external payable nonReentrant {
         // Checks — nullifiers first: cheapest possible revert for front-run victims.
-        if (spentNullifiers[p.inputNullifiers[0]])
-            revert NullifierAlreadySpent(p.inputNullifiers[0]);
-        if (spentNullifiers[p.inputNullifiers[1]])
-            revert NullifierAlreadySpent(p.inputNullifiers[1]);
-        if (p.inputNullifiers[0] == p.inputNullifiers[1])  revert DuplicateNullifier();
+        //
+        // Every pair is compared, not just adjacent ones. With two inputs "no duplicates" was
+        // one comparison; with four it is six, and checking fewer would let a caller spend the
+        // same note twice inside one transaction — the nullifier is written once either way,
+        // so the second copy would be spent for free. The loop is written so adding an input
+        // cannot leave a pair unchecked.
+        for (uint256 i = 0; i < INPUTS; i++) {
+            if (spentNullifiers[p.inputNullifiers[i]])
+                revert NullifierAlreadySpent(p.inputNullifiers[i]);
+            for (uint256 j = i + 1; j < INPUTS; j++) {
+                if (p.inputNullifiers[i] == p.inputNullifiers[j]) revert DuplicateNullifier();
+            }
+        }
         // Each input names its own tree, and the tree must be the one its root belongs to.
         // Without this check the nullifier's tree component is unconstrained, and the holder
         // of a note could re-spend it under a different tree number — a fresh, unspent
         // nullifier every time, for the same note. Unlimited theft, not a liveness bug.
-        for (uint256 i = 0; i < 2; i++) {
+        for (uint256 i = 0; i < INPUTS; i++) {
             (bool known, uint32 rootTree) = poolRootTree(p.poolRoot[i]);
             if (!known) revert PoolRootUnknown();
             if (rootTree != p.treeNumber[i]) revert PoolRootWrongTree();
@@ -211,8 +250,7 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
         _verifyTransact(p, encryptedOutput0, encryptedOutput1, proof);
 
         // Effects — spend inputs and insert outputs before any external transfer.
-        spentNullifiers[p.inputNullifiers[0]] = true;
-        spentNullifiers[p.inputNullifiers[1]] = true;
+        for (uint256 i = 0; i < INPUTS; i++) spentNullifiers[p.inputNullifiers[i]] = true;
 
         // An exit creates no notes, so there is nothing to insert and the root does not move.
         //
@@ -240,7 +278,7 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
             _settlePayment(p, pay);
             emit PoolExit(
                 p.publicAmount, p.tokenAddress,
-                p.inputNullifiers[0], p.inputNullifiers[1]
+                p.inputNullifiers
             );
             return;
         }
@@ -254,7 +292,7 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
 
         emit Transact(
             p.publicAmount, p.tokenAddress,
-            p.inputNullifiers[0], p.inputNullifiers[1],
+            p.inputNullifiers,
             p.outputCommitments[0], p.outputCommitments[1],
             tree, idx0, idx1,
             encryptedOutput0, encryptedOutput1
@@ -366,28 +404,36 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     ) internal view {
         // Order follows the circuit's signal declaration order, not the `public [...]` list.
         // A wrong index here has no symptom other than every proof being rejected.
-        uint256[14] memory pubSignals;
-        pubSignals[0]  = uint256(p.poolRoot[0]);
-        pubSignals[1]  = uint256(p.poolRoot[1]);
-        pubSignals[2]  = p.treeNumber[0];
-        pubSignals[3]  = p.treeNumber[1];
-        pubSignals[4]  = uint256(p.registryRoot);
-        pubSignals[5]  = p.publicAmount;
+        uint256[20] memory pubSignals;
+        for (uint256 i = 0; i < INPUTS; i++) {
+            pubSignals[i]          = uint256(p.poolRoot[i]);
+            pubSignals[INPUTS + i] = p.treeNumber[i];
+        }
+        pubSignals[8]  = uint256(p.registryRoot);
+        pubSignals[9]  = p.publicAmount;
         // The one place the address is widened back into a field element, because that is
         // what the verifier's public-signal array is. Widening is total; narrowing was not.
-        pubSignals[6]  = uint256(uint160(p.tokenAddress));
-        pubSignals[7]  = _computeParamsHash(p, encryptedOutput0, encryptedOutput1);
-        pubSignals[8]  = uint256(p.pendingLeaf);
-        pubSignals[9]  = p.outputsEmpty ? 1 : 0;
-        pubSignals[10] = uint256(p.inputNullifiers[0]);
-        pubSignals[11] = uint256(p.inputNullifiers[1]);
-        pubSignals[12] = uint256(p.outputCommitments[0]);
-        pubSignals[13] = uint256(p.outputCommitments[1]);
+        pubSignals[10] = uint256(uint160(p.tokenAddress));
+        pubSignals[11] = _computeParamsHash(p, encryptedOutput0, encryptedOutput1);
+        pubSignals[12] = uint256(p.pendingLeaf);
+        pubSignals[13] = p.outputsEmpty ? 1 : 0;
+        for (uint256 i = 0; i < INPUTS; i++) {
+            pubSignals[14 + i] = uint256(p.inputNullifiers[i]);
+        }
+        pubSignals[18] = uint256(p.outputCommitments[0]);
+        pubSignals[19] = uint256(p.outputCommitments[1]);
 
         (uint256[2] memory pA, uint256[2][2] memory pB, uint256[2] memory pC) =
             abi.decode(proof, (uint256[2], uint256[2][2], uint256[2]));
 
-        if (!transactVerifier.verifyProof(pA, pB, pC, pubSignals)) revert InvalidProof();
+        // Which verifier, decided by the value the registry armed rather than by anything the
+        // prover supplies: {transact} has already required `pendingLeaf` to equal it. A caller
+        // presenting an ordinary proof while a claim is armed fails that check; one presenting
+        // a claim proof with nothing armed is verified by the claim circuit with its insertion
+        // disabled, which is exactly an ordinary transaction.
+        ITransactVerifier verifier =
+            p.pendingLeaf == bytes32(0) ? transactVerifier : claimVerifier;
+        if (!verifier.verifyProof(pA, pB, pC, pubSignals)) revert InvalidProof();
     }
 
     // ── Settlement ─────────────────────────────────────────────────────────────

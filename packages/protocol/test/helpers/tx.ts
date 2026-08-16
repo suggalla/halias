@@ -25,15 +25,19 @@ export const rand32 = () => ethers.keccak256(ethers.randomBytes(32));
 /// `currentAnchor` rather than `getLastRoot` plus a hardcoded tree: after a rollover those
 /// two disagree, and every suite that hardcoded `treeNumber: [0, 0]` was correct only until
 /// the pool rolled over — which is exactly the case PoolRollover exists to test.
+///
+/// Four inputs, all anchored to the same root and all with distinct nullifiers. A real
+/// transaction pads unused slots with dummies exactly like this, which is what keeps the
+/// number of real notes spent invisible on chain.
 export async function transactParams(pool: any, registry: any, over: any = {}) {
   const [root, tree] = await pool.currentAnchor();
   return {
-    poolRoot:          [root, root],
-    treeNumber:        [Number(tree), Number(tree)],
+    poolRoot:          [root, root, root, root],
+    treeNumber:        [Number(tree), Number(tree), Number(tree), Number(tree)],
     registryRoot:      await registry.getRegistryRoot(),
     publicAmount:      0n,
     tokenAddress:      ethers.ZeroAddress,
-    inputNullifiers:   [rand32(), rand32()],
+    inputNullifiers:   [rand32(), rand32(), rand32(), rand32()],
     outputCommitments: [rand32(), rand32()],
     recipient:         ethers.ZeroAddress,
     relayerFee:        NO_RELAYER,

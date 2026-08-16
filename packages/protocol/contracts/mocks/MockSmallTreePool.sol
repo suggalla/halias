@@ -14,7 +14,8 @@ import { HaliasPool } from "../HaliasPool.sol";
 ///         Four is chosen so a couple of transactions span three trees, which is what makes
 ///         "spend one note from each of two different trees" cheap to set up.
 contract MockSmallTreePool is HaliasPool {
-    constructor(address verifier, address registry) HaliasPool(verifier, registry) {}
+    constructor(address verifier, address claimVerifier_, address registry)
+        HaliasPool(verifier, claimVerifier_, registry) {}
 
     function _treeCapacity() internal pure override returns (uint32) {
         return 4;

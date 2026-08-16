@@ -132,7 +132,11 @@ export function isSplitDeployment(net: NetworkConfig): boolean {
 // is a single wasm/zkey pair. The v0 split into withdraw/transfer is long gone.
 export const ARTIFACT_URLS = {
 	transactWasm: '/artifacts/transact.wasm',
-	transactZkey: '/artifacts/transact_final.zkey'
+	transactZkey: '/artifacts/transact_final.zkey',
+	// Claiming an invite is the one flow that registers an alias while spending, and it needs
+	// the larger circuit. Fetched only when that flow runs — see getArtifacts().
+	claimWasm: '/artifacts/transactClaim.wasm',
+	claimZkey: '/artifacts/transactClaim_final.zkey'
 };
 
 /// What this chain offers, ETH first. Falls back to ETH alone for an unknown chain, which is

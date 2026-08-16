@@ -16,7 +16,7 @@ export { SMT, rootFromSiblings, aliasHashToSmtKey } from "./smt";
 export { buildEntry, computeNullifier, randomBlinding, ETH_TOKEN_ADDRESS, NULLIFIER_DOMAIN, POOL_LEVELS, FIELD_PRIME } from "./entry";
 export type { Entry, OwnedEntry } from "./entry";
 
-export { proveTransact, dummyInput, dummyOutput } from "./proof";
+export { proveTransact, dummyInput, dummyOutput, POOL_INPUTS } from "./proof";
 export type { ArtifactPaths, TransactInput, TransactOutput, TransactProveInput } from "./proof";
 
 export { scanEvents, findMyOutputs } from "./events";

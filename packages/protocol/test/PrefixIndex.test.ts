@@ -27,7 +27,7 @@ describe("registry prefix index", function () {
   this.timeout(120000);
 
   let s: Stack;
-  let registered: { hash: string; pk: bigint; nkh: bigint; enc: bigint }[] = [];
+  let registered: { hash: string; pk: string; nkh: string; enc: string }[] = [];
 
   before(async function () {
     await initPoseidon();
@@ -49,9 +49,7 @@ describe("registry prefix index", function () {
     for (let i = 0; i < 40; i++) {
       const hash = ethers.hexlify(ethers.randomBytes(32));
       const pk = randField(), nkh = randField(), enc = randField();
-      await registry.connect(asController).register(
-        hash, ethers.toBeHex(pk, 32), ethers.toBeHex(nkh, 32), ethers.toBeHex(enc, 32),
-      );
+      await registry.connect(asController).register(hash, pk, nkh, enc);
       registered.push({ hash, pk, nkh, enc });
     }
     await ethers.provider.send("hardhat_stopImpersonatingAccount", [controllerAddr]);
@@ -74,9 +72,9 @@ describe("registry prefix index", function () {
     for (const r of registered.slice(0, 5)) {
       const [entry] = (await s.registry.getAliasesByPrefix(prefixOf(r.hash), 0, 1000))
         .filter((e: any) => e.aliasHash === r.hash);
-      expect(entry.spendingCommitment).to.equal(ethers.toBeHex(r.pk, 32));
-      expect(entry.nullifierKeyHash).to.equal(ethers.toBeHex(r.nkh, 32));
-      expect(entry.encryptionPubkey).to.equal(ethers.toBeHex(r.enc, 32));
+      expect(entry.spendingCommitment).to.equal(r.pk);
+      expect(entry.nullifierKeyHash).to.equal(r.nkh);
+      expect(entry.encryptionPubkey).to.equal(r.enc);
       expect(entry.dataHash).to.equal(ethers.ZeroHash);
 
       // Built from the returned fields alone, checked against the contract's own leaf.
@@ -160,11 +158,8 @@ describe("registry prefix index", function () {
     const p = prefixOf(r.hash);
     const before = Number(await s.registry.prefixCount(p));
 
-    await s.registry.connect(asController).setDataHash(r.hash, ethers.toBeHex(randField(), 32));
-    await s.registry.connect(asController).reassign(
-      r.hash, ethers.toBeHex(randField(), 32), ethers.toBeHex(randField(), 32),
-      ethers.toBeHex(randField(), 32),
-    );
+    await s.registry.connect(asController).setDataHash(r.hash, randField());
+    await s.registry.connect(asController).reassign(r.hash, randField(), randField(), randField());
     await ethers.provider.send("hardhat_stopImpersonatingAccount", [controllerAddr]);
 
     expect(Number(await s.registry.prefixCount(p))).to.equal(before);
