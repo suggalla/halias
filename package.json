@@ -1,0 +1,8 @@
+{
+  "name": "halias",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "halias": "node packages/sdk/dist/cli.js"
+  }
+}

@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Code coverage report for contracts/HaliasPaymaster.sol</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../prettify.css" />
+    <link rel="stylesheet" href="../base.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style type='text/css'>
+        .coverage-summary .sorter {
+            background-image: url(../sort-arrow-sprite.png);
+        }
+    </style>
+</head>
+<body>
+<div class='wrapper'>
+  <div class='pad1'>
+    <h1>
+      <a href="../index.html">all files</a> / <a href="index.html">contracts/</a> HaliasPaymaster.sol
+    </h1>
+    <div class='clearfix'>
+      <div class='fl pad1y space-right2'>
+        <span class="strong">79.66% </span>
+        <span class="quiet">Statements</span>
+        <span class='fraction'>47/59</span>
+      </div>
+      <div class='fl pad1y space-right2'>
+        <span class="strong">73.44% </span>
+        <span class="quiet">Branches</span>
+        <span class='fraction'>47/64</span>
+      </div>
+      <div class='fl pad1y space-right2'>
+        <span class="strong">92.31% </span>
+        <span class="quiet">Functions</span>
+        <span class='fraction'>12/13</span>
+      </div>
+      <div class='fl pad1y space-right2'>
+        <span class="strong">85.48% </span>
+        <span class="quiet">Lines</span>
+        <span class='fraction'>53/62</span>
+      </div>
+    </div>
+  </div>
+  <div class='status-line medium'></div>
+<pre><table class="coverage">
+<tr><td class="line-count quiet">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+97
+98
+99
+100
+101
+102
+103
+104
+105
+106
+107
+108
+109
+110
+111
+112
+113
+114
+115
+116
+117
+118
+119
+120
+121
+122
+123
+124
+125
+126
+127
+128
+129
+130
+131
+132
+133
+134
+135
+136
+137
+138
+139
+140
+141
+142
+143
+144
+145
+146
+147
+148
+149
+150
+151
+152
+153
+154
+155
+156
+157
+158
+159
+160
+161
+162
+163
+164
+165
+166
+167
+168
+169
+170
+171
+172
+173
+174
+175
+176
+177
+178
+179
+180
+181
+182
+183
+184
+185
+186
+187
+188
+189
+190
+191
+192
+193
+194
+195
+196
+197
+198
+199
+200
+201
+202
+203
+204
+205
+206
+207
+208
+209
+210
+211
+212
+213
+214
+215
+216
+217
+218
+219
+220
+221
+222
+223
+224
+225
+226
+227
+228
+229
+230
+231
+232
+233
+234
+235
+236
+237
+238
+239
+240
+241
+242
+243
+244
+245
+246
+247
+248
+249
+250
+251
+252
+253
+254
+255
+256
+257
+258
+259
+260
+261
+262
+263
+264
+265
+266
+267
+268
+269
+270
+271
+272
+273
+274
+275
+276
+277
+278
+279
+280</td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">53×</span>
+<span class="cline-any cline-yes">53×</span>
+<span class="cline-any cline-yes">53×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">14×</span>
+<span class="cline-any cline-yes">13×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">12×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">12×</span>
+<span class="cline-any cline-yes">7×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7×</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">7×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">3×</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-yes">2×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">6×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">4×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">5×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1×</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+&nbsp;
+import {PackedUserOperation, IPaymaster, IEntryPoint} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
+import "./base/Constants.sol";
+import "./base/Errors.sol";
+import "./interfaces/IHalias.sol";
+&nbsp;
+/**
+ * @title HaliasPaymaster
+ * @dev Sponsors two classes of UserOp:
+ *
+ *   PATH_POOL_NOTE (0x00): transact() with recipient=paymaster (pool-funded gas).
+ *     Gas budget = absAmount from pool note. postOp deposits absAmount back to
+ *     EntryPoint; overpay (absAmount - actualGasCost) builds a revolving reserve.
+ *
+ *   PATH_VOUCHER (0x01): registerWithVoucher() for zero-ETH new users.
+ *     Validates the voucher secret and that the UserOp sender is the designated
+ *     beneficiary. postOp is a no-op — EntryPoint handles the deposit accounting.
+ *
+ * paymasterAndData layout:
+ *   [0:20]  paymaster address
+ *   [20]    path type (0x00 = pool-note, 0x01 = voucher)
+ *   [21:86] 65-byte relayer sig (pool-note path, when relayer != address(0))
+ *   [21:53] 32-byte voucher secret (voucher path)
+ */
+contract HaliasPaymaster is IPaymaster, Ownable {
+    IEntryPoint public immutable entryPoint;
+    address public relayer;
+    address public halias;
+&nbsp;
+    uint8 private constant PATH_POOL_NOTE = 0;
+    uint8 private constant PATH_VOUCHER   = 1;
+&nbsp;
+    // execute(address,uint256,bytes) — HaliasAccountImpl entry point
+    bytes4 private constant EXECUTE_SELECTOR = bytes4(keccak256("execute(address,uint256,bytes)"));
+    // registerWithVoucher(bytes32,bytes32,bytes32,bytes32,bytes32)
+    bytes4 private constant REGISTER_WITH_VOUCHER_SELECTOR =
+        bytes4(keccak256("registerWithVoucher(bytes32,bytes32,bytes32,bytes32,bytes32)"));
+&nbsp;
+    error CalldataTooShort();
+    error InvalidExecuteTarget();
+    error PaymasterDataTooShort();
+    error UnknownPathType();
+    // Pool-note path errors
+    error GasTransactRecipientNotPaymaster();
+    error ERC20CannotPayGas();
+    error MustWithdrawToPayGas();
+    error GasBudgetTooSmall();
+    // Voucher path errors
+    error NotRegisterWithVoucherCall();
+    error VoucherExpired();
+    error VoucherInsufficientCoverage();
+&nbsp;
+    constructor(address _entryPoint, address _relayer, address _halias) Ownable(msg.sender) {
+        entryPoint = IEntryPoint(_entryPoint);
+        relayer = _relayer;
+        halias  = _halias;
+    }
+&nbsp;
+    function setRelayer(address _relayer) external onlyOwner { relayer = _relayer; }
+    function setHalias(address _halias) external <span class="missing-if-branch" title="else path not taken" >E</span>onlyOwner {
+        if (_halias == address(0)) revert ZeroAddress();
+        halias = _halias;
+    }
+&nbsp;
+    // ── validatePaymasterUserOp ────────────────────────────────────────────────
+&nbsp;
+    function validatePaymasterUserOp(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 maxCost
+    ) external view override returns (bytes memory context, uint256) {
+        if (msg.sender != address(entryPoint)) revert NotEntryPoint();
+        if (userOp.paymasterAndData.length &lt; 21) revert PaymasterDataTooShort();
+&nbsp;
+        uint8 pathType = uint8(userOp.paymasterAndData[20]);
+&nbsp;
+        if (pathType == PATH_POOL_NOTE) {
+            return _validatePoolNote(userOp, userOpHash, maxCost);
+        } else if (pathType == PATH_VOUCHER) {
+            return _validateVoucher(userOp, userOpHash, maxCost);
+        } else {
+            revert UnknownPathType();
+        }
+    }
+&nbsp;
+    function _validatePoolNote(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 maxCost
+    ) internal view returns (bytes memory context, uint256) {
+        // Optional relayer signature to prevent gas-leak griefing
+        <span class="missing-if-branch" title="if path not taken" >I</span>if (relayer != address(0)) {
+<span class="cstat-no" title="statement not covered" >            if (userOp.paymasterAndData.length &lt; 86) revert PaymasterDataTooShort();</span>
+<span class="cstat-no" title="statement not covered" >            bytes memory sig = userOp.paymasterAndData[21:86];</span>
+<span class="cstat-no" title="statement not covered" >            bytes32 hash = MessageHashUtils.toEthSignedMessageHash(userOpHash);</span>
+<span class="cstat-no" title="statement not covered" >            if (!SignatureChecker.isValidSignatureNow(relayer, hash, sig)) <span class="cstat-no" title="statement not covered" >return ("", 1);</span></span>
+        }
+&nbsp;
+        // 132-byte execute wrapper + 324-byte minimum transact header
+        if (userOp.callData.length &lt; 456) revert CalldataTooShort();
+&nbsp;
+        // Defense-in-depth: verify the execute() call targets halias, not an arbitrary contract.
+        // (The relayer signature above already guarantees this in production; this guard covers
+        // the no-relayer local-dev path.)
+        _requireExecuteTargetIsHalias(userOp.callData);
+&nbsp;
+        (address recipient, uint256 tokenAddress, uint256 publicAmount) = _decodeTransactRecipient(userOp.callData);
+&nbsp;
+        if (recipient != address(this)) revert GasTransactRecipientNotPaymaster();
+        if (tokenAddress != 0)          revert ERC20CannotPayGas();
+&nbsp;
+        bool isWithdraw = publicAmount &gt;= (FIELD_PRIME - MAX_ABS_AMOUNT);
+        if (!isWithdraw) revert MustWithdrawToPayGas();
+&nbsp;
+        uint256 absAmount = FIELD_PRIME - publicAmount;
+        if (absAmount &lt; maxCost) revert GasBudgetTooSmall();
+&nbsp;
+        return (abi.encode(uint8(PATH_POOL_NOTE), bytes32(absAmount)), 0);
+    }
+&nbsp;
+    function _validateVoucher(
+        PackedUserOperation calldata userOp,
+        bytes32 userOpHash,
+        uint256 maxCost
+    ) internal view returns (bytes memory context, uint256) {
+        if (!_isRegisterWithVoucherCall(userOp.callData)) revert NotRegisterWithVoucherCall();
+&nbsp;
+        <span class="missing-if-branch" title="if path not taken" >I</span>if (relayer != address(0)) {
+            // Relayer-signed path: relayer verifies voucher validity off-chain and signs
+            // userOpHash. No cross-contract reads — ERC-7562 compliant for production bundlers.
+<span class="cstat-no" title="statement not covered" >            if (userOp.paymasterAndData.length &lt; 86) revert PaymasterDataTooShort();</span>
+<span class="cstat-no" title="statement not covered" >            bytes memory sig = userOp.paymasterAndData[21:86];</span>
+<span class="cstat-no" title="statement not covered" >            bytes32 hash = MessageHashUtils.toEthSignedMessageHash(userOpHash);</span>
+<span class="cstat-no" title="statement not covered" >            if (!SignatureChecker.isValidSignatureNow(relayer, hash, sig)) <span class="cstat-no" title="statement not covered" >return ("", 1);</span></span>
+        } else {
+            // No-relayer fallback: read voucher state directly.
+            // ERC-7562 non-compliant — use for local development only.
+            // Production bundlers will reject UserOps that access cross-contract storage
+            // during validation without a staked relayer signature.
+            <span class="missing-if-branch" title="if path not taken" >I</span>if (userOp.paymasterAndData.length &lt; 53) revert PaymasterDataTooShort();
+            bytes32 secret     = bytes32(userOp.paymasterAndData[21:53]);
+            // commitment = keccak256(secret, beneficiary) — beneficiary is userOp.sender
+            bytes32 commitment = keccak256(abi.encodePacked(secret, userOp.sender));
+            (uint256 amount, uint256 expiry,) = IHalias(halias).vouchers(commitment);
+            if (block.timestamp &gt;= expiry)    revert VoucherExpired();
+            uint256 fee = IHalias(halias).registrationFee();
+            if (amount &lt; maxCost + fee)       revert VoucherInsufficientCoverage();
+        }
+&nbsp;
+        return (abi.encode(uint8(PATH_VOUCHER), bytes32(0)), 0);
+    }
+&nbsp;
+    // ── postOp ────────────────────────────────────────────────────────────────
+&nbsp;
+    function postOp(
+        IPaymaster.PostOpMode mode,
+        bytes calldata context,
+        uint256,
+        uint256
+    ) external override {
+        if (msg.sender != address(entryPoint)) revert NotEntryPoint();
+&nbsp;
+        (uint8 pathType, bytes32 data) = abi.decode(context, (uint8, bytes32));
+&nbsp;
+        if (pathType == PATH_POOL_NOTE) {
+            // Pool-note path: deposit absAmount from the transact() ETH received.
+            // The surplus (absAmount - actualGasCost) builds the revolving reserve.
+            if (mode == IPaymaster.PostOpMode.opSucceeded) {
+                uint256 absAmount = uint256(data);
+                if (absAmount &gt; 0) entryPoint.depositTo{value: absAmount}(address(this));
+            }
+            // opReverted: transact() did not execute; pool note not spent; do nothing.
+        } else {
+            // Voucher path: registerWithVoucher already deposited the full gas budget into
+            // this paymaster's EP during execution. The surplus (gasBudget - actualGasCost)
+            // stays here as accumulated protocol fee — the admin sweeps it via
+            // withdrawEntryPointDeposit. Nothing to route; the EP balance is the ledger.
+        }
+    }
+&nbsp;
+    // ── Helpers ───────────────────────────────────────────────────────────────
+&nbsp;
+    function _requireExecuteTargetIsHalias(bytes calldata cd) private view {
+        bytes4 outerSel;
+        address callTarget;
+        assembly {
+            outerSel   := calldataload(cd.offset)
+            callTarget := calldataload(add(cd.offset, 4))
+        }
+        if (<span class="branch-0 cbranch-no" title="branch not covered" >outerSel != EXECUTE_SELECTOR</span> || callTarget != halias) revert InvalidExecuteTarget();
+    }
+&nbsp;
+    /**
+     * @dev Verifies the UserOp calldata is execute(halias, 0, registerWithVoucher(...)).
+     *      Prevents vouchers being used to sponsor arbitrary UserOps.
+     *
+     *      callData ABI layout for execute(address, uint256, bytes):
+     *        [0:4]     execute selector
+     *        [4:36]    target address (padded)
+     *        [36:68]   call value (must be 0)
+     *        [68:100]  offset to inner bytes (= 0x60)
+     *        [100:132] inner bytes length
+     *        [132:136] inner selector (registerWithVoucher)
+     */
+    function _isRegisterWithVoucherCall(bytes calldata cd) internal view returns (bool) {
+        <span class="missing-if-branch" title="if path not taken" >I</span>if (cd.length &lt; 136) <span class="cstat-no" title="statement not covered" >return false;</span>
+        bytes4 outerSel;
+        address target;
+        uint256 value;
+        bytes4  innerSel;
+        assembly {
+            outerSel := calldataload(cd.offset)
+            target   := calldataload(add(cd.offset, 4))
+            value    := calldataload(add(cd.offset, 36))
+            innerSel := calldataload(add(cd.offset, 132))
+        }
+        return outerSel == EXECUTE_SELECTOR
+            &amp;&amp; target   == halias
+            &amp;&amp; value    == 0
+            &amp;&amp; innerSel == REGISTER_WITH_VOUCHER_SELECTOR;
+    }
+&nbsp;
+    /**
+     * @dev Decodes publicAmount, tokenAddress, and ExtData.recipient from
+     *      execute(halias, 0, transact(...)) calldata.
+     *
+     *      execute wrapper layout (cd[0:132]):
+     *        [0:4]     execute selector
+     *        [4:36]    target address
+     *        [36:68]   call value
+     *        [68:100]  offset to inner bytes (= 0x60)
+     *        [100:132] inner bytes length
+     *
+     *      transact args layout (cd[132:], innerBase = cd.offset + 132):
+     *        [innerBase+0:4]       transact selector
+     *        [innerBase+4:36]      poolRoot
+     *        [innerBase+36:68]     registryRoot
+     *        [innerBase+68:100]    publicAmount
+     *        [innerBase+100:132]   tokenAddress
+     *        [innerBase+132:164]   inputNullifier[0]
+     *        [innerBase+164:196]   inputNullifier[1]
+     *        [innerBase+196:228]   outputCommitment[0]
+     *        [innerBase+228:260]   outputCommitment[1]
+     *        [innerBase+260:292]   offset to TransactParams (from innerBase+4)
+     *        TransactParams.recipient is the first field of the struct.
+     */
+    function _decodeTransactRecipient(bytes calldata cd) internal pure returns (address recipient, uint256 tokenAddress, uint256 publicAmount) {
+        assembly {
+            let innerBase := add(cd.offset, 132)
+            publicAmount := calldataload(add(innerBase, 68))
+            tokenAddress := calldataload(add(innerBase, 100))
+            let extDataStart := add(add(innerBase, 4), calldataload(add(innerBase, 260)))
+            recipient := and(calldataload(extDataStart), 0xffffffffffffffffffffffffffffffffffffffff)
+        }
+    }
+&nbsp;
+    // ── Admin ─────────────────────────────────────────────────────────────────
+&nbsp;
+    // Stake this paymaster in the EntryPoint (required for global-state access in ERC-4337).
+<span class="fstat-no" title="function not covered" >    function addStakeToEntryPoint(uint32 unstakeDelaySec) external payable onlyOwner {</span>
+<span class="cstat-no" title="statement not covered" >        entryPoint.addStake{value: msg.value}(unstakeDelaySec)</span>;
+    }
+&nbsp;
+    function withdrawEntryPointDeposit(address payable to, uint256 amount) external <span class="missing-if-branch" title="else path not taken" >E</span>onlyOwner {
+        entryPoint.withdrawTo(to, amount);
+    }
+&nbsp;
+    function withdrawBalance(address payable to) external onlyOwner {
+        Address.sendValue(to, address(this).balance);
+    }
+&nbsp;
+    receive() external payable {}
+}
+&nbsp;</pre></td></tr>
+</table></pre>
+<div class='push'></div><!-- for sticky footer -->
+</div><!-- /wrapper -->
+<div class='footer quiet pad2 space-top1 center small'>
+  Code coverage
+  generated by <a href="http://istanbul-js.org/" target="_blank">istanbul</a> at Sun May 24 2026 13:48:12 GMT-0400 (Eastern Daylight Time)
+</div>
+</div>
+<script src="../prettify.js"></script>
+<script>
+window.onload = function () {
+        if (typeof prettyPrint === 'function') {
+            prettyPrint();
+        }
+};
+</script>
+<script src="../sorter.js"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+/* === RESET === */
+*,
+*::before,
+*::after {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+/* === CSS VARS — Soft Feminine Elegant === */
+:root {
+	--bg-dark: #191418;
+	--bg-desktop: #1e1820;
+	--bg-window: #28202c;
+	--bg-titlebar: #302830;
+	--bg-input: #1c161e;
+	--border: #4a3e50;
+	--border-focus: #6a5a72;
+	--accent: #d4a0c0;
+	--accent-glow: rgba(212, 160, 192, 0.2);
+	--accent-bright: #e8bcd4;
+	--accent-secondary: #c8a888;
+	--text: #f0ebe8;
+	--text-dim: #b8aeb4;
+	--text-bright: #faf5f2;
+	--shadow: rgba(0, 0, 0, 0.45);
+	--taskbar-h: 42px;
+	--titlebar-h: 32px;
+	--snap-preview: rgba(212, 160, 192, 0.15);
+}
+
+/* === BASE === */
+html,
+body {
+	height: 100%;
+	overflow: hidden;
+	background: var(--bg-dark);
+	color: var(--text);
+	font-family: 'Courier New', Courier, monospace;
+	font-size: 15px;
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* === SELECTION === */
+::selection {
+	background: var(--accent);
+	color: var(--bg-dark);
+}
+
+/* === SCROLLBAR === */
+::-webkit-scrollbar {
+	width: 6px;
+}
+
+::-webkit-scrollbar-track {
+	background: var(--bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 3px;
+}
+
+/* === SHARED COMPONENT STYLES === */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 8px 18px;
+	border: 1px solid var(--border);
+	border-radius: 2px;
+	background: var(--bg-input);
+	color: var(--text);
+	font-family: inherit;
+	font-size: 13px;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+	cursor: pointer;
+	transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.btn:hover {
+	border-color: var(--accent);
+	box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.btn:active {
+	background: var(--bg-window);
+}
+
+.btn-primary {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.btn-primary:hover {
+	box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.input {
+	width: 100%;
+	padding: 9px 12px;
+	border: 1px solid var(--border);
+	border-radius: 2px;
+	background: var(--bg-input);
+	color: var(--text-bright);
+	font-family: inherit;
+	font-size: 15px;
+	outline: none;
+	transition: border-color 0.15s;
+}
+
+.input:focus {
+	border-color: var(--accent);
+}
+
+.input::placeholder {
+	color: var(--text-dim);
+}
+
+.label {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 1.5px;
+	color: var(--text-dim);
+}
