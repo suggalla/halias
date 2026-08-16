@@ -86,6 +86,12 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     ///         choice of circuit is too.
     uint256 internal constant INPUTS = 4;
 
+    /// @dev Public signals between the per-input arrays and the nullifiers: registryRoot,
+    ///      publicAmount, tokenAddress, paramsHash, pendingLeaf, outputsEmpty. Named so the
+    ///      pubSignals layout in {_verifyTransact} derives entirely from these two constants
+    ///      rather than half-deriving and half-hardcoding.
+    uint256 internal constant SCALARS = 6;
+
     /// @notice Groth16 verifier for an ordinary transaction: deposit, transfer, withdraw.
     ITransactVerifier public immutable transactVerifier;
 
@@ -412,24 +418,31 @@ contract HaliasPool is MerkleTreeWithHistory, ReentrancyGuard {
     ) internal view {
         // Order follows the circuit's signal declaration order, not the `public [...]` list.
         // A wrong index here has no symptom other than every proof being rejected.
-        uint256[20] memory pubSignals;
+        //
+        // Every offset is derived from INPUTS rather than written out. Half-derived was worse
+        // than either: the per-input loops moved with INPUTS while the scalars after them did
+        // not, so raising INPUTS to five would have had the loop write treeNumber into slot 8
+        // and `registryRoot` overwrite it — a corrupted witness, not a compile error.
+        uint256 scalarBase = 2 * INPUTS;
+        uint256 nullBase   = scalarBase + SCALARS;
+        uint256 commBase   = nullBase + INPUTS;
+
+        uint256[3 * INPUTS + SCALARS + 2] memory pubSignals;
         for (uint256 i = 0; i < INPUTS; i++) {
-            pubSignals[i]          = uint256(p.poolRoot[i]);
-            pubSignals[INPUTS + i] = p.treeNumber[i];
+            pubSignals[i]           = uint256(p.poolRoot[i]);
+            pubSignals[INPUTS + i]  = p.treeNumber[i];
+            pubSignals[nullBase + i] = uint256(p.inputNullifiers[i]);
         }
-        pubSignals[8]  = uint256(p.registryRoot);
-        pubSignals[9]  = p.publicAmount;
+        pubSignals[scalarBase]     = uint256(p.registryRoot);
+        pubSignals[scalarBase + 1] = p.publicAmount;
         // The one place the address is widened back into a field element, because that is
         // what the verifier's public-signal array is. Widening is total; narrowing was not.
-        pubSignals[10] = uint256(uint160(p.tokenAddress));
-        pubSignals[11] = _computeParamsHash(p, encryptedOutput0, encryptedOutput1);
-        pubSignals[12] = uint256(p.pendingLeaf);
-        pubSignals[13] = p.outputsEmpty ? 1 : 0;
-        for (uint256 i = 0; i < INPUTS; i++) {
-            pubSignals[14 + i] = uint256(p.inputNullifiers[i]);
-        }
-        pubSignals[18] = uint256(p.outputCommitments[0]);
-        pubSignals[19] = uint256(p.outputCommitments[1]);
+        pubSignals[scalarBase + 2] = uint256(uint160(p.tokenAddress));
+        pubSignals[scalarBase + 3] = _computeParamsHash(p, encryptedOutput0, encryptedOutput1);
+        pubSignals[scalarBase + 4] = uint256(p.pendingLeaf);
+        pubSignals[scalarBase + 5] = p.outputsEmpty ? 1 : 0;
+        pubSignals[commBase]     = uint256(p.outputCommitments[0]);
+        pubSignals[commBase + 1] = uint256(p.outputCommitments[1]);
 
         (uint256[2] memory pA, uint256[2][2] memory pB, uint256[2] memory pC) =
             abi.decode(proof, (uint256[2], uint256[2][2], uint256[2]));

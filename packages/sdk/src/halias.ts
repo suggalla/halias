@@ -1184,17 +1184,34 @@ export class Halias extends HaliasCore {
       e.amount > 0n &&
       !this.spentNullifiers.has(computeNullifier(keys.nullifierKey, e.treeNumber, e.leafIndex))
     );
-    for (const entry of unspent) {
-      // Each note names its own token, and a sweep has to honour that. Withdrawing on the
-      // default would have moved an ERC-20 note as if it were ETH — the wrong asset, and the
-      // wrong scale with it once the token is not 18 decimals.
-      await this.tokenInfo(entry.tokenAddress);
-      const result = await this.withdraw(
-        recipientAddress,
-        this.formatAmount(entry.amount, entry.tokenAddress),
-        entry.tokenAddress,
-      );
-      sweepTxHashes.push(result.txHash);
+    // Per token, not per note. Each note names its own token and a sweep has to honour
+    // that — withdrawing on the default would move an ERC-20 note as if it were ETH, the
+    // wrong asset and the wrong scale once the token is not 18 decimals.
+    //
+    // Per NOTE was the earlier shape and it is now wasteful: a transaction spends
+    // POOL_INPUTS notes, so a four-note wallet emptied in four withdrawals where one moves
+    // the lot. It still terminated, because `selectEntries` reads live state and value is
+    // conserved, but it paid for four proofs and four transactions to do it.
+    const byToken = new Map<bigint, bigint>();
+    for (const e of unspent) {
+      byToken.set(e.tokenAddress, (byToken.get(e.tokenAddress) ?? 0n) + e.amount);
+    }
+
+    for (const [token] of byToken) {
+      await this.tokenInfo(token);
+      // Drain in whatever one transaction can move. `sendableNow` is re-read each round
+      // because a withdrawal leaves change, so the reachable amount changes as this runs.
+      // Guarded on progress rather than on a count: if a round moves nothing the balance
+      // cannot be reached at all, and looping again would only repeat that.
+      for (;;) {
+        const bal = await this.balance(token);
+        const chunk = bal.sendableNow < bal.total ? bal.sendableNow : bal.total;
+        if (chunk === 0n) break;
+        const result = await this.withdraw(
+          recipientAddress, this.formatAmount(chunk, token), token,
+        );
+        sweepTxHashes.push(result.txHash);
+      }
     }
 
     // The nonce is ethers' to resolve, not this function's to carry forward from the sweep.
