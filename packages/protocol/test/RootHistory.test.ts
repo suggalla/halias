@@ -64,9 +64,9 @@ describe("Root history", function () {
       const proof = ethers.AbiCoder.defaultAbiCoder().encode(
         ["uint256[2]", "uint256[2][2]", "uint256[2]"], [[0, 0], [[0, 0], [0, 0]], [0, 0]]);
       await pool.transact({
-        poolRoot: [before, before], treeNumber: [0, 0], registryRoot: await registry.getRegistryRoot(),
+        poolRoot: [before, before, before, before], treeNumber: [0, 0, 0, 0], registryRoot: await registry.getRegistryRoot(),
         publicAmount: amt, tokenAddress: ethers.ZeroAddress,
-        inputNullifiers: [randRoot(), randRoot()],
+        inputNullifiers: [randRoot(), randRoot(), randRoot(), randRoot()],
         outputCommitments: [randRoot(), randRoot()],
         recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n }, externalData: ethers.ZeroHash,
         pendingLeaf:       ethers.ZeroHash,
@@ -87,9 +87,9 @@ describe("Root history", function () {
         ["uint256[2]", "uint256[2][2]", "uint256[2]"], [[0, 0], [[0, 0], [0, 0]], [0, 0]]);
       const c0 = randRoot(), c1 = randRoot();
       await pool.transact({
-        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
+        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
         publicAmount: amt, tokenAddress: ethers.ZeroAddress,
-        inputNullifiers: [randRoot(), randRoot()],
+        inputNullifiers: [randRoot(), randRoot(), randRoot(), randRoot()],
         outputCommitments: [c0, c1],
         recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n }, externalData: ethers.ZeroHash,
         pendingLeaf:       ethers.ZeroHash,
@@ -196,7 +196,7 @@ describe("Pairwise insertion equivalence", function () {
     const mv = await (await ethers.getContractFactory("MockTransactVerifier")).deploy();
     const dep = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
-    })).deploy(await mv.getAddress(), deployer.address);
+    })).deploy(await mv.getAddress(), await mv.getAddress(), deployer.address);
     const pool     = await ethers.getContractAt("HaliasPool",     await dep.pool());
     const registry = await ethers.getContractAt("HaliasRegistry", await dep.registry());
     const seq = await (await ethers.getContractFactory("MockTreeSequential", {
@@ -212,9 +212,9 @@ describe("Pairwise insertion equivalence", function () {
   async function transactWith(c0: string, c1: string) {
     const amt = ethers.parseEther("0.01");
     await (await pool.transact({
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: amt, tokenAddress: ethers.ZeroAddress,
-      inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
+      inputNullifiers: [rand(), rand(), rand(), rand()], outputCommitments: [c0, c1],
       recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n }, externalData: ethers.ZeroHash,
       pendingLeaf:       ethers.ZeroHash,
       outputsEmpty:      false,
@@ -270,9 +270,9 @@ describe("Pairwise insertion equivalence", function () {
     const c0 = rand(), c1 = rand();
     const amt = ethers.parseEther("0.01");
     const receipt = await (await pool.transact({
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: amt, tokenAddress: ethers.ZeroAddress,
-      inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
+      inputNullifiers: [rand(), rand(), rand(), rand()], outputCommitments: [c0, c1],
       recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n }, externalData: ethers.ZeroHash,
       pendingLeaf:       ethers.ZeroHash,
       outputsEmpty:      false,
@@ -289,9 +289,9 @@ describe("Pairwise insertion equivalence", function () {
   it("still rejects a zero commitment in either slot", async function () {
     const amt = ethers.parseEther("0.01");
     const base = async (c0: string, c1: string) => ({
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: amt, tokenAddress: ethers.ZeroAddress,
-      inputNullifiers: [rand(), rand()], outputCommitments: [c0, c1],
+      inputNullifiers: [rand(), rand(), rand(), rand()], outputCommitments: [c0, c1],
       recipient: ethers.ZeroAddress, relayerFee: { relayer: ethers.ZeroAddress, amount: 0n }, externalData: ethers.ZeroHash,
       pendingLeaf:       ethers.ZeroHash,
       outputsEmpty:      false,

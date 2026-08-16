@@ -4,7 +4,7 @@ import { deriveKeysFromRoot, poseidonHash } from "./crypto";
 import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS, FIELD_PRIME } from "./entry";
 import { PoolTrees } from "./merkle";
 import { aliasHashToSmtKey } from "./smt";
-import { proveTransact, dummyInput, dummyOutput, TransactOutput } from "./proof";
+import { proveTransact, dummyInput, dummyOutput, TransactOutput, POOL_INPUTS } from "./proof";
 import { findMyOutputs, Output } from "./events";
 import { deriveInviteKeys, inviteSecretAt, InviteKeys, encodeInviteCode } from "./invite";
 import { encodeViewKey, viewKeysFrom } from "./viewkey";
@@ -298,7 +298,7 @@ export class Halias extends HaliasCore {
       }
     }
 
-    const dBase = this.consumeDummyIdx(2);
+    const pad = this.padInputs([], this.poolAnchor());
 
     // Sealed to the recipient's key, so only they can find and spend it. Paying an alias
     // whose note you encrypted to yourself would burn the funds.
@@ -310,14 +310,11 @@ export class Halias extends HaliasCore {
     const anchor       = this.poolAnchor();
     const registryRoot = to.proof.registryRoot;
 
-    const dummy0 = dummyInput(anchor.tree, dBase, POOL_LEVELS);
-    const dummy1 = dummyInput(anchor.tree, dBase + 1, POOL_LEVELS);
-
     const { proofBytes } = await proveTransact({
-      poolRoot: [anchor.root, anchor.root], treeNumber: [anchor.tree, anchor.tree], registryRoot, publicAmount: amount, tokenAddress, paramsHash,
-      inputNullifiers:  [dummy0.nullifier, dummy1.nullifier],
+      poolRoot: pad.poolRoot, treeNumber: pad.treeNumber, registryRoot, publicAmount: amount, tokenAddress, paramsHash,
+      inputNullifiers:  pad.inputNullifiers,
       outputCommitments: [entry.commitment, comm1],
-      inputs: [dummy0.input, dummy1.input],
+      inputs: pad.inputs,
       outputs: [
         {
           spendingCommitment:           to.spendingCommitment,
@@ -334,8 +331,8 @@ export class Halias extends HaliasCore {
     }, this.getArtifacts());
 
     const tx = await contractTransact(
-      this.pool, [anchor.root, anchor.root], [anchor.tree, anchor.tree], registryRoot, amount, tokenAddress,
-      [dummy0.nullifier, dummy1.nullifier],
+      this.pool, pad.poolRoot, pad.treeNumber, registryRoot, amount, tokenAddress,
+      pad.inputNullifiers,
       [entry.commitment, comm1],
       ZERO_TRANSACT_PARAMS,
       encryptedOutput0, "0x", proofBytes,
@@ -473,20 +470,20 @@ export class Halias extends HaliasCore {
     return { txHash: await this.settle(tx), commitment: recipientEntry.commitment, amount: sendAmount };
   }
 
-  /// Merge two notes into one.
+  /// Merge several notes into one.
   ///
   /// A transfer to nobody: both inputs are the caller's, the single output is the caller's,
   /// and `publicAmount` is zero, so no value enters or leaves the pool. On chain it is
   /// indistinguishable from any other transfer — two nullifiers, two commitments, one of
   /// which happens to be a zero-value filler exactly as a change-free transfer produces.
   private async mergeNotes(
-    pair: OwnedEntry[],
+    group: OwnedEntry[],
     tokenAddress: bigint,
     relayerFeeAmount: bigint,
     relayer?: string,
   ): Promise<string> {
     const keys      = this.keys!;
-    const inputs    = this.buildInputs(pair);
+    const inputs    = this.buildInputs(group);
     const selfProof = await this.selfRegistryProof();
 
     const merged   = inputs.total - relayerFeeAmount;
@@ -539,13 +536,13 @@ export class Halias extends HaliasCore {
 
   /// Merge notes until the balance can be spent in one transaction.
   ///
-  /// The circuit takes two inputs, so a balance spread across three or more notes cannot be
+  /// The circuit takes POOL_INPUTS inputs, so a balance spread wider than that cannot be
   /// paid out in full however it is selected — the wallet holds the money and cannot move it.
   /// Ordinary spending already fights this (see {selectEntries}, which always fills both
   /// input slots and so nets one note fewer per transaction), but a wallet paid more often
   /// than it spends still accumulates, and this is the deliberate fix.
   ///
-  /// With `target`, merges only until two notes cover that amount — the fewest transactions
+  /// With `target`, merges only until the largest POOL_INPUTS notes cover that amount — the fewest transactions
   /// that unblock a specific payment. Without one, merges all the way down to a single note.
   ///
   /// Each merge is a separate transaction with its own proof, so this is slow and costs gas
@@ -577,15 +574,21 @@ export class Halias extends HaliasCore {
     const done = () => {
       const notes = this.spendable(tokenAddress);
       if (target === undefined) return notes.length <= 1;
-      // Sorted ascending, so the last two are the largest.
-      if (notes.length <= 2) return true;
-      return notes[notes.length - 1].amount + notes[notes.length - 2].amount >= target;
+      // Sorted ascending, so the last POOL_INPUTS are the largest. Stopping at two here was a
+      // bug once the circuit took four: it kept merging after the target was already reachable,
+      // spending a fee and a round trip to reach a state it was already in.
+      if (notes.length <= POOL_INPUTS) return true;
+      return notes.slice(-POOL_INPUTS).reduce((t, e) => t + e.amount, 0n) >= target;
     };
 
     if (target !== undefined) {
       const total = this.spendable(tokenAddress).reduce((s, e) => s + e.amount, 0n);
       // Every merge burns a fee, so the reachable total is what is left after all of them.
-      const worst = BigInt(Math.max(0, this.spendable(tokenAddress).length - 1)) * fee;
+      // A merge removes POOL_INPUTS - 1 notes, so the count is that many fewer than the note
+      // count — using notes.length - 1 assumed pairwise merging and over-estimated the cost,
+      // which refused consolidations that would in fact have succeeded.
+      const count = this.spendable(tokenAddress).length;
+      const worst = BigInt(Math.ceil(Math.max(0, count - 1) / (POOL_INPUTS - 1))) * fee;
       if (total - worst < target)
         throw new Error(
           `Balance ${this.formatAmount(total, tokenAddress)} ${this.symbolOf(tokenAddress)} ` +
@@ -593,15 +596,18 @@ export class Halias extends HaliasCore {
           `${this.formatAmount(worst, tokenAddress)} of consolidation fees`);
     }
 
-    // What is left to do, for the progress report. Reaching a target needs the two largest
-    // merged, so the count is how many notes must disappear from the top; tidying to one
-    // note is simply every note but the last.
+    // What is left to do, for the progress report. Reaching a target means getting it inside
+    // the largest POOL_INPUTS notes, so the count is how many must disappear from the top;
+    // tidying to one note is every note but the last.
+    //
+    // Each merge spends POOL_INPUTS notes and creates one, so it removes POOL_INPUTS - 1.
+    const perMerge = POOL_INPUTS - 1;
     const remaining = () => {
       const notes = this.spendable(tokenAddress);
-      if (target === undefined) return Math.max(0, notes.length - 1);
+      if (target === undefined) return Math.ceil(Math.max(0, notes.length - 1) / perMerge);
       let sum = 0n, n = 0;
       for (let i = notes.length - 1; i >= 0 && sum < target; i--) { sum += notes[i].amount; n++; }
-      return Math.max(0, n - 2);
+      return Math.ceil(Math.max(0, n - POOL_INPUTS) / perMerge);
     };
 
     const of = remaining();
@@ -609,15 +615,19 @@ export class Halias extends HaliasCore {
       const notes = this.spendable(tokenAddress);
       opts.onProgress?.({ step, of: Math.max(of, step + 1), notes: notes.length });
 
-      // Which pair to merge depends on what is being asked for. Reaching a target wants the
-      // two largest, because that is the fastest route to a pair that covers it. Tidying
-      // wants the two smallest, so an interrupted run has still cleared the dust — the note
-      // count falls by one either way, but the notes that go are the ones worth losing.
-      const pair = target === undefined
-        ? [notes[0], notes[1]]
-        : [notes[notes.length - 1], notes[notes.length - 2]];
+      // How many to take, and which. A merge fills every input slot it can — taking only two
+      // when the circuit holds four is what made a six-note wallet cost four transactions
+      // instead of two.
+      //
+      // Which end depends on what is being asked for. Reaching a target wants the largest,
+      // because that is the fastest route to a set that covers it. Tidying wants the
+      // smallest, so an interrupted run has still cleared the dust.
+      const take = Math.min(POOL_INPUTS, notes.length);
+      const group = target === undefined
+        ? notes.slice(0, take)
+        : notes.slice(-take);
 
-      txHashes.push(await this.mergeNotes(pair, tokenAddress, fee, opts.relayer));
+      txHashes.push(await this.mergeNotes(group, tokenAddress, fee, opts.relayer));
     }
 
     const left = this.spendable(tokenAddress);
@@ -765,7 +775,7 @@ export class Halias extends HaliasCore {
     const total   = entries.reduce((s, e) => s + e.amount, 0n);
     return {
       token, total, entries,
-      sendableNow: entries.slice(-2).reduce((s, e) => s + e.amount, 0n),
+      sendableNow: entries.slice(-POOL_INPUTS).reduce((s, e) => s + e.amount, 0n),
     };
   }
 
@@ -1277,21 +1287,18 @@ export class Halias extends HaliasCore {
 
     const { out: out1, commitment: comm1 } = this.filler(ETH_TOKEN_ADDRESS);
 
-    const dBase  = this.consumeDummyIdx(2);
+    const pad = this.padInputs([], this.poolAnchor());
     const anchor = this.poolAnchor();
-    const dummy0 = dummyInput(anchor.tree, dBase, POOL_LEVELS);
-    const dummy1 = dummyInput(anchor.tree, dBase + 1, POOL_LEVELS);
-
     const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, encryptedOutput0, "0x", BigInt(this.config.chainId), this.config.poolAddress);
     const tempProof    = await this.registryProof(temp.spendingCommitment, "Invite account");
     const registryRoot = tempProof.registryRoot;
     const siblings     = tempProof.siblings;
 
     const { proofBytes } = await proveTransact({
-      poolRoot: [anchor.root, anchor.root], treeNumber: [anchor.tree, anchor.tree], registryRoot, publicAmount: amount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
-      inputNullifiers:   [dummy0.nullifier, dummy1.nullifier],
+      poolRoot: pad.poolRoot, treeNumber: pad.treeNumber, registryRoot, publicAmount: amount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
+      inputNullifiers:   pad.inputNullifiers,
       outputCommitments: [entry.commitment, comm1],
-      inputs: [dummy0.input, dummy1.input],
+      inputs: pad.inputs,
       outputs: [
         { spendingCommitment: temp.spendingCommitment, nullifierKeyHash: temp.nullifierKeyHash, blinding: temp.blinding,
           amount, aliasHash: tempAliasHash, registrySlot: tempProof.registrySlot,
@@ -1301,8 +1308,8 @@ export class Halias extends HaliasCore {
     }, this.getArtifacts());
 
     const tx = await contractTransact(
-      this.pool, [anchor.root, anchor.root], [anchor.tree, anchor.tree], registryRoot, amount, ETH_TOKEN_ADDRESS,
-      [dummy0.nullifier, dummy1.nullifier],
+      this.pool, pad.poolRoot, pad.treeNumber, registryRoot, amount, ETH_TOKEN_ADDRESS,
+      pad.inputNullifiers,
       [entry.commitment, comm1],
       ZERO_TRANSACT_PARAMS,
       encryptedOutput0, "0x", proofBytes, amount,
@@ -1424,10 +1431,15 @@ export class Halias extends HaliasCore {
 
     const anchor    = this.poolAnchor(note.treeNumber);
     const poolProof = this.poolTrees.tree(note.treeNumber).getProof(note.leafIndex);
-    const dBase     = this.consumeDummyIdx(1);
-    const dummy     = dummyInput(anchor.tree, dBase, POOL_LEVELS);
-
     const nullifier0 = computeNullifier(temp.nullifierKey, note.treeNumber, note.leafIndex);
+    const pad = this.padInputs([{
+      input: {
+        spendingPrivKey: temp.spendingPrivKey, viewingPrivKey: temp.viewingPrivKey,
+        blinding: note.blinding, amount: note.amount,
+        pathIndices: poolProof.pathIndices, pathElements: poolProof.pathElements,
+      },
+      nullifier: nullifier0, root: anchor.root, tree: note.treeNumber,
+    }], anchor);
 
     // The registration the proof authorises. Hashing it into externalData is what stops a
     // relayer minting the alias to itself: the domain recomputes this from its own
@@ -1454,15 +1466,10 @@ export class Halias extends HaliasCore {
     const paramsHash   = computeParamsHash(params, changeBlob, "0x", BigInt(this.config.chainId), this.config.poolAddress);
     
     const { proofBytes } = await proveTransact({
-      poolRoot: [anchor.root, anchor.root], treeNumber: [anchor.tree, anchor.tree], registryRoot, publicAmount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
-      inputNullifiers:   [nullifier0, dummy.nullifier],
+      poolRoot: pad.poolRoot, treeNumber: pad.treeNumber, registryRoot, publicAmount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
+      inputNullifiers:   pad.inputNullifiers,
       outputCommitments: [comm0, comm1],
-      inputs: [
-        { spendingPrivKey: temp.spendingPrivKey, viewingPrivKey: temp.viewingPrivKey,
-          blinding: note.blinding, amount: note.amount,
-          pathIndices: poolProof.pathIndices, pathElements: poolProof.pathElements },
-        dummy.input,
-      ],
+      inputs: pad.inputs,
       outputs: [changeOut, out1],
       pending: { leaf: pendingLeaf, slot: ownSlot, siblings: pendingSiblings },
     }, this.getArtifacts());
@@ -1476,8 +1483,8 @@ export class Halias extends HaliasCore {
           chainId: this.config.chainId,
           pool: this.config.poolAddress,
           params: buildTransactParams(
-            [anchor.root, anchor.root], [anchor.tree, anchor.tree], registryRoot, publicAmount, ETH_TOKEN_ADDRESS,
-            [nullifier0, dummy.nullifier], [comm0, comm1], params, pendingLeaf,
+            pad.poolRoot, pad.treeNumber, registryRoot, publicAmount, ETH_TOKEN_ADDRESS,
+            pad.inputNullifiers, [comm0, comm1], params, pendingLeaf,
           ),
           encryptedOutput0: changeBlob,
           encryptedOutput1: "0x",
@@ -1493,8 +1500,8 @@ export class Halias extends HaliasCore {
 
     const tx = await contractClaim(
       this.domain, registration,
-      [anchor.root, anchor.root], [anchor.tree, anchor.tree], registryRoot, publicAmount,
-      [nullifier0, dummy.nullifier],
+      pad.poolRoot, pad.treeNumber, registryRoot, publicAmount,
+      pad.inputNullifiers,
       [comm0, comm1],
       params, changeBlob, "0x", proofBytes, `${cleanAlias}.hls`, pendingLeaf,
     );
@@ -1599,12 +1606,18 @@ export class Halias extends HaliasCore {
     const nullifierKeyHash = this.myNullifierKeyHash();
     const selfProof        = await this.selfRegistryProof();
 
-    // One real input — the invite's — padded to the circuit's two.
+    // One real input — the invite's — padded out to the circuit's width.
     const anchor    = this.poolAnchor(note.treeNumber);
     const poolProof = this.poolTrees.tree(note.treeNumber).getProof(note.leafIndex);
-    const dBase     = this.consumeDummyIdx(1);
-    const dummy     = dummyInput(anchor.tree, dBase, POOL_LEVELS);
     const nullifier0 = computeNullifier(temp.nullifierKey, note.treeNumber, note.leafIndex);
+    const pad = this.padInputs([{
+      input: {
+        spendingPrivKey: temp.spendingPrivKey, viewingPrivKey: temp.viewingPrivKey,
+        blinding: note.blinding, amount: note.amount,
+        pathIndices: poolProof.pathIndices, pathElements: poolProof.pathElements,
+      },
+      nullifier: nullifier0, root: anchor.root, tree: note.treeNumber,
+    }], anchor);
 
     const blinding = randomBlinding();
     const out0 = {
@@ -1633,25 +1646,20 @@ export class Halias extends HaliasCore {
     );
 
     const { proofBytes } = await proveTransact({
-      poolRoot: [anchor.root, anchor.root], treeNumber: [note.treeNumber, anchor.tree],
+      poolRoot: pad.poolRoot, treeNumber: pad.treeNumber,
       registryRoot: selfProof.registryRoot, publicAmount: 0n,
       tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
-      inputNullifiers:   [nullifier0, dummy.nullifier],
+      inputNullifiers:   pad.inputNullifiers,
       outputCommitments: [comm0, comm1],
-      inputs: [
-        { spendingPrivKey: temp.spendingPrivKey, viewingPrivKey: temp.viewingPrivKey,
-          blinding: note.blinding, amount: note.amount,
-          pathIndices: poolProof.pathIndices, pathElements: poolProof.pathElements },
-        dummy.input,
-      ],
+      inputs: pad.inputs,
       outputs: [out0, out1],
     }, this.getArtifacts());
 
     const tx = await contractTransact(
       this.pool,
-      [anchor.root, anchor.root], [note.treeNumber, anchor.tree],
+      pad.poolRoot, pad.treeNumber,
       selfProof.registryRoot, 0n, ETH_TOKEN_ADDRESS,
-      [nullifier0, dummy.nullifier],
+      pad.inputNullifiers,
       [comm0, comm1], params, blob0, "0x", proofBytes,
     );
     return { txHash: await this.settle(tx), amount: note.amount };

@@ -52,7 +52,7 @@ describe("SDK preimage agreement", function () {
 
     const deployer = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
-    })).deploy(verifier, signer.address);
+    })).deploy(verifier, verifier, signer.address);
 
     pool     = await ethers.getContractAt("HaliasPool",     await deployer.pool());
     registry = await ethers.getContractAt("HaliasRegistry", await deployer.registry());
@@ -64,8 +64,8 @@ describe("SDK preimage agreement", function () {
   async function assertAgrees(params: TransactParams, enc0: string, enc1: string) {
     const root = BigInt((await anchorOf(pool)).root);
     const p = buildTransactParams(
-      [root, root], [0, 0], BigInt(await registry.getRegistryRoot()),
-      0n, 0n, [randBig(), randBig()], [randBig(), randBig()], params,
+      [root, root, root, root], [0, 0, 0, 0], BigInt(await registry.getRegistryRoot()),
+      0n, 0n, [randBig(), randBig(), randBig(), randBig()], [randBig(), randBig()], params,
     );
     const onChain = await pool.computeParamsHash(p, enc0, enc1);
     const offChain = computeParamsHash(params, enc0, enc1, chainId, poolAddr);

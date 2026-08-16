@@ -3,6 +3,13 @@
 	import {
 		clientState, getClient, run, deselectAlias, wallet, setToken, addToken
 	} from '../sdk/client.js';
+	import { POOL_INPUTS } from 'halias-sdk';
+
+	// How many merges take a wallet from `n` notes to fully sendable. Each merge spends
+	// POOL_INPUTS notes and leaves one, so it removes POOL_INPUTS - 1; once the balance fits in
+	// POOL_INPUTS notes there is nothing left worth merging.
+	const mergesNeeded = (n: number) =>
+		Math.max(0, Math.ceil((n - POOL_INPUTS) / (POOL_INPUTS - 1)));
 	import PrivacyNote from './PrivacyNote.svelte';
 	import InviteWindow from './InviteWindow.svelte';
 	import ReviewStep from './ReviewStep.svelte';
@@ -64,7 +71,7 @@
 	let blob = $state<string | null>(null);
 	let copied = $state<'blob' | 'link' | null>(null);
 
-	// The amount asked for is more than two notes can cover — held here rather than reported
+	// The amount asked for is more than one transaction's notes can cover — held here rather than reported
 	// as an error, because it is not one. The money is present and the wallet can reach it;
 	// it just takes a transaction first. Null when the amount is spendable as it stands.
 	let blocked = $state<bigint | null>(null);
@@ -194,10 +201,9 @@
 
 	/// Merge until the whole balance can leave in one transaction.
 	///
-	/// Targeted at the full balance, not at a single note. The circuit takes two inputs, so two
-	/// notes is already completely sendable — merging the last pair costs another proof and
-	/// another fee to reach a number nobody can spend any harder. Four notes needs two merges to
-	/// become fully sendable, not three.
+	/// Targeted at the full balance, not at a single note. The circuit takes POOL_INPUTS inputs,
+	/// so that many notes is already completely sendable — merging further costs another proof
+	/// and another fee to reach a number nobody can spend any harder.
 	async function combineAll() {
 		const c = getClient();
 		merging = { step: 0, of: 1 };
@@ -438,11 +444,12 @@
 						</p>
 					{:else}
 						<p class="hint">
-							{$clientState.noteCount} notes, and a transaction spends at most two — so
+							{$clientState.noteCount} notes, and a transaction spends at most {POOL_INPUTS} — so
 							{fmt($clientState.balance - $clientState.sendableNow)} {sym} of this cannot move
-							until they are merged. This needs {$clientState.noteCount - 2} merge{$clientState.noteCount - 2 === 1 ? '' : 's'},
-							not {$clientState.noteCount - 1}: two notes is already fully sendable, and merging
-							the last pair would cost a proof and a fee for nothing. Each stops safely part-way.
+							until they are merged. This needs {mergesNeeded($clientState.noteCount)} merge{mergesNeeded($clientState.noteCount) === 1 ? '' : 's'},
+							not {$clientState.noteCount - 1}: each merge spends {POOL_INPUTS} notes and leaves one,
+							so it removes {POOL_INPUTS - 1} at a time, and {POOL_INPUTS} notes is already fully
+							sendable. Each stops safely part-way.
 						</p>
 					{/if}
 

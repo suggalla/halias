@@ -52,7 +52,7 @@ describe("capacity limits", function () {
       // Four leaves per tree, and tree 1 is the last: eight leaves in total.
       const pool = await (await ethers.getContractFactory("MockFullTreePool", {
         libraries: { PoseidonT3: t3 },
-      })).deploy(verifier, await registry.getAddress());
+      })).deploy(verifier, verifier, await registry.getAddress());
       return { registry, pool };
     }
 
@@ -63,10 +63,10 @@ describe("capacity limits", function () {
     async function insertPair() {
       const [root, tree] = await pool.currentAnchor();
       return pool.transact({
-        poolRoot: [root, root], treeNumber: [Number(tree), Number(tree)],
+        poolRoot: [root, root, root, root], treeNumber: [Number(tree), Number(tree), Number(tree), Number(tree)],
         registryRoot: await registry.getRegistryRoot(),
         publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
-        inputNullifiers: [rand32(), rand32()],
+        inputNullifiers: [rand32(), rand32(), rand32(), rand32()],
         outputCommitments: [rand32(), rand32()],
         recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER,
         externalData: ethers.ZeroHash, pendingLeaf: ethers.ZeroHash, outputsEmpty: false,

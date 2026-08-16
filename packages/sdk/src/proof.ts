@@ -45,16 +45,17 @@ export interface PendingRegistration {
 }
 
 export interface TransactProveInput {
-  /// One per input: two notes may live in different trees.
-  poolRoot: [bigint, bigint];
-  treeNumber: [number, number];
+  /// One per input: notes may live in different trees. Length must be POOL_INPUTS — unused
+  /// slots are padded with dummies, which is what keeps the number of real notes private.
+  poolRoot: bigint[];
+  treeNumber: number[];
   registryRoot: bigint;
   publicAmount: bigint;   // positive = deposit, 0 = transfer, field-negative = withdraw
   tokenAddress: bigint;   // 0n for ETH
   paramsHash: bigint;     // commitment to TransactParams
-  inputNullifiers: [bigint, bigint];
+  inputNullifiers: bigint[];
   outputCommitments: [bigint, bigint];
-  inputs: [TransactInput, TransactInput];
+  inputs: TransactInput[];
   outputs: [TransactOutput, TransactOutput];
   /// Omitted on every path but a claim, where it must match what the domain armed.
   pending?: PendingRegistration;
@@ -74,6 +75,13 @@ export interface TransactProveInput {
 // from entry.ts rather than redeclared: it is the split point of the nullifier's global index,
 // so a second copy drifting from it corrupts nullifiers rather than merely failing to prove.
 const REGISTRY_LEVELS = 32;
+
+/// How many notes one proof spends. Must equal the circuit's `nIns` and HaliasPool.INPUTS.
+///
+/// Four, so a ten-note balance consolidates in three transactions rather than nine. Every
+/// transaction pads to exactly this many — a dummy's nullifier is published and spent like any
+/// other, so nobody can tell whether one note was spent or four.
+export const POOL_INPUTS = 4;
 
 /// What an ordinary transaction supplies: no insertion, and dummy witness values for the
 /// slot and siblings the circuit computes but then discards.
@@ -119,12 +127,21 @@ function serializeForCircuit(inp: TransactProveInput): Record<string, unknown> {
 
 export async function proveTransact(
   input: TransactProveInput,
-  paths: ArtifactPaths,
+  paths: ArtifactPaths | { transact: ArtifactPaths; claim: ArtifactPaths },
 ): Promise<{ proofBytes: string; publicSignals: string[] }> {
+  // Which circuit. A claim carries an insertion and needs the machinery that proves it; every
+  // other transaction is 35% cheaper without it. Selected from the input rather than by the
+  // caller, so the two cannot be mismatched — and the pool makes the same choice independently
+  // from the leaf the registry armed, so a mismatch is rejected rather than mis-verified.
+  const chosen: ArtifactPaths =
+    "transact" in paths
+      ? (input.pending ? paths.claim : paths.transact)
+      : paths;
+
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     serializeForCircuit(input),
-    paths.wasmPath,
-    paths.zkeyPath,
+    chosen.wasmPath,
+    chosen.zkeyPath,
   );
   const calldata = await snarkjs.groth16.exportSolidityCallData(proof, publicSignals);
   const [pA, pB, pC] = JSON.parse("[" + calldata + "]");

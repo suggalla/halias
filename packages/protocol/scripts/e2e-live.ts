@@ -23,10 +23,14 @@ import { loadDeployment } from "./deployment";
 //
 // Against Sepolia: set RPC_URL and PRIVATE_KEY, and expect it to take minutes.
 
-const OUT = path.join(__dirname, "..", "circuits", "out", "transact");
+const OUT       = path.join(__dirname, "..", "circuits", "out", "transact");
+const CLAIM_OUT = path.join(__dirname, "..", "circuits", "out", "transactClaim");
 const ARTIFACTS = {
   transactWasm: path.join(OUT, "transact_js", "transact.wasm"),
   transactZkey: path.join(OUT, "ceremony", "transact_final.zkey"),
+  // The claim circuit, used only when a transaction registers an alias as it spends.
+  claimWasm:    path.join(CLAIM_OUT, "transactClaim_js", "transactClaim.wasm"),
+  claimZkey:    path.join(CLAIM_OUT, "ceremony", "transactClaim_final.zkey"),
 };
 
 // Hardhat/Anvil account #0, pre-funded on a local node.
@@ -1119,22 +1123,24 @@ async function main() {
   await fat.init();
   await fat.register(`fat${suffix}`);
 
-  // Four deposits, four notes. Each deposit fills one output slot and pads the other, so
-  // this is exactly how an alias that is paid four times ends up.
-  for (const a of ["0.1", "0.2", "0.3", "0.4"]) await fat.deposit(a);
+  // Six deposits, six notes. Each deposit fills one output slot and pads the other, so this
+  // is exactly how an alias paid six times ends up — and six is past the circuit's four
+  // inputs, which is what it takes to get stuck now. At two inputs three notes did it.
+  for (const a of ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"]) await fat.deposit(a);
 
   const stuck = await fat.balance();
-  eq("four deposits make four notes", stuck.entries.length, 4);
-  eq("the balance is the whole 1.0", ethers.formatEther(stuck.total), "1.0");
-  // The number a UI has to show. 0.4 + 0.3 are the two largest, and that is the ceiling.
-  eq("but only the two largest can move at once",
-     ethers.formatEther(stuck.sendableNow), "0.7");
+  eq("six deposits make six notes", stuck.entries.length, 6);
+  eq("the balance is the whole 2.1", ethers.formatEther(stuck.total), "2.1");
+  // The number a UI has to show. 0.6 + 0.5 + 0.4 + 0.3 are the four largest, and that is the
+  // ceiling — the circuit spends four notes, so anything beyond them needs consolidating.
+  eq("but only the four largest can move at once",
+     ethers.formatEther(stuck.sendableNow), "1.8");
   check("so sendableNow is below the balance", stuck.sendableNow < stuck.total);
 
   // The error a caller sees while stuck. It must name consolidation: calling the balance
   // insufficient would be false, and sends people looking for money already there.
   let refusal = "";
-  try { await fat.send(bobName, "1.0"); } catch (e: any) { refusal = String(e?.message ?? e); }
+  try { await fat.send(bobName, "2.1"); } catch (e: any) { refusal = String(e?.message ?? e); }
   check("sending the full balance is refused", refusal.length > 0);
   check("and the refusal names consolidation rather than blaming the balance",
         /consolidate/i.test(refusal) && !/less than/i.test(refusal), refusal);
@@ -1142,7 +1148,7 @@ async function main() {
   // Targeted: merge only as far as needed to unblock this payment, not all the way down.
   const steps: number[] = [];
   const merged = await fat.consolidate(undefined, {
-    target: ethers.parseEther("1.0"),
+    target: ethers.parseEther("2.1"),
     onProgress: ({ notes }) => steps.push(notes),
   });
   check("consolidating took at least one merge", merged.txHashes.length >= 1,
@@ -1150,9 +1156,9 @@ async function main() {
   check("and reported progress for each", steps.length === merged.txHashes.length);
 
   const freed = await fat.balance();
-  eq("no value was created or destroyed", ethers.formatEther(freed.total), "1.0");
+  eq("no value was created or destroyed", ethers.formatEther(freed.total), "2.1");
   eq("and the whole balance is now sendable in one transaction",
-     ethers.formatEther(freed.sendableNow), "1.0");
+     ethers.formatEther(freed.sendableNow), "2.1");
   check("with fewer notes than before", freed.entries.length < stuck.entries.length,
         `${stuck.entries.length} -> ${freed.entries.length}`);
 
@@ -1160,10 +1166,10 @@ async function main() {
   // Bob rather than alice: alice's alias has been rotated to another key index by then, so
   // her client no longer holds the keys the registry resolves her name to.
   const bobBeforeFat = (await bob.balance()).total;
-  await fat.send(bobName, "1.0");
+  await fat.send(bobName, "2.1");
   await bob.refresh();
   eq("the payment that was blocked now lands",
-     ethers.formatEther((await bob.balance()).total - bobBeforeFat), "1.0");
+     ethers.formatEther((await bob.balance()).total - bobBeforeFat), "2.1");
   await fat.refresh();
   eq("and the consolidated wallet is empty", ethers.formatEther((await fat.balance()).total), "0.0");
 

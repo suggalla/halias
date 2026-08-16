@@ -85,11 +85,11 @@ describe("HaliasController", function () {
     return {
       pendingLeaf:       pendingLeafFor(r),
       outputsEmpty:      false,
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      withdrawOf(FEE + relayerFee.amount),
       tokenAddress:      ethers.ZeroAddress,
-      inputNullifiers:   [rand32(), rand32()],
+      inputNullifiers:   [rand32(), rand32(), rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient:         domainAddr,
       relayerFee,
@@ -100,10 +100,10 @@ describe("HaliasController", function () {
   // Puts ETH in the pool so a claim has something to withdraw against.
   async function fundPool(amount: bigint) {
     await (await pool.transact({
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot: await registry.getRegistryRoot(),
       publicAmount: amount, tokenAddress: ethers.ZeroAddress,
-      inputNullifiers: [rand32(), rand32()],
+      inputNullifiers: [rand32(), rand32(), rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER, externalData: ethers.ZeroHash,
       pendingLeaf:       ethers.ZeroHash,
@@ -131,7 +131,7 @@ describe("HaliasController", function () {
     const registry = await (await ethers.getContractFactory("HaliasRegistry", { libraries: registryLibs }))
       .deploy(domainAddr);
     const pool = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs }))
-      .deploy(verifier, await registry.getAddress());
+      .deploy(verifier, verifier, await registry.getAddress());
     const domain = await (await ethers.getContractFactory("HaliasController"))
       .deploy(await pool.getAddress(), await registry.getAddress(), admin.address);
 
@@ -372,10 +372,10 @@ describe("HaliasController", function () {
       // could choose it would insert their own unregistered keys into a tree of their
       // choosing and pay themselves — which is precisely what the registry proof prevents.
       await expect(pool.connect(user).transact({
-        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
+        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
         registryRoot: await registry.getRegistryRoot(),
         publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
-        inputNullifiers: [rand32(), rand32()],
+        inputNullifiers: [rand32(), rand32(), rand32(), rand32()],
         outputCommitments: [rand32(), rand32()],
         recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER,
         externalData: ethers.ZeroHash,
@@ -422,10 +422,10 @@ describe("HaliasController", function () {
 
       expect(await registry.pendingLeaf()).to.equal(ethers.ZeroHash);
       await expect(pool.connect(user).transact({
-        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
+        poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
         registryRoot: await registry.getRegistryRoot(),
         publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
-        inputNullifiers: [rand32(), rand32()],
+        inputNullifiers: [rand32(), rand32(), rand32(), rand32()],
         outputCommitments: [rand32(), rand32()],
         recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER,
         externalData: ethers.ZeroHash, pendingLeaf: ethers.ZeroHash,

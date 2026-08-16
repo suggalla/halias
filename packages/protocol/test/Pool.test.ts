@@ -30,11 +30,11 @@ describe("HaliasPool", function () {
 
   async function baseParams(overrides: any = {}) {
     return {
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      0n,
       tokenAddress:      ethers.ZeroAddress,
-      inputNullifiers:   [rand32(), rand32()],
+      inputNullifiers:   [rand32(), rand32(), rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient:         ethers.ZeroAddress,
       relayerFee:        NO_RELAYER,
@@ -77,7 +77,7 @@ describe("HaliasPool", function () {
     const registry     = await (await ethers.getContractFactory("HaliasRegistry", { libraries: registryLibs })).deploy(registrar.address);
     const registryAddr = await registry.getAddress();
 
-    const pool     = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs })).deploy(verifierAddr, registryAddr);
+    const pool     = await (await ethers.getContractFactory("HaliasPool", { libraries: poolLibs })).deploy(verifierAddr, verifierAddr, registryAddr);
     const poolAddr = await pool.getAddress();
 
     const token    = await (await ethers.getContractFactory("MockERC20")).deploy("Test", "TST", 18);
@@ -99,8 +99,9 @@ describe("HaliasPool", function () {
       const F = await ethers.getContractFactory("HaliasPool", {
         libraries: { PoseidonT3: (await ensurePoseidon()).PoseidonT3 },
       });
-      await expect(F.deploy(ethers.ZeroAddress, registryAddr)).to.be.revertedWithCustomError(F, "ZeroAddress");
-      await expect(F.deploy(verifierAddr, ethers.ZeroAddress)).to.be.revertedWithCustomError(F, "ZeroAddress");
+      await expect(F.deploy(ethers.ZeroAddress, verifierAddr, registryAddr)).to.be.revertedWithCustomError(F, "ZeroAddress");
+      await expect(F.deploy(verifierAddr, ethers.ZeroAddress, registryAddr)).to.be.revertedWithCustomError(F, "ZeroAddress");
+      await expect(F.deploy(verifierAddr, verifierAddr, ethers.ZeroAddress)).to.be.revertedWithCustomError(F, "ZeroAddress");
     });
 
     it("exposes exactly one mutating function", async function () {
@@ -149,8 +150,8 @@ describe("HaliasPool", function () {
       // proof afterwards being rejected with nothing to say why.
       const p = await baseParams({ outputsEmpty: true });
       await expect(send(p)).to.emit(pool, "PoolExit")
-        .withArgs(p.publicAmount, p.tokenAddress, p.inputNullifiers[0], p.inputNullifiers[1]);
-      await expect(send(await baseParams({ outputsEmpty: true, inputNullifiers: [rand32(), rand32()] })))
+        .withArgs(p.publicAmount, p.tokenAddress, p.inputNullifiers);
+      await expect(send(await baseParams({ outputsEmpty: true, inputNullifiers: [rand32(), rand32(), rand32(), rand32()] })))
         .to.not.emit(pool, "Transact");
     });
 
@@ -183,12 +184,12 @@ describe("HaliasPool", function () {
 
   describe("roots", function () {
     it("rejects an unknown pool root", async function () {
-      await expect(send(await baseParams({ poolRoot: [rand32(), rand32()], treeNumber: [0, 0]})))
+      await expect(send(await baseParams({ poolRoot: [rand32(), rand32(), rand32(), rand32()], treeNumber: [0, 0, 0, 0]})))
         .to.be.revertedWithCustomError(pool, "PoolRootUnknown");
     });
 
     it("rejects the zero pool root", async function () {
-      await expect(send(await baseParams({ poolRoot: [ethers.ZeroHash, ethers.ZeroHash], treeNumber: [0, 0]})))
+      await expect(send(await baseParams({ poolRoot: [ethers.ZeroHash, ethers.ZeroHash, ethers.ZeroHash, ethers.ZeroHash], treeNumber: [0, 0, 0, 0]})))
         .to.be.revertedWithCustomError(pool, "PoolRootUnknown");
     });
 
@@ -203,7 +204,7 @@ describe("HaliasPool", function () {
       const oldRoot = (await anchorOf(pool)).root;
       await depositETH(ethers.parseEther("1"));
       expect((await anchorOf(pool)).root).to.not.equal(oldRoot);
-      await expect(send(await baseParams({ poolRoot: [oldRoot, oldRoot], treeNumber: [0, 0]})))
+      await expect(send(await baseParams({ poolRoot: [oldRoot, oldRoot, oldRoot, oldRoot], treeNumber: [0, 0, 0, 0]})))
         .to.emit(pool, "Transact");
     });
 
@@ -221,14 +222,14 @@ describe("HaliasPool", function () {
   describe("nullifiers", function () {
     it("names which of the two inputs was already spent", async function () {
       const n0 = rand32(), n1 = rand32();
-      await (await send(await baseParams({ publicAmount: ethers.parseEther("1"), inputNullifiers: [n0, n1] }),
+      await (await send(await baseParams({ publicAmount: ethers.parseEther("1"), inputNullifiers: [n0, n1, ethers.hexlify(ethers.randomBytes(32)), ethers.hexlify(ethers.randomBytes(32))] }),
         { value: ethers.parseEther("1") })).wait();
 
-      await expect(send(await baseParams({ inputNullifiers: [n0, rand32()] })))
+      await expect(send(await baseParams({ inputNullifiers: [n0, rand32(), rand32(), rand32()] })))
         .to.be.revertedWithCustomError(pool, "NullifierAlreadySpent").withArgs(n0);
 
       // Slot 1 is a separate branch: it is only reached when slot 0 is fresh.
-      await expect(send(await baseParams({ inputNullifiers: [rand32(), n1] })))
+      await expect(send(await baseParams({ inputNullifiers: [rand32(), n1, ethers.hexlify(ethers.randomBytes(32)), ethers.hexlify(ethers.randomBytes(32))] })))
         .to.be.revertedWithCustomError(pool, "NullifierAlreadySpent").withArgs(n1);
     });
 
@@ -236,7 +237,7 @@ describe("HaliasPool", function () {
       // Both lookups miss, so nothing above catches this — it would spend one note twice
       // inside a single call.
       const n = rand32();
-      await expect(send(await baseParams({ inputNullifiers: [n, n] })))
+      await expect(send(await baseParams({ inputNullifiers: [n, n, ethers.hexlify(ethers.randomBytes(32)), ethers.hexlify(ethers.randomBytes(32))] })))
         .to.be.revertedWithCustomError(pool, "DuplicateNullifier");
     });
   });
@@ -357,7 +358,7 @@ describe("HaliasPool", function () {
       const amount = ethers.parseEther("1");
       await depositETH(amount);
 
-      const nullifiers = [rand32(), rand32()];
+      const nullifiers = [rand32(), rand32(), rand32(), rand32()];
       const rootBefore = (await anchorOf(pool)).root;
 
       // Named, not bare. `_payOut` goes through OpenZeppelin's Address.sendValue, so the

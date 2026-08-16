@@ -35,13 +35,13 @@ contract HaliasDeployer {
     HaliasPool     public immutable pool;
     HaliasController   public immutable controller;
 
-    constructor(address transactVerifier, address admin) {
+    constructor(address transactVerifier, address claimVerifier, address admin) {
         // Third CREATE from this contract. Computed before any of them so the registry can
         // be constructed already knowing its controller.
         address predictedController = _selfCreateAddress(3);
 
         registry = new HaliasRegistry(predictedController);                        // nonce 1
-        pool     = new HaliasPool(transactVerifier, address(registry));        // nonce 2
+        pool     = new HaliasPool(transactVerifier, claimVerifier, address(registry)); // nonce 2
         controller   = new HaliasController(address(pool), address(registry), admin);  // nonce 3
 
         // Cannot fail as written. It is here because if it ever does, the registry has

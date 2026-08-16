@@ -34,7 +34,7 @@ describe("HaliasDeployer", function () {
 
     const deployer = await (await ethers.getContractFactory("HaliasDeployer", {
       libraries: { PoseidonT3: t3, PoseidonT4: t4 },
-    })).deploy(verifier, admin.address);
+    })).deploy(verifier, verifier, admin.address);
 
     return {
       admin, user, verifier, deployer,
@@ -111,11 +111,11 @@ describe("HaliasDeployer", function () {
 
     const deposit = ethers.parseEther("1");
     await (await pool.connect(user).transact({
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot:      await registry.getRegistryRoot(),
       publicAmount:      deposit,
       tokenAddress:      ethers.ZeroAddress,
-      inputNullifiers:   [rand32(), rand32()],
+      inputNullifiers:   [rand32(), rand32(), rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient:         ethers.ZeroAddress,
       relayerFee:        NO_RELAYER,
@@ -137,9 +137,9 @@ describe("HaliasDeployer", function () {
 
     const deposit = fee * 4n;
     await (await pool.connect(user).transact({
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: deposit, tokenAddress: ethers.ZeroAddress,
-      inputNullifiers: [rand32(), rand32()], outputCommitments: [rand32(), rand32()],
+      inputNullifiers: [rand32(), rand32(), rand32(), rand32()], outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER, externalData: ethers.ZeroHash,
       pendingLeaf:       ethers.ZeroHash,
       outputsEmpty:      false,
@@ -157,9 +157,9 @@ describe("HaliasDeployer", function () {
     ));
 
     await (await domain.connect(admin).claim(r, {
-      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
+      poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
       publicAmount: FIELD_PRIME - fee, tokenAddress: ethers.ZeroAddress,
-      inputNullifiers: [rand32(), rand32()], outputCommitments: [rand32(), rand32()],
+      inputNullifiers: [rand32(), rand32(), rand32(), rand32()], outputCommitments: [rand32(), rand32()],
       recipient: await domain.getAddress(), relayerFee: NO_RELAYER, externalData,
       // The insertion the claim's proof performs. The registry arms it from its own state
       // during the registration, and the pool requires the public signal to match.

@@ -38,10 +38,10 @@ describe("pool tree rollover", function () {
     // currentAnchor, not getLastRoot + treeNumber: after a rollover those two disagree.
     const [root, tree] = await pool.currentAnchor();
     return {
-      poolRoot: [root, root], treeNumber: [Number(tree), Number(tree)],
+      poolRoot: [root, root, root, root], treeNumber: [Number(tree), Number(tree), Number(tree), Number(tree)],
       registryRoot: await registry.getRegistryRoot(),
       publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
-      inputNullifiers: [rand32(), rand32()],
+      inputNullifiers: [rand32(), rand32(), rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
       recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER,
       externalData: ethers.ZeroHash, pendingLeaf: ethers.ZeroHash, outputsEmpty: false,
@@ -76,7 +76,7 @@ describe("pool tree rollover", function () {
     })).deploy(registrar.address);
     const pool = await (await ethers.getContractFactory("MockSmallTreePool", {
       libraries: { PoseidonT3: t3 },
-    })).deploy(verifier, await registry.getAddress());
+    })).deploy(verifier, verifier, await registry.getAddress());
     return { registry, pool };
   }
 
@@ -142,14 +142,14 @@ describe("pool tree rollover", function () {
     // producing an unspent nullifier every time.
     const a = await insertPair();
     await expect(pool.transact(
-      await params({ poolRoot: [a.root, a.root], treeNumber: [a.tree + 1, a.tree + 1] }),
+      await params({ poolRoot: [a.root, a.root, a.root, a.root], treeNumber: [a.tree + 1, a.tree + 1, a.tree + 1, a.tree + 1] }),
       "0x", "0x", ZERO_PROOF,
     )).to.be.revertedWithCustomError(pool, "PoolRootWrongTree");
   });
 
   it("refuses a root it never published", async function () {
     await expect(pool.transact(
-      await params({ poolRoot: [rand32(), rand32()] }), "0x", "0x", ZERO_PROOF,
+      await params({ poolRoot: [rand32(), rand32(), rand32(), rand32()] }), "0x", "0x", ZERO_PROOF,
     )).to.be.revertedWithCustomError(pool, "PoolRootUnknown");
   });
 
@@ -164,7 +164,7 @@ describe("pool tree rollover", function () {
     // commitments must land in the *current* tree — asserted on the event's own tree number,
     // because "did not revert" would hold even if the pool had appended to the frozen one.
     const tx = await pool.transact(
-      await params({ poolRoot: [a.root, a.root], treeNumber: [a.tree, a.tree] }),
+      await params({ poolRoot: [a.root, a.root, a.root, a.root], treeNumber: [a.tree, a.tree, a.tree, a.tree] }),
       "0x", "0x", ZERO_PROOF,
     );
     const receipt = await tx.wait();
@@ -184,7 +184,7 @@ describe("pool tree rollover", function () {
     const c = await insertPair();
     expect([a.tree, c.tree]).to.deep.equal([0, 1]);
 
-    const spanning = await params({ poolRoot: [a.root, c.root], treeNumber: [a.tree, c.tree] });
+    const spanning = await params({ poolRoot: [a.root, c.root, c.root, c.root], treeNumber: [a.tree, c.tree, c.tree, c.tree] });
     await expect(pool.transact(spanning, "0x", "0x", ZERO_PROOF)).to.emit(pool, "Transact");
     // Both halves were actually consumed. A pool that validated only the first input would
     // pass a not-reverted check and leave the second note spendable again.
@@ -194,7 +194,7 @@ describe("pool tree rollover", function () {
 
     // …and mismatching either half still fails.
     await expect(pool.transact(
-      await params({ poolRoot: [a.root, c.root], treeNumber: [a.tree, a.tree] }),
+      await params({ poolRoot: [a.root, c.root, c.root, c.root], treeNumber: [a.tree, a.tree, a.tree, a.tree] }),
       "0x", "0x", ZERO_PROOF,
     )).to.be.revertedWithCustomError(pool, "PoolRootWrongTree");
   });
@@ -221,8 +221,8 @@ describe("pool tree rollover", function () {
     expect([a.tree, a.idx0, c.tree, c.idx0]).to.deep.equal([0, 0, 1, 0]);
 
     await expect(pool.transact(await params({
-      poolRoot: [a.root, c.root], treeNumber: [a.tree, c.tree],
-      inputNullifiers: [nul(a.tree, a.idx0), nul(c.tree, c.idx0)],
+      poolRoot: [a.root, c.root, c.root, c.root], treeNumber: [a.tree, c.tree, c.tree, c.tree],
+      inputNullifiers: [nul(a.tree, a.idx0), nul(c.tree, c.idx0), rand32(), rand32()],
     }), "0x", "0x", ZERO_PROOF)).to.emit(pool, "Transact");
 
     expect(await pool.spentNullifiers(nul(a.tree, a.idx0))).to.equal(true);
