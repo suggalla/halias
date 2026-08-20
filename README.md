@@ -274,13 +274,39 @@ from a wallet signature was removed as phishable and must not come back — see
 | Contracts | Feature complete, internally reviewed, **not externally audited** |
 | Circuit | Frozen at 4 in / 2 out, with the claim path in a second circuit |
 | Trusted setup | **One contributor. Ours.** Not suitable for real funds |
-| Networks | Local only — there is no live deployment |
+| Networks | **Sepolia**, and local. No mainnet deployment, and there will not be one before an audit |
 | Tests | 228 hardhat, 86 SDK, 17 app, 157 e2e-live |
 
 Two things gate mainnet and neither is negotiable: an external audit of the circuit and the
 contracts, and a multi-party ceremony over a public Powers of Tau file. A privacy pool whose
 setup one person could have subverted is a pool that one person can silently mint in — and
 because transactions are opaque, nobody could tell afterwards whether they had.
+
+## Live on Sepolia
+
+Verified on Etherscan, so the source behind each address can be read rather than trusted.
+
+| | |
+|---|---|
+| HaliasPool | [`0x1d2B3a2802911F656f74Ec7c23680aF46F4cf2E5`](https://sepolia.etherscan.io/address/0x1d2B3a2802911F656f74Ec7c23680aF46F4cf2E5#code) |
+| HaliasRegistry | [`0x8b3836F6bFA640c515F9A8F4C94615e8918Ff9a5`](https://sepolia.etherscan.io/address/0x8b3836F6bFA640c515F9A8F4C94615e8918Ff9a5#code) |
+| HaliasController | [`0x07Ff68c74926acd86467335a7E7A1824cEFb0ddC`](https://sepolia.etherscan.io/address/0x07Ff68c74926acd86467335a7E7A1824cEFb0ddC#code) |
+| TransactVerifier | [`0x818655DC9638Bf7574084cDAa328fA0e50322566`](https://sepolia.etherscan.io/address/0x818655DC9638Bf7574084cDAa328fA0e50322566#code) |
+| TransactClaimVerifier | [`0x80d311aD0f9AcF1f7f715cE4d9B897D963498957`](https://sepolia.etherscan.io/address/0x80d311aD0f9AcF1f7f715cE4d9B897D963498957#code) |
+
+PoseidonT3 and PoseidonT4 are the canonical `poseidon-solidity` deployments at
+`0x3333333C…3B93` and `0x4443338E…ECF0` — the same addresses on every chain, reused rather
+than redeployed. `HaliasDeployer` at `0xCed57E02…fE4e` created the first three in one
+transaction and is not verifiable: it links Poseidon inside its constructor only, so the
+addresses cannot be recovered from deployed bytecode.
+
+**The proving key cannot be rebuilt.** A phase-2 ceremony draws fresh entropy every run, so
+recompiling the circuits produces a different key that will not verify against these
+contracts. Check a downloaded artifact against
+[`artifacts.sha256`](packages/deployments/networks/artifacts.sha256) rather than against a
+rebuild — that file is the only thing tying the artifacts to the verifiers above.
+
+Still a testnet with a single-contributor setup. Do not put real money in it.
 
 ## Roadmap
 

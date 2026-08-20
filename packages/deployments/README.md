@@ -12,7 +12,8 @@ Written by `scripts/deploy.ts` in the protocol package. Read by everything else.
 networks.json        chain id → name, RPC, explorer
 networks/
   localhost.json     written by every local deploy; gitignored
-  sepolia.json       absent — there is no live deployment
+  sepolia.json       the live testnet deployment, written by scripts/deploy.ts
+artifacts.sha256     hashes of the proving artifacts the deployed verifiers came from
 src/index.ts         the accessors
 ```
 
