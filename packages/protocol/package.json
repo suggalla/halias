@@ -13,6 +13,8 @@
     "circuits:setup": "npm run ceremony -- -c transact -p 17 --dev && npm run export-verifier -- -c transact",
     "circuits:setup:claim": "npm run ceremony -- -c transactClaim -p 17 --dev && npm run export-verifier -- -c transactClaim",
     "circuits:build": "npm run circuits:compile && npm run circuits:setup && npm run circuits:compile:claim && npm run circuits:setup:claim",
+    "artifacts:hash": "node scripts/publish-artifacts.mjs",
+    "artifacts:publish": "node scripts/publish-artifacts.mjs --upload",
     "test:fuzz": "forge test --root ../..",
     "test:all": "npm run test:hardhat && npm run test:fuzz",
     "analyze": "./scripts/analyze.sh contracts",
