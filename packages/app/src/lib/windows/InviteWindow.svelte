@@ -9,8 +9,10 @@
 	// the only onboarding path here that does not assume the recipient already has something.
 	//
 	// Creating sits with the alias's other actions because it spends the same thing they do —
-	// a note. Redeeming is the opposite: it needs no alias and no balance, so it lives in the
-	// top bar where someone holding only a code can reach it.
+	// a note. The wallet pays only the registration fee, which is a fixed public amount that
+	// says nothing about the invite; the value itself moves privately, so nothing on chain
+	// says what an invite is worth. Redeeming is the opposite: it needs no alias and no
+	// balance, so it lives in the top bar where someone holding only a code can reach it.
 
 	let amount = $state('');
 	let created = $state<{ inviteCode: string; amount: bigint } | null>(null);
@@ -44,8 +46,18 @@
 
 	// Re-read whenever the alias changes, since invites belong to a wallet's root and the
 	// screen is reachable from any of its aliases.
+	//
+	// Guarded on the alias, not merely on `selected` being set. `$clientState` is a store
+	// subscription, so the effect depends on the whole object and reruns on every emission —
+	// and `loadPending` goes through `run`, which emits twice and calls `refresh` in between.
+	// Unguarded, the effect fed itself: `loading` never cleared, `status` never left 'syncing',
+	// and the rescan behind it locked the rest of the UI. Same shape as HistoryView.
+	let loadedFor: string | null = null;
 	$effect(() => {
-		if ($clientState.selected) loadPending();
+		const current = $clientState.selected?.aliasHash ?? null;
+		if (current === loadedFor) return;
+		loadedFor = current;
+		if (current) loadPending();
 	});
 
 	async function reclaim(index: number) {
@@ -144,10 +156,10 @@
 			<input class="mono" bind:value={amount} placeholder="0.2" inputmode="decimal" disabled={busy} />
 		</label>
 		<p class="hint">
-			From this alias's shielded balance of {formatEther(source.balance)} ETH. Both the
-			registration fee and — if they have no ETH and need someone to submit for them — a
-			relay fee come out of this, so leave room for both. They choose the relay fee at
-			redemption, not you.
+			From this alias's shielded balance of {formatEther(source.balance)} ETH, so the amount
+			never appears on chain. Your wallet pays only the registration fee. A relay fee — if
+			they have no ETH and need someone to submit for them — comes out of the invite, so
+			leave room for it. They choose it at redemption, not you.
 		</p>
 
 		<button class="primary" disabled={busy} onclick={create}>
@@ -161,12 +173,20 @@
 	     claimer's change is addressed to their own alias and is indistinguishable from any
 	     other output, which is the point. -->
 	{#if pending.length > 0}
+		<!-- Wallet-scoped, and said so. Invite secrets come from the wallet's derivation root
+		     rather than from any one alias, so every alias lists the same invites — which read
+		     as one alias's invites leaking into another until the heading says otherwise. The
+		     destination is named for the same reason: reclaiming pays the alias selected now,
+		     not the one that funded it. -->
 		<section class="pending">
-			<h3>Waiting to be redeemed</h3>
+			<h3>Waiting to be redeemed — this wallet</h3>
 			<p class="hint">
-				Still yours until someone spends them. Taking one back returns its funds to this
-				alias — the registration fee it already paid is not recoverable, and whoever holds
-				the code can still redeem it first.
+				Invites belong to the wallet, not to one alias, so every alias of yours lists the
+				same ones. Still yours until someone spends them. Taking one back pays
+				{$clientState.selected?.name ?? 'the alias selected now'} — whichever alias funded
+				it — so it can move value between your own aliases. The registration fee it
+				already paid is not recoverable, and whoever holds the code can still redeem it
+				first.
 			</p>
 			<ul>
 				{#each pending as p (p.index)}

@@ -55,6 +55,7 @@ export const REGISTRY_ABI = [
   "function getRegistryRoot() external view returns (bytes32)",
   "function isKnownRegistryRoot(bytes32) external view returns (bool)",
   "function getSmtSiblings(uint32 slot) external view returns (bytes32[32] memory siblings)",
+  "function getAliasesByPrefix(uint16 prefix, uint256 offset, uint256 limit) external view returns (tuple(bytes32 aliasHash, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, bytes32 dataHash, uint32 pathKey)[] memory entries)",
   "function controller() external view returns (address)",
   "event AliasRegistered(bytes32 indexed aliasHash, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 leaf, bytes32 encryptionPubkey, uint32 slot)",
   "event AliasDataUpdated(bytes32 indexed aliasHash, bytes32 dataHash, bytes32 leaf)",
@@ -532,6 +533,45 @@ export async function lookupAlias(
     encryptionPubkey: BigInt(r.encryptionPubkey),
     dataHash:         BigInt(r.dataHash),
   };
+}
+
+/// One registration as the prefix index returns it.
+export interface PrefixEntry {
+  aliasHash: bigint;
+  spendingCommitment: bigint;
+  nullifierKeyHash: bigint;
+  encryptionPubkey: bigint;
+  dataHash: bigint;
+  /// Zero-based, already offset back by the contract — this is what getSmtSiblings takes,
+  /// not what aliasSlot stores.
+  pathKey: number;
+}
+
+/// Every registration sharing a prefix group, paged.
+///
+/// The privacy-preserving way to resolve a name. `aliases(aliasHash)` names one person to
+/// whichever node answers, and since names are published at registration the hash reverses
+/// trivially — on a send path that identifies the recipient of a payment that publishes
+/// nothing. This asks for a group instead, and which group says nothing about which member
+/// the caller came for.
+///
+/// Returns whole records, so resolving is one call. Following up with `aliases` per entry
+/// would put the hash back on the wire individually and undo the point.
+export async function getAliasesByPrefix(
+  registry: ethers.Contract,
+  prefix: number,
+  offset = 0,
+  limit = 256,
+): Promise<PrefixEntry[]> {
+  const rows = await registry.getAliasesByPrefix(prefix, offset, limit);
+  return rows.map((r: any) => ({
+    aliasHash:          BigInt(r.aliasHash),
+    spendingCommitment: BigInt(r.spendingCommitment),
+    nullifierKeyHash:   BigInt(r.nullifierKeyHash),
+    encryptionPubkey:   BigInt(r.encryptionPubkey),
+    dataHash:           BigInt(r.dataHash),
+    pathKey:            Number(r.pathKey),
+  }));
 }
 
 /// The tuple form of a Registration, in the order the domain declares it. Order matters:

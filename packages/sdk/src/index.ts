@@ -27,12 +27,13 @@ export {
   transact, register, acceptAlias, lookupAlias, claim,
   signUpdateAliasData, signOfferAlias, signCancelOffer,
   computeParamsHash, encodeRegistration, buildTransactParams, registrationCommitment,
-  ZERO_TRANSACT_PARAMS, NO_RELAYER,
+  ZERO_TRANSACT_PARAMS, NO_RELAYER, getAliasesByPrefix,
 } from "./contract";
-export type { TransactParams, RelayerFee, Registration } from "./contract";
+export type { TransactParams, RelayerFee, Registration, PrefixEntry } from "./contract";
 
 export { Halias } from "./halias";
-export { normalizeAlias, fullAlias, isValidAlias, InvalidAliasError, AliasTakenError } from "./alias";
+export { normalizeAlias, fullAlias, isValidAlias, InvalidAliasError, AliasTakenError,
+  aliasPrefix, ALIAS_PREFIX_BITS } from "./alias";
 export { encodeRelayBlob, decodeRelayBlob, quoteRelay, submitRelay, suggestRelayFee } from "./relay";
 export type { RelayPayload, RelayQuote } from "./relay";
 export type { HistoryEntry, PrivacyContext } from "./halias";

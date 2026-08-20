@@ -206,7 +206,9 @@ contract HaliasRegistry is SMTRegistry {
         // an alias — the guard above makes that exact — while `_smtUpdate` also runs for
         // rotations and data changes, which must not append a second copy.
         _aliasesByPrefix[_aliasPrefix(aliasHash)].push(aliasHash);
-        emit AliasRegistered(aliasHash, spendingCommitment, nullifierKeyHash, leaf, encryptionPubkey, aliasSlot[aliasHash]);
+        emit AliasRegistered(
+            aliasHash, spendingCommitment, nullifierKeyHash, leaf, encryptionPubkey, aliasSlot[aliasHash]
+        );
     }
 
     // {reassign} is the only way an alias's keys change, and it replaces all three at once:

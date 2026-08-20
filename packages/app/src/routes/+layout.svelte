@@ -124,22 +124,40 @@
 	<main>
 		{#if step === 1}
 			<section class="panel center">
-				<h1>Private payments with trust</h1>
+				<h1>Private payments made simple</h1>
+				<!-- "or" rather than "and" between the assets: it thins out a sentence that had
+				     three ands in it, and it is the truer word — one transaction moves one asset,
+				     never both. That leaves the one "and" that is doing structural work, holding
+				     the two halves of the pitch together. -->
+				<!-- "sharing a name", not "a registered name": the sentence covers receiving as
+				     well as sending, and receiving means handing someone your name instead of an
+				     address. A static noun only describes the send half. "Registered" also went —
+				     the claim below shows a name and guarantees it, so the lede was spending its
+				     last word on something the next line proves. -->
 				<p class="lede">
-					Register a name, send and receive ETH. Every transfer provably goes between
-					registered identities — but which identities stay hidden.
+					Send and receive ETH or ERC-20s with the expectation of privacy and the
+					simplicity of sharing a name.
 				</p>
-				<!-- The second half of the pitch, and the half that is actually unusual. Privacy
-				     tools are normally unreadable twice over: you send to a hex string you can only
-				     verify by comparing characters, and the tool will not tell you what it leaks.
-				     Both are architectural here rather than cosmetic — names are in the circuit, and
-				     the leaks are enumerable because there is no server and no relayer in the trust
-				     path — so saying it on the front page is a claim we can stand behind. -->
-				<p class="lede">
-					Built to be read. You pay a name, not forty hex characters you have to trust you
-					copied correctly, and every screen says plainly what it makes public and what it
-					does not.
-				</p>
+				<!-- Four, each holding one line at this width. Servers and admin keys are one
+				     claim, not two — both say the same thing, that there is nothing between you
+				     and the contracts. The rest of the pitch is in About; none of it is a reason
+				     to connect a wallet in the first ten seconds.
+				     "Guaranteed to be registered" is literal: registry membership is a spend
+				     condition in the circuit, so a proof naming an unregistered recipient does
+				     not verify. It is not a lookup the client does as a courtesy. -->
+				<ul class="pitch">
+					<!-- "A transfer reveals only that it happened" is the precise claim and the
+					     reason it is not "amounts never touch the chain". Deposits and withdrawals
+					     move value across the pool boundary and must show it; only transfers
+					     between names are fully hidden. Overstating the easy half is how a privacy
+					     tool loses the argument. -->
+					<li><strong>Confidential transfers.</strong> A transfer reveals only that it happened.</li>
+					<li><strong>No servers, no admin keys.</strong> Just contracts, proofs, and your keys.</li>
+					<li><strong>One-time registration fee.</strong> No transaction fees, no scam-coins.</li>
+					<li><strong>No clunky addresses.</strong> Pay a name like <code>alice.hls</code>,
+						with the guarantee it's registered.</li>
+					<li><strong>Decoupled from your wallet.</strong> Pay fees with any EOA, swap it any time.</li>
+				</ul>
 				<Onboarding />
 				{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
 			</section>
@@ -259,7 +277,20 @@
 	.center { display: flex; flex-direction: column; gap: 1rem; align-items: flex-start;
 		margin-top: 3rem; }
 	h1 { margin: 0; font-size: 1.6rem; line-height: 1.2; text-wrap: balance; }
-	.lede { margin: 0; opacity: 0.85; max-width: 30rem; line-height: 1.5; }
+	.lede { margin: 0; opacity: 0.85; max-width: 32rem; line-height: 1.5; }
+	/* Bulletless: a marker column would pull the text off the left edge every other element
+	   on this screen shares, and the bold lead already marks where each item starts.
+	   Full opacity rather than 0.85 — dimming small text on top of shortening it was most of
+	   why four short claims still read as a grey block. The dimming lives on the trailing
+	   half of each line instead, so the claim itself stays crisp. */
+	.pitch { margin: 0; padding: 0; list-style: none; max-width: 32rem;
+		display: flex; flex-direction: column; gap: 0.45rem;
+		font-size: 0.92rem; line-height: 1.4; color: var(--text-dim); }
+	.pitch strong { color: var(--text-bright); font-weight: 600; }
+	/* The one concrete name on this screen. Mono and bright so it reads as a thing you would
+	   type rather than as emphasis — an abstract "a name" leaves people guessing at the shape,
+	   and the shape is the whole difference from an address. */
+	.pitch code { font-family: var(--font-mono); font-size: 0.95em; color: var(--text-bright); }
 	/* Look lives in app.css — this only places it. */
 	.tabs { margin-bottom: 1rem; }
 	.err { color: var(--bad); font-size: 0.85rem; }

@@ -25,9 +25,16 @@ describe("per-alias key derivation", () => {
       .to.not.equal(ethers.hexlify(b.encryption.publicKey));
   });
 
-  it("is deterministic — the same index always rebuilds the same alias", () => {
-    expect(keysFor(3).spendingCommitment).to.equal(keysFor(3).spendingCommitment);
-    expect(ethers.hexlify(keysFor(3).encryption.publicKey))
+  it("rebuilds the same alias from the phrase alone, which is what recovery means", () => {
+    // Re-derived from the mnemonic rather than from the shared `root` above. Calling
+    // deriveKeysFromRoot twice on one root only shows it holds no in-process state; recovery
+    // is the claim that a phrase typed into a different device on a different day rebuilds
+    // the same alias, and that needs the derivation walked from the top.
+    const fresh = deriveKeysFromRoot(
+      rootFromMnemonic("test test test test test test test test test test test junk"), 3);
+    expect(fresh.spendingCommitment).to.equal(keysFor(3).spendingCommitment);
+    expect(fresh.nullifierKey).to.equal(keysFor(3).nullifierKey);
+    expect(ethers.hexlify(fresh.encryption.publicKey))
       .to.equal(ethers.hexlify(keysFor(3).encryption.publicKey));
   });
 

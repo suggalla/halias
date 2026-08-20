@@ -9,8 +9,11 @@ cache/
 artifacts/
 typechain-types/
 
-# circuit artifacts (compiled output + ceremony)
-circuits/out/
+# Circuit artifacts (compiled output + ceremony). `**/` is load-bearing: a pattern with a
+# slash anywhere but the end is anchored to this file's directory, so plain `circuits/out/`
+# only ever matched a root-level one and the compiled wasm sat in git for months while the
+# README said it was ignored. Third time this file has made that mistake.
+**/circuits/out/
 
 # sveltekit
 .svelte-kit/
@@ -63,3 +66,8 @@ coverage.json
 
 # Proof artifacts are copied from packages/protocol at build time
 static/artifacts/
+
+# Claude Code personal settings. `settings.json` is shared project config and belongs in
+# git; `settings.local.json` is per-machine — an allowlist full of absolute paths from
+# whoever's checkout it is.
+.claude/settings.local.json

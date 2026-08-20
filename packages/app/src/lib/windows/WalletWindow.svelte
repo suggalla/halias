@@ -163,8 +163,16 @@
 		offersLoaded = true;
 	}
 
+	// Keyed on the address for the same reason InviteWindow is keyed on the alias: reading
+	// `$clientState` subscribes to the whole store, so without a guard this refetched the
+	// offer list on every unrelated state change. It does not loop — `loadOffers` stays off
+	// `run` and so emits nothing itself — but it was a chain read per keystroke elsewhere.
+	let offersFor: string | null = null;
 	$effect(() => {
-		if ($clientState.address) loadOffers();
+		const current = $clientState.address ?? null;
+		if (current === offersFor) return;
+		offersFor = current;
+		if (current) loadOffers();
 	});
 
 	async function takeOffer(o: Offer) {
@@ -232,7 +240,7 @@
 	</section>
 
 	<section>
-		<h3>Register another</h3>
+		<h3>Register Alias</h3>
 		<div class="row">
 			<input
 				bind:value={name}

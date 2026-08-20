@@ -132,7 +132,7 @@ describe("capacity limits", function () {
   // ── the registry's last slot ────────────────────────────────────────────────
 
   describe("registry", function () {
-    let registry: any, registrar: any;
+    let registry: any;
 
     async function deploySmallRegistry() {
       const [reg] = await ethers.getSigners();
@@ -145,7 +145,7 @@ describe("capacity limits", function () {
     }
 
     beforeEach(async function () {
-      ({ registry, registrar } = await loadFixture(deploySmallRegistry));
+      ({ registry } = await loadFixture(deploySmallRegistry));
     });
 
     const keys = () => [randField(), randField(), randField()] as const;
