@@ -1,10 +1,10 @@
 import { ethers } from "ethers";
-import { normalizeAlias, AliasTakenError } from "./alias";
+import { normalizeAlias, AliasTakenError, aliasPrefix } from "./alias";
 import { deriveKeysFromRoot, poseidonHash } from "./crypto";
 import { buildEntry, computeNullifier, randomBlinding, OwnedEntry, ETH_TOKEN_ADDRESS, POOL_LEVELS, FIELD_PRIME } from "./entry";
 import { PoolTrees } from "./merkle";
 import { aliasHashToSmtKey } from "./smt";
-import { proveTransact, dummyInput, dummyOutput, TransactOutput, POOL_INPUTS } from "./proof";
+import { proveTransact, dummyOutput, TransactOutput, POOL_INPUTS } from "./proof";
 import { findMyOutputs, Output } from "./events";
 import { deriveInviteKeys, inviteSecretAt, InviteKeys, encodeInviteCode } from "./invite";
 import { encodeViewKey, viewKeysFrom } from "./viewkey";
@@ -19,7 +19,6 @@ import {
   signCancelOffer as contractSignCancelOffer,
   signUpdateAliasData as contractSignUpdateAliasData,
   acceptAlias as contractAcceptAlias,
-  lookupAlias as contractLookupAlias,
   claim as contractClaim,
   registrationTuple,
   encodeRegistration,
@@ -27,6 +26,7 @@ import {
   TransactParams,
   ZERO_TRANSACT_PARAMS,
   NO_RELAYER,
+  getAliasesByPrefix,
 } from "./contract";
 
 
@@ -307,7 +307,6 @@ export class Halias extends HaliasCore {
     const { out: out1, commitment: comm1 } = this.filler(tokenAddress);
 
     const paramsHash = computeParamsHash(ZERO_TRANSACT_PARAMS, encryptedOutput0, "0x", BigInt(this.config.chainId), this.config.poolAddress);
-    const anchor       = this.poolAnchor();
     const registryRoot = to.proof.registryRoot;
 
     const { proofBytes } = await proveTransact({
@@ -979,9 +978,16 @@ export class Halias extends HaliasCore {
     }
 
     // Not in the scan: registered after this client's cursor, or read from a cache written
-    // before the event carried `nullifierKeyHash`. Falling back keeps lookups working rather
-    // than failing on a stale cache — a rescan repopulates it and the leak stops.
-    const r = await contractLookupAlias(this.registry, aliasHash);
+    // before the event carried `nullifierKeyHash`.
+    //
+    // Asked for by group rather than by name. The old fallback called `aliases(aliasHash)`,
+    // which is the targeted read the paragraph above exists to avoid — rare, but rarity is
+    // not privacy, and the case it fires in is a freshly registered recipient, which is
+    // exactly when someone is about to be paid. The group is 12 bits of the hash, so the
+    // node learns one of 4096 buckets and nothing about which member was wanted.
+    const group = await getAliasesByPrefix(this.registry, aliasPrefix(aliasHash));
+    const hit = group.find((e) => e.aliasHash === aliasHash);
+    const r = hit ?? { spendingCommitment: 0n, nullifierKeyHash: 0n, encryptionPubkey: 0n, dataHash: 0n };
     if (r.spendingCommitment === 0n) throw new Error(`"${cleanAlias}.hls" is not registered`);
     return {
       spendingCommitment:   r.spendingCommitment,
@@ -1296,40 +1302,80 @@ export class Halias extends HaliasCore {
     await regTx.wait();
     await this.refresh();
 
-    const entry = buildEntry(temp.spendingCommitment, temp.nullifierKeyHash, temp.blinding, amount, ETH_TOKEN_ADDRESS);
+    // Funded from notes, not from the wallet. This used to be shaped like a deposit — no
+    // inputs, a positive publicAmount, the amount as msg.value — which put the invite's
+    // value in plaintext on chain, two blocks after a registration that names the invite.
+    // Anyone reading the chain learned which address funded which invite and for how much,
+    // which is the one thing the pool exists to hide. As a transfer, publicAmount is zero and
+    // nothing about the amount is visible.
+    //
+    // The registration fee stays on the wallet deliberately: it is a fixed public amount that
+    // says nothing about the invite, and paying it from a note would tie an operational EOA
+    // to pool activity for no gain.
+    const keys                 = this.keys!;
+    const selfNullifierKeyHash = this.myNullifierKeyHash();
+
+    const spend  = this.selectEntries(amount, ETH_TOKEN_ADDRESS);
+    const inputs = this.buildInputs(spend);
+
+    // Both proofs are read after the registration above landed, so the invite's leaf is in
+    // the tree they describe. `send` takes the root from the self proof the same way — the
+    // two have to agree, and a root from one block against siblings from another verifies
+    // against nothing.
+    const tempProof = await this.registryProof(temp.spendingCommitment, "Invite account");
+    const selfProof = await this.selfRegistryProof();
+
+    // The blinding is `temp.blinding`, not random: the claimer recomputes it from the secret
+    // to find and spend this note. A random one would strand the funds.
+    const changeBlinding = randomBlinding();
+    const changeAmount   = inputs.total - amount;
+
+    const inviteEntry = buildEntry(temp.spendingCommitment, temp.nullifierKeyHash, temp.blinding, amount, ETH_TOKEN_ADDRESS);
+    const changeEntry = buildEntry(keys.spendingCommitment, selfNullifierKeyHash, changeBlinding, changeAmount, ETH_TOKEN_ADDRESS);
 
     // Encrypted to the temp key derived from the secret, so holding the secret is
     // sufficient to discover and decrypt the note — nothing else is transmitted.
-    const encryptedOutput0 = this.sealNote(temp.blinding, amount, temp.encryption.publicKey);
+    const inviteBlob = this.sealNote(temp.blinding, amount, temp.encryption.publicKey);
+    const changeBlob = this.sealNote(changeBlinding, changeAmount);
 
-    const { out: out1, commitment: comm1 } = this.filler(ETH_TOKEN_ADDRESS);
+    const inviteOut: TransactOutput = {
+      spendingCommitment: temp.spendingCommitment, nullifierKeyHash: temp.nullifierKeyHash,
+      registrySlot: tempProof.registrySlot, blinding: temp.blinding, amount,
+      aliasHash: tempAliasHash, dataHash: 0n, registrySiblings: tempProof.siblings,
+    };
+    const changeOut: TransactOutput = {
+      spendingCommitment: keys.spendingCommitment, nullifierKeyHash: selfNullifierKeyHash,
+      registrySlot: selfProof.registrySlot, blinding: changeBlinding, amount: changeAmount,
+      aliasHash: selfProof.aliasHash, dataHash: selfProof.dataHash,
+      registrySiblings: selfProof.siblings,
+    };
 
-    const pad = this.padInputs([], this.poolAnchor());
-    const anchor = this.poolAnchor();
-    const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, encryptedOutput0, "0x", BigInt(this.config.chainId), this.config.poolAddress);
-    const tempProof    = await this.registryProof(temp.spendingCommitment, "Invite account");
-    const registryRoot = tempProof.registryRoot;
-    const siblings     = tempProof.siblings;
+    // Shuffled like a send, so output order does not say which commitment is the invite.
+    // Safe because findInviteNote matches by decryption and commitment rather than by index.
+    const flip = Math.random() < 0.5;
+    const [out0, out1]   = flip ? [changeOut, inviteOut] : [inviteOut, changeOut];
+    const [comm0, comm1] = flip ? [changeEntry.commitment, inviteEntry.commitment]
+                                : [inviteEntry.commitment, changeEntry.commitment];
+    const [blob0, blob1] = flip ? [changeBlob, inviteBlob] : [inviteBlob, changeBlob];
+
+    const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, blob0, blob1, BigInt(this.config.chainId), this.config.poolAddress);
+    const registryRoot = selfProof.registryRoot;
 
     const { proofBytes } = await proveTransact({
-      poolRoot: pad.poolRoot, treeNumber: pad.treeNumber, registryRoot, publicAmount: amount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
-      inputNullifiers:   pad.inputNullifiers,
-      outputCommitments: [entry.commitment, comm1],
-      inputs: pad.inputs,
-      outputs: [
-        { spendingCommitment: temp.spendingCommitment, nullifierKeyHash: temp.nullifierKeyHash, blinding: temp.blinding,
-          amount, aliasHash: tempAliasHash, registrySlot: tempProof.registrySlot,
-          dataHash: 0n, registrySiblings: siblings },
-        out1,
-      ],
+      poolRoot: inputs.poolRoots, treeNumber: inputs.treeNumbers,
+      registryRoot, publicAmount: 0n, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
+      inputNullifiers:   inputs.nullifiers,
+      outputCommitments: [comm0, comm1],
+      inputs:            inputs.inputs,
+      outputs: [out0, out1],
     }, this.getArtifacts());
 
     const tx = await contractTransact(
-      this.pool, pad.poolRoot, pad.treeNumber, registryRoot, amount, ETH_TOKEN_ADDRESS,
-      pad.inputNullifiers,
-      [entry.commitment, comm1],
+      this.pool, inputs.poolRoots, inputs.treeNumbers, registryRoot, 0n, ETH_TOKEN_ADDRESS,
+      inputs.nullifiers,
+      [comm0, comm1],
       ZERO_TRANSACT_PARAMS,
-      encryptedOutput0, "0x", proofBytes, amount,
+      blob0, blob1, proofBytes,
     );
     return { txHash: await this.settle(tx), secret, inviteCode: encodeInviteCode(secret), amount };
   }

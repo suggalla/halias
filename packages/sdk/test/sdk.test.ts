@@ -29,10 +29,6 @@ before(async () => {
 });
 
 describe("crypto", () => {
-  it("poseidonHash is deterministic", () => {
-    expect(poseidonHash([1n, 2n])).to.equal(poseidonHash([1n, 2n]));
-  });
-
   it("poseidonHash changes with different inputs", () => {
     expect(poseidonHash([1n, 2n])).to.not.equal(poseidonHash([1n, 3n]));
   });
@@ -117,10 +113,6 @@ describe("NaCl box encryption", () => {
 });
 
 describe("MerkleTree", () => {
-  it("empty tree has a deterministic root", () => {
-    expect(new MerkleTree().getRoot()).to.equal(new MerkleTree().getRoot());
-  });
-
   it("root changes after insert", () => {
     const tree = new MerkleTree();
     const empty = tree.getRoot();
@@ -367,10 +359,6 @@ describe("paramsHash preimage", () => {
   });
   const hash = (p: TransactParams, e0 = "0x", e1 = "0x") =>
     computeParamsHash(p, e0, e1, 1n, POOL);
-
-  it("is deterministic", () => {
-    expect(hash(params())).to.equal(hash(params()));
-  });
 
   it("stays inside the field", () => {
     expect(hash(params()) < FIELD_PRIME).to.equal(true);

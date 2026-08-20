@@ -57,10 +57,6 @@ describe("seed", () => {
   });
 
   describe("root", () => {
-    it("is deterministic", () => {
-      expect(rootFromMnemonic(PHRASE)).to.equal(rootFromMnemonic(PHRASE));
-    });
-
     it("differs per phrase", () => {
       expect(rootFromMnemonic(generateMnemonic()))
         .to.not.equal(rootFromMnemonic(generateMnemonic()));

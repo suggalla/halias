@@ -3,6 +3,7 @@ import { ethers } from "hardhat";
 import { deployStack, type Stack } from "./helpers/stack";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { randField } from "./helpers/field";
+import { aliasPrefix, ALIAS_PREFIX_BITS } from "halias-sdk";
 
 // The prefix index, and the batch sibling read that pairs with it.
 //
@@ -15,19 +16,18 @@ import { randField } from "./helpers/field";
 // k-anonymous queries over different partitions would intersect, and the intersection is much
 // smaller than either — so these tests check the correspondence, not just that each works.
 
-const PREFIX_BITS = 12;
-
-/// The prefix a client computes locally. The contract's copy is private on purpose — as an
-/// external pure helper it would be callable with one alias hash, which is the targeted
-/// question this whole mechanism exists to avoid.
-const prefixOf = (aliasHash: string) =>
-  Number(BigInt(aliasHash) >> BigInt(256 - PREFIX_BITS));
+/// The prefix a client computes locally, imported from the SDK rather than reimplemented
+/// here. The contract's copy is private on purpose — as an external pure helper it would be
+/// callable with one alias hash, which is the targeted question this whole mechanism exists
+/// to avoid — so the client's copy is the only other place the rule exists, and a test that
+/// reimplements it proves the contract agrees with the test rather than with the client.
+const prefixOf = (aliasHash: string) => aliasPrefix(BigInt(aliasHash));
 
 describe("registry prefix index", function () {
   this.timeout(120000);
 
   let s: Stack;
-  let registered: { hash: string; pk: string; nkh: string; enc: string }[] = [];
+  const registered: { hash: string; pk: string; nkh: string; enc: string }[] = [];
 
   before(async function () {
     await initPoseidon();
@@ -53,6 +53,14 @@ describe("registry prefix index", function () {
       registered.push({ hash, pk, nkh, enc });
     }
     await ethers.provider.send("hardhat_stopImpersonatingAccount", [controllerAddr]);
+  });
+
+  // The one assertion that keeps the client and the contract from drifting apart. The rule
+  // exists in exactly two places — HaliasRegistry._aliasPrefix, which is private, and the
+  // SDK's aliasPrefix — and a disagreement is silent: the client fetches a group the alias is
+  // not in, and a registered name reads as unregistered on the send path.
+  it("agrees with the contract on how wide a prefix is", async function () {
+    expect(Number(await s.registry.ALIAS_PREFIX_BITS())).to.equal(ALIAS_PREFIX_BITS);
   });
 
   it("puts every alias in the group its hash selects", async function () {

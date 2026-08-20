@@ -1,12 +1,53 @@
 # halias
 
-Private payments to a name you can read. Register `alice.hls`, send and receive ETH or ERC-20,
-and every transfer provably moves between registered identities without revealing which ones.
+**Private payments made simple. No admin keys, no clunky addresses.**
+
+Send ETH and ERC-20s privately, to a recipient you can actually name — both guaranteed by
+zero-knowledge proofs rather than by trusting an operator.
 
 *halias = Hal (Finney) + alias*
 
 **This is unaudited testnet software with a single-contributor trusted setup. Do not put real
 money in it.** See [Status](#status).
+
+## What you get
+
+- **No servers.** Purely contracts and proofs. The client is a static site you can run from
+  IPFS, a web host or your own laptop; there is no backend holding keys, no API between you
+  and the chain, and no operator whose honesty you are relying on.
+- **No admin keys.** Your shielded funds and registered aliases are 100% owned by your keys.
+  The contract holding every deposit has one mutating function, no owner and no upgrade path —
+  nothing that can pause, freeze, drain or rescue it, for us or anyone else.
+- **One-time name registration fee. That's it.** No transaction fees, no renewals, no expiry,
+  no scam-coins — there is no protocol token at all. The fee is paid to the name contract,
+  which holds no user funds; the pool your money sits in has no fee mechanism and never takes
+  a cut of a transfer.
+- **No clunky addresses.** Pay `alice.hls`. Address poisoning needs you to misread a hex
+  string, and here there is no hex string to misread.
+- **Privacy you can expect, to a recipient you know.** Amounts and balances stay inside the
+  shielded pool, while registry membership is a spend condition enforced in the circuit — so
+  the pool will only ever pay a registered `.hls` alias, and funds cannot vanish into a typo.
+  Both halves are proved, not promised.
+- **Aliases and pool notes are decoupled from your EOA.** Ownership lives in keys derived from
+  one recovery phrase, never in the wallet that broadcasts. Pick whichever EOA you like to pay
+  the fees, switch it whenever, or use a different one every time — your balance does not
+  move, because it was never attached to one.
+- **Relayers remove your fee footprint.** Hand a proved transaction to someone else and let
+  them take their fee out of the transaction itself. You can spend from an EOA that has never
+  held ETH, so there is no funding trail leading back to you.
+- **Invites onboard from nothing.** Fund a code that registers a new name and pays its own
+  registration fee on redemption. Someone joins on a completely fresh EOA, with no prior
+  balance and no history.
+- **Many aliases from one phrase, unlinkable to each other.** Aliases come from derivation
+  indices, so `work.hls` and `personal.hls` can be the same person with nothing on chain to
+  say so. Keep them separate, and nobody can join them up.
+- **The name is yours to keep or sell.** Each alias is an ERC-721. Transfer is a two-step
+  offer-then-accept, so the new owner installs their own keys — a seller cannot hand over the
+  token while quietly keeping keys that still receive its payments. Rotating your own keys is
+  that same handover made to yourself: all three replaced, the registry slot kept, and
+  relayable, so losing access to a key does not mean losing the name.
+- **A view key, not your spending key.** Show an accountant your whole history without
+  granting them the ability to spend a wei of it.
 
 ## Why it exists
 
@@ -28,14 +69,35 @@ whose recipients are opaque keys has no name available to show you in the first 
 
 ## Structure
 
-npm workspaces. `app → sdk → protocol`.
+Four npm workspaces. Dependencies run one way, `app → sdk → protocol → deployments`, and
+nothing points back — the contracts do not know the app exists.
 
-- `packages/protocol` — contracts, the circom circuit, ceremony tooling, deploy scripts.
-- `packages/sdk` — TypeScript client and the bundled CLI: proof generation, note scanning,
-  key derivation.
-- `packages/app` — SvelteKit frontend, static-built so it can be served from IPFS.
-- `packages/deployments` — per-network addresses, written by the deploy script and read by
-  the other three.
+```
+halias/
+├─ packages/protocol/      contracts, circuits, ceremony, deploy scripts
+│  ├─ contracts/           HaliasPool, HaliasRegistry, HaliasController, HaliasDeployer
+│  ├─ circuits/            transact.circom, transactClaim.circom
+│  ├─ src/                 circuit-agnostic ceremony + verifier-export tooling
+│  ├─ scripts/             deploy, preflight, gasbench, e2e-live
+│  ├─ test/                hardhat suites, including real-proof E2E
+│  └─ docs/                design records — the reasoning behind each decision
+├─ packages/sdk/           TypeScript client library + the `halias` CLI
+│  └─ src/                 keys, notes, proving, scanning, contract calls, relay
+├─ packages/app/           SvelteKit frontend, static-built
+│  └─ src/lib/             wallet plumbing and the screens
+└─ packages/deployments/   per-network contract addresses
+   └─ networks/            one JSON per chain, written by the deploy script
+```
+
+| Package | Role | Depends on |
+|---|---|---|
+| [`protocol`](packages/protocol/README.md) | The trust boundary. Contracts, the circom circuits, the trusted setup, and the deploy scripts. Everything that has to be right. | — |
+| [`sdk`](packages/sdk/README.md) | The whole client. Key derivation, note encryption, proof generation, event scanning, contract calls — and the CLI, which is a thin shell over the same API the app uses. | `deployments` |
+| [`app`](packages/app/README.md) | A browser front end for the SDK. No logic of its own beyond wallet plumbing; static-built so it can be served from IPFS or any dumb host. | `sdk` |
+| [`deployments`](packages/deployments/README.md) | Contract addresses per chain, written by the deploy script and read by everything else, so no address is ever hardcoded in two places. | — |
+
+Each package has its own README covering how to build, test and work inside it. This one
+covers the system and the path from a fresh clone to a working local stack.
 
 ## Architecture
 
@@ -49,9 +111,8 @@ HaliasController ──writes──> HaliasRegistry <──reads── HaliasPoo
 ```
 
 Their dependencies form a cycle — the pool reads the registry, the controller writes to it, and
-the registry must name its controller before that contract exists. CREATE2 cannot break it,
-because a CREATE2 address depends on the constructor arguments. Plain CREATE does not, so the
-deployer computes its own third address, closes the loop, and asserts it was right.
+the registry must name its controller before that contract exists. The deployer computes the
+third address ahead of deploying it, closes the loop, and asserts it was right.
 
 ### HaliasPool
 
@@ -96,55 +157,115 @@ Why four inputs and not more is recorded in
 [circuit-shape.md](packages/protocol/docs/circuit-shape.md), along with what wider shapes
 measured at and when that decision stops being reversible.
 
-## Build and test
+## Getting started
+
+### Prerequisites
+
+| | | |
+|---|---|---|
+| Node | 20+ | `npm install` |
+| [circom](https://docs.circom.io/getting-started/installation/) | 2.2+ | builds the circuits. Rust toolchain, then `cargo install --path circom` |
+| [Foundry](https://book.getfoundry.sh/getting-started/installation) | any | `npm run test:fuzz` only. Everything else works without it |
+
+circom is the one that catches people out. It is a Rust binary, not an npm package — the
+`circom` on npm is an abandoned 0.5.x and will fail with parse errors on these circuits.
+
+### From a fresh clone
 
 ```bash
 npm install
-npm run build --workspaces
+npm run build                       # deployments + sdk
 
 cd packages/protocol
-npm run compile          # contracts
-npm run circuits:build   # compile the circuit, run the ceremony, export the verifier
-npm run test:hardhat     # 202 tests, including E2E with real Groth16 proofs
-npm run test:fuzz        # Foundry
+npm run compile                     # contracts
+npm run circuits:build              # ~10 min: compiles both circuits, runs a dev
+                                    # ceremony, exports both verifiers
+npm run test:hardhat                # 228 tests, including E2E with real Groth16 proofs
 ```
 
-Circuit artifacts are gitignored — they are 40MB+, and the proving key is generated rather than
-authored. A locally generated key will not match a deployed verifier, because the verifier
-contract is exported *from* the key.
+`circuits:build` is the slow step and the one everything else waits on. Circuit artifacts are
+gitignored — they are 40MB+ and the proving key is generated rather than authored — so a fresh
+clone has to produce them before any suite that makes a real proof can run. A locally generated
+key will not match a deployed verifier, because the verifier contract is exported *from* the key.
 
-`scripts/e2e-live.ts` is the only suite that drives the SDK against a real node over RPC —
-chunked `eth_getLogs`, gas estimation, receipt polling. It catches the class of bug the
-in-process suites structurally cannot:
+### Run it locally
 
 ```bash
-npx hardhat node                                          # terminal 1
-npx hardhat run scripts/deploy.ts --network localhost
+npx hardhat node                                        # terminal 1
+npx hardhat run scripts/deploy.ts --network localhost   # terminal 2
+```
+
+That writes `packages/deployments/networks/localhost.json`, which the SDK and the app both
+read. Then either front end:
+
+```bash
+npm run halias -- balance                 # CLI, from the repo root
+npm --workspace halias-app run dev        # browser, at localhost:5173
+```
+
+The local deploy also puts up a 6-decimal mock USDC, so the multi-asset paths are exercisable
+rather than theoretical — 18 decimals is the case that agrees with a hardcoded `parseEther` by
+accident, and hides the bug worth catching.
+
+### The full suite
+
+```bash
+npm run check                             # typecheck + lint, whole repo
+npm test                                  # every workspace's own tests
+
+cd packages/protocol
+npm run test:fuzz                         # Foundry
 RPC_URL=http://127.0.0.1:8545 npx hardhat run scripts/e2e-live.ts --network localhost
 ```
 
-157 checks. The local deploy also puts up a 6-decimal mock USDC, so the multi-asset paths are
-exercisable rather than theoretical — 18 decimals is the case that agrees with a hardcoded
-`parseEther` by accident, and hides the bug worth catching.
+`e2e-live.ts` is the only suite that drives the SDK against a real node over RPC — chunked
+`eth_getLogs`, gas estimation, receipt polling. It catches the class of bug the in-process
+suites structurally cannot, and it needs a node and a deploy first. 157 checks.
 
 ## Using it
 
 ```bash
-npx halias register alice.hls
-npx halias deposit 0.5
-npx halias send bob.hls 0.5
-npx halias withdraw 0xAddress 0.5
-npx halias balance
-npx halias consolidate
+npm run halias -- register alice.hls
+npm run halias -- deposit 0.5
+npm run halias -- send bob.hls 0.5
+npm run halias -- withdraw 0xAddress 0.5
+npm run halias -- balance
+npm run halias -- consolidate
 ```
 
+Nothing is published to npm, so from a clone the CLI runs through the root script above, or
+directly as `node packages/sdk/dist/cli.js`. `npm run halias -- help` lists every command.
 Every value command takes `--token <address>`. Decimals are read from the token contract rather
 than assumed, so a 6-decimal stablecoin behaves the same as an 18-decimal one.
 
-A user holds two things: **a recovery phrase, and a name.** The phrase carries the note keys and
-never signs anything. A connected EVM wallet broadcasts and pays gas and never sees the phrase.
-They are deliberately separate secrets and the onboarding refuses to merge them — deriving note
-keys from a wallet signature was removed as phishable and must not come back.
+## Keys and ownership
+
+A user holds two things, and keeping them apart is the design.
+
+**One recovery phrase owns everything.** A single BIP-39 mnemonic derives the keys for every
+alias you hold and for every note in the pool — spending keys, nullifier keys, encryption
+keys, all of it. Back up the phrase and you have backed up your aliases and your balance
+together. It never signs a transaction and never touches the chain.
+
+**Any EOA can pay the gas.** The connected wallet is a broadcaster and nothing else. It does
+not own your notes, cannot spend them, and is not recorded as their owner anywhere — ownership
+lives entirely in the mnemonic-derived keys the circuit checks. So the wallet is
+interchangeable: connect MetaMask today and a hardware wallet tomorrow, use a fresh EOA for
+every transaction, or borrow one. Your balance and your aliases do not move, because they were
+never attached to it. That also means the gas payer and the fund owner need not be the same
+person.
+
+**Or pay no gas at all.** A user holding notes but no ETH can hand the transaction to someone
+else. The prover names a relayer and a fee inside `paramsHash`, and the pool pays that address
+out of the transaction itself. Because the fee is bound into the proof, a submitter can alter
+neither the recipient nor the amount — and anyone who takes the payload other than the named
+relayer pays gas and receives nothing. There is no incentive to steal it and no way to redirect
+it, so the payload can travel over any channel: a message, a QR code, a public board, with no
+trust in the carrier. `--relayer <addr> --relayer-fee <eth>` on any value command.
+
+The two secrets stay separate and the onboarding refuses to merge them. Deriving note keys
+from a wallet signature was removed as phishable and must not come back — see
+[key-management.md](packages/protocol/docs/key-management.md).
 
 ## Status
 
@@ -164,9 +285,8 @@ because transactions are opaque, nobody could tell afterwards whether they had.
 ## Roadmap
 
 - **Proof of innocence** — a Railgun-style provenance proof, published by independent parties
-  and honoured by relayers rather than enforced by the pool. Building enforcement into
-  `transact` would hand the deployer a freeze key over user funds, which is precisely what the
-  contract split exists to prevent.
+  and honoured by relayers. It stays outside the pool, which has no key that can freeze funds
+  and is not getting one.
 - **Attestation circuits** — prove statements about an alias's `dataHash` ("registered more
   than six months", "over 18") without revealing the hash or the alias.
 - **Privacy score** — warn about timing correlation and small anonymity sets before a
@@ -206,15 +326,14 @@ already taken, in more detail than the roadmap above.
 - Poseidon and comparators from [circomlib](https://github.com/iden3/circomlib) (GPL-3.0)
 - Groth16 setup and verifier export via [snarkjs](https://github.com/iden3/snarkjs) (GPL-3.0)
 
-Reviewed against those foundations rather than merely alongside them: published findings from
-the Semaphore audit and World ID's root-history implementation were checked against this code,
-and both real bugs found in the most recent review came from that comparison rather than from
-re-reading our own contracts.
+Published findings from the Semaphore audit and World ID's root-history implementation were
+checked against this code. Both real bugs in the most recent review came out of that comparison
+rather than from re-reading our own contracts.
 
-Keys here are Poseidon hashes, not curve points — there is no BabyJubJub anywhere in this repo.
-`spendingCommitment = Poseidon(spendingPrivateKey)`. The only asymmetric cryptography is X25519
-(tweetnacl `nacl.box`), used to encrypt a note to its recipient; the circuit never sees it, and
-it is how a recipient *finds* a note rather than how one is spent.
+Keys here are Poseidon hashes rather than curve points: `spendingCommitment =
+Poseidon(spendingPrivateKey)`. The only asymmetric cryptography is X25519 (tweetnacl
+`nacl.box`), which encrypts a note to its recipient. The circuit never sees it — it is how a
+recipient *finds* a note, not how one is spent.
 
 ## How this was built
 
@@ -244,6 +363,6 @@ Found a vulnerability? See [SECURITY.md](SECURITY.md).
 
 GPL-3.0-only. See [LICENSE](LICENSE).
 
-Not entirely a choice: the circuit builds on circomlib and is adapted from Tornado Nova, and the
-verifier is generated by snarkjs — all GPL-3.0. It is the right licence anyway. Nobody should
-run a privacy tool they cannot read, and copyleft is what keeps a modified halias readable too.
+Required by the dependencies — circomlib, Tornado Nova, snarkjs are all GPL-3.0 — and the right
+licence regardless. Nobody should run a privacy tool they cannot read, and copyleft is what
+keeps a modified halias readable too.

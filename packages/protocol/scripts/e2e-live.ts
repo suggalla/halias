@@ -416,7 +416,7 @@ async function main() {
   check("the quote says it would succeed", quote.valid, quote.reason ?? "");
   eq("the fee matches what the prover committed to",
      ethers.formatEther(quote.fee), ethers.formatEther(relayFee));
-  check("the quote prices gas and shows a profit", quote.profit > 0n,
+  check("the quote prices gas and shows a profit", quote.profit !== null && quote.profit > 0n,
         `fee ${ethers.formatEther(quote.fee)} - gas ${ethers.formatEther(quote.gasCost)}`);
 
   const relayerBefore = await balanceOf(provider, relayWallet.address);
@@ -458,7 +458,7 @@ async function main() {
   check("the transfer quote simulates cleanly", xferQuote.valid, xferQuote.reason ?? "");
   eq("it is reported as a transfer, not a withdrawal", xferQuote.kind, "transfer");
   eq("no public recipient", xferQuote.recipient, ethers.ZeroAddress);
-  check("the relayer still profits", xferQuote.profit > 0n,
+  check("the relayer still profits", xferQuote.profit !== null && xferQuote.profit > 0n,
         `fee ${ethers.formatEther(xferQuote.fee)} - gas ${ethers.formatEther(xferQuote.gasCost)}`);
 
   const relayerPreXfer = await balanceOf(provider, relayWallet.address);
@@ -511,7 +511,7 @@ async function main() {
   const claimQuote = await quoteRelay(provider, claimPayload, relayWallet.address);
   check("it simulates against the controller, not the pool", claimQuote.valid, claimQuote.reason ?? "");
   eq("the quote reports it as a claim", claimQuote.kind, "claim");
-  check("the relayer profits from submitting it", claimQuote.profit > 0n,
+  check("the relayer profits from submitting it", claimQuote.profit !== null && claimQuote.profit > 0n,
         `fee ${ethers.formatEther(claimQuote.fee)} - gas ${ethers.formatEther(claimQuote.gasCost)}`);
 
   await submitRelay(relayWallet as any, claimPayload);
@@ -573,6 +573,11 @@ async function main() {
 
   // 1. Same nullifier, twice. Safety is per-transaction and the EVM is serial, so the
   //    second spend simply fails. Nothing to fix — asserted so it stays that way.
+  //
+  //    Topped up first: invites are funded from notes now rather than from the wallet, so
+  //    the two above actually drained this balance. When createInvite was shaped like a
+  //    deposit the shielded balance was irrelevant to it and this read zero harmlessly.
+  await bob.deposit("0.2");
   const dblInvite = await bob.createInvite("0.15");
   const dbl = mk(new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider) as any);
   await (await new ethers.Wallet(LOCAL_KEY, provider)
@@ -794,6 +799,15 @@ async function main() {
   const made   = await alice.createInvite("0.3");
   await alice.refresh();
 
+  // Two-sided, and the reason this section exists. createInvite was once shaped like a
+  // deposit — no inputs, a positive publicAmount, the amount as msg.value — which put the
+  // invite's value in plaintext on chain and left this balance untouched. The check below
+  // only ever bounded the balance from underneath, so it passed either way and the drift
+  // went unnoticed. Funding from notes has to *reduce* this balance by exactly the amount.
+  eq("creating an invite spends notes rather than depositing",
+     ethers.formatEther((await alice.balance()).total),
+     ethers.formatEther(before - ethers.parseEther("0.3")));
+
   const listed = await alice.listInvites();
   check("a created invite appears in the list", listed.length > 0, `${listed.length} listed`);
   const mine = listed.find(i => i.inviteCode === made.inviteCode)!;
@@ -813,11 +827,12 @@ async function main() {
   check("a reclaimed invite is no longer claimable", !after.claimable);
   eq("and reports no amount", String(after.amount), "null");
 
-  // The registration fee is spent either way, so the balance returns to just under where it
-  // started rather than exactly to it.
+  // Exactly back, not approximately. The registration fee is paid by the wallet rather than
+  // out of a note, so nothing leaves the shielded balance across a create-and-reclaim round
+  // trip. An inequality here is what let a deposit-shaped createInvite pass for months.
   const recovered = (await alice.balance()).total;
-  check("the funds came back", recovered > before - ethers.parseEther("0.31"),
-        `${ethers.formatEther(before)} -> ${ethers.formatEther(recovered)}`);
+  eq("the funds came back, to the wei",
+     ethers.formatEther(recovered), ethers.formatEther(before));
 
   let twice = "";
   try { await alice.reclaimInvite(mine.index); } catch (e: any) { twice = e?.message ?? ""; }
@@ -1070,6 +1085,10 @@ async function main() {
 
   // Bob funds an invite out of his own shielded balance. The claimer needs no ETH beyond
   // gas — that is the entire point of the flow.
+  //
+  // Topped up first, for the same reason as the concurrency section above: every invite in
+  // this suite now spends notes, so earlier ones actually drew this balance down.
+  await bob.deposit("0.3");
   const inviteAmount = "0.2";
   const invite = await bob.createInvite(inviteAmount);
   check("createInvite returns a secret and a shareable code",

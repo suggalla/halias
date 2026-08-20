@@ -7,7 +7,6 @@ import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { MerkleTree } from "./helpers/merkleTree";
 import { SMT, registryLeaf, aliasHashToKey, toNullifierKeyHash } from "./helpers/smt";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
-import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
 import { nullifierFor as nullifierOf, POOL_LEVELS } from "./helpers/nullifier";
 import { FIELD_PRIME } from "./helpers/field";

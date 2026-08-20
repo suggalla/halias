@@ -261,12 +261,23 @@
 					{#if stage === 'wallet'}
 						<p class="sum">Unlocked.</p>
 					{:else if selected}
-						<p class="say">
-							<strong>{selected.label}</strong> is stored on this browser, encrypted.
-							{selected.kind === 'view'
-								? 'It reads one alias and cannot spend from it.'
-								: 'Unlock it to continue.'}
-						</p>
+						<!-- Naming one entry only works when there is one. With several stored, this
+						     said "Halias Wallet 1 is stored on this browser" directly above a list
+						     of three, which reads as though the sentence and the list disagree.
+						     "These" points at the list instead, and needs no count and no noun —
+						     entries are wallets or view keys, and the two carry different labels. -->
+						{#if entries.length > 1}
+							<p class="say">
+								These are stored on this browser, encrypted. Choose one to unlock.
+							</p>
+						{:else}
+							<p class="say">
+								<strong>{selected.label}</strong> is stored on this browser, encrypted.
+								{selected.kind === 'view'
+									? 'It reads one alias and cannot spend from it.'
+									: 'Unlock it to continue.'}
+							</p>
+						{/if}
 
 						{#if entries.length > 1}
 							<!-- A list, not a tab strip. These are separate stored secrets of two
@@ -290,6 +301,14 @@
 									</li>
 								{/each}
 							</ul>
+							{#if selected.kind === 'view'}
+								<!-- Carried over from the single-entry sentence above. The row says
+								     "Reads one alias"; that it cannot spend is the part worth stating
+								     in full before someone unlocks it expecting a wallet. -->
+								<p class="sum">
+									<strong>{selected.label}</strong> reads one alias and cannot spend from it.
+								</p>
+							{/if}
 						{/if}
 
 						{#if selected.hasPasskey}
@@ -324,12 +343,20 @@
 
 						{#if error}<p class="err">{error}</p>{/if}
 
+						<!-- Second divider, matching the passkey/password one above. Without it the two
+						     buttons below sit flush against the unlock form and read as part of it, when
+						     they are in fact the alternatives to unlocking this wallet at all. -->
+						<p class="or">or</p>
+
 						<!-- The way to the mode picker for anyone who already has something stored. The
 						     label names both halves: this adds a full wallet *or* a view-only key, and a
 						     label mentioning only the phrase would hide the second entirely. -->
+						<!-- Outlined rather than bare text: these two are the only actions on this card
+						     besides unlocking, and as 0.78rem links they read as footnotes to the form
+						     above rather than as things you can do. -->
 						<div class="alt">
-							<button class="link" onclick={startCreate}>+ Add a wallet or view-only key</button>
-							<button class="link danger" onclick={() => forget(selected!)}>
+							<button class="ghost" onclick={startCreate}>+ Add a wallet or view-only key</button>
+							<button class="ghost danger" onclick={() => forget(selected!)}>
 								Remove {selected.label} from this browser
 							</button>
 						</div>
@@ -639,10 +666,16 @@
 	.ab { font-size: 0.76rem; color: var(--text-dim); line-height: 1.45; }
 	.row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 	.row .primary { flex: 1; min-width: 8rem; padding: 0.55rem 1rem; }
-	.alt { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.15rem; }
+	/* Stacked full-width rather than a left-packed row. Everything above these — both inputs
+	   and the unlock button — stretches edge to edge, because .body and form are column flex
+	   containers. Content-width buttons under that left a ragged right edge, which is what
+	   made the alignment look wrong; centring them would have broken the left axis the whole
+	   card is set on instead of fixing it. */
+	.alt { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
+	.alt .ghost { font-size: 0.82rem; width: 100%; }
+	.ghost.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 	.link { font-size: 0.78rem; color: var(--text-dim); padding: 0; align-self: flex-start; }
 	.link:hover { color: var(--accent); }
-	.link.danger:hover { color: var(--bad); }
 
 	.wlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.4rem; }

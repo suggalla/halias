@@ -67,3 +67,27 @@ export function isValidAlias(input: string): boolean {
     return false;
   }
 }
+
+/// How many leading bits of an alias hash select its prefix group.
+///
+/// Must equal `HaliasRegistry.ALIAS_PREFIX_BITS`. A mismatch does not throw — it asks the
+/// registry for the wrong group, which comes back without the alias in it and reads exactly
+/// like an unregistered name. PrefixIndex.test.ts asserts the two agree against a live
+/// contract, because this is not a value the SDK is free to choose.
+export const ALIAS_PREFIX_BITS = 12;
+
+/// The prefix group an alias hash belongs to.
+///
+/// Computed locally, and that is the point rather than an optimisation: asking the chain
+/// which group a name is in would put the name back on the wire, which is the leak the
+/// group exists to remove. It is a shift, so there is nothing to ask about.
+///
+/// Takes the raw keccak alias hash, not the SMT key — the contract indexes on the hash
+/// before it is reduced into the field, and reducing first silently changes the top bits of
+/// any hash that exceeds the prime.
+export function aliasPrefix(aliasHash: bigint): number {
+  if (aliasHash < 0n || aliasHash >= 1n << 256n) {
+    throw new Error("aliasHash must be a 256-bit value");
+  }
+  return Number(aliasHash >> BigInt(256 - ALIAS_PREFIX_BITS));
+}

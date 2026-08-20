@@ -439,8 +439,10 @@
 						<p class="hint">Nothing to combine — the whole balance is already one note.</p>
 					{:else if $clientState.sendableNow >= $clientState.balance}
 						<p class="hint">
-							All of it can already leave in one transaction. Combining further would still
-							cost a proof and gas for each merge, and buy nothing.
+							A transaction spends up to {POOL_INPUTS} notes at once, and this balance is held
+							in {$clientState.noteCount}. All of it can already leave in one transaction —
+							combining further would still cost a proof and gas for each merge, and buy
+							nothing.
 						</p>
 					{:else}
 						<p class="hint">
@@ -458,9 +460,17 @@
 					{/if}
 
 					<div class="row">
+						<!-- Disabled on the same condition the hint above is written from. `noteCount <= 1`
+						     alone left the button live whenever the balance was already sendable in one
+						     transaction — the hint said combining would buy nothing, the button invited it
+						     anyway, and `consolidate` correctly returned without doing a thing. An enabled
+						     control that no-ops reads as a broken button. -->
 						<button
 							class="primary"
-							disabled={busy || merging !== null || $clientState.noteCount <= 1}
+							disabled={busy ||
+								merging !== null ||
+								$clientState.noteCount <= 1 ||
+								$clientState.sendableNow >= $clientState.balance}
 							onclick={combineAll}
 						>
 							{merging ? 'Combining…' : 'Combine'}
@@ -615,7 +625,7 @@
 		{#if blocked !== null}
 			<div class="blocked">
 				<p class="lead">This alias holds {fmt($clientState.balance)} {sym} across
-					{$clientState.noteCount} notes, and one transaction can spend two of them.</p>
+					{$clientState.noteCount} notes, and one transaction can spend {POOL_INPUTS} of them.</p>
 				<p>That caps a single payment at {fmt($clientState.sendableNow)} {sym} until the
 					notes are combined. Combining is private and moves nothing — it pays you, from you.</p>
 				{#if merging}

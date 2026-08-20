@@ -970,20 +970,36 @@ export async function acceptOfferAt(index: number, aliasHash: string): Promise<{
 
 // Wraps an action so the UI gets a consistent busy/error story rather than each window
 // inventing its own.
+//
+// Counted rather than a boolean, because calls overlap: a screen's load effect and whatever
+// the user clicks run through here at once. Reporting 'ready' when the *first* of them
+// finished re-enabled every button while a transaction was still being proved, and the note
+// it was spending still looked unspent — so the next action selected the same note and
+// reverted on chain with NullifierAlreadySpent. Status is only allowed to settle once
+// nothing is in flight.
+//
+// Settling in `finally` also means an exception cannot strand the UI at 'syncing', which is
+// what left buttons dead after navigating away mid-action.
+let inFlight = 0;
 export async function run<T>(fn: () => Promise<T>): Promise<T | null> {
-	const prev = get(clientState).status;
+	inFlight++;
 	clientState.update((s) => ({ ...s, status: 'syncing', error: null }));
 	try {
 		const result = await fn();
 		await refresh();
-		clientState.update((s) => ({ ...s, status: 'ready' }));
 		return result;
 	} catch (e: any) {
+		// Recorded, not resolved: the last writer of `status` is the `finally` below, so an
+		// error here cannot be overwritten by a sibling call finishing cleanly.
 		clientState.update((s) => ({
 			...s,
-			status: prev === 'ready' ? 'ready' : 'error',
 			error: describeRevert(e) ?? e?.shortMessage ?? e?.message ?? String(e)
 		}));
 		return null;
+	} finally {
+		inFlight--;
+		if (inFlight === 0) {
+			clientState.update((s) => ({ ...s, status: s.error ? 'error' : 'ready' }));
+		}
 	}
 }

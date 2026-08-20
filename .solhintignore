@@ -2,3 +2,4 @@ packages/protocol/contracts/TransactVerifier.sol
 node_modules
 lib
 packages/protocol/contracts/base/TreeZeros.sol
+packages/protocol/contracts/TransactClaimVerifier.sol
