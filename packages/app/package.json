@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
-    "sync-artifacts": "cp ../protocol/circuits/out/transact/transact_js/transact.wasm static/artifacts/ && cp ../protocol/circuits/out/transact/ceremony/transact_final.zkey static/artifacts/ && cp ../protocol/circuits/out/transactClaim/transactClaim_js/transactClaim.wasm static/artifacts/ && cp ../protocol/circuits/out/transactClaim/ceremony/transactClaim_final.zkey static/artifacts/"
+    "sync-artifacts": "node scripts/sync-artifacts.mjs"
   },
   "dependencies": {
     "ethers": "^6.16.0",

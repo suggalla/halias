@@ -1,0 +1,87 @@
+# Publish the app to GitHub Pages.
+#
+# The circuits are deliberately NOT built here. A Groth16 phase-2 ceremony draws fresh
+# entropy every run, so building them in CI would produce a proving key that has nothing to
+# do with the verifier already deployed on chain — and that failure is silent: proofs
+# generate happily and then verify against nothing. The artifacts are downloaded from a
+# release instead, which is the only way to guarantee the key matches the contract.
+#
+# Publish the release once, from the machine that ran the ceremony:
+#
+#   gh release create artifacts-v1 \
+#     packages/protocol/circuits/out/transact/transact_js/transact.wasm \
+#     packages/protocol/circuits/out/transact/ceremony/transact_final.zkey \
+#     packages/protocol/circuits/out/transactClaim/transactClaim_js/transactClaim.wasm \
+#     packages/protocol/circuits/out/transactClaim/ceremony/transactClaim_final.zkey \
+#     --title "Proving artifacts" --notes "Exported from the verifiers deployed to Sepolia."
+#
+# Re-cut the release whenever the circuits change and are redeployed. The two move together
+# or not at all.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One publish at a time; a queued run is superseded rather than racing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # deployments and sdk only. The protocol package has no build script, and the app's
+      # own build runs in a later step against the artifacts fetched below.
+      - run: npm run build --workspace halias-deployments --workspace halias-sdk
+
+      # GITHUB_TOKEN reaches release assets on a private repo, which a plain curl would not.
+      - name: Fetch proving artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p packages/app/static/artifacts
+          gh release download artifacts-v1 \
+            --dir packages/app/static/artifacts \
+            --pattern '*.wasm' --pattern '*.zkey' --clobber
+          ls -la packages/app/static/artifacts
+
+      # BASE_PATH is what makes the site work at /halias/ rather than at a domain root.
+      # svelte.config.js already sets paths.relative, so assets resolve either way; this is
+      # here for the case where a root-relative URL creeps in.
+      - name: Build the app
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}
+        run: npm run build --workspace halias-app
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/app/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
