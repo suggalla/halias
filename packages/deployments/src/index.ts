@@ -24,6 +24,7 @@ export interface Deployment {
   poseidonT3: string;
   poseidonT4: string;
   verifier: string;
+  claimVerifier?: string;
   /// The three the SDK and app read, and only those three. A fourth contract address recorded
   /// here would let a client silently point at something that is not the live pool.
   pool: string;

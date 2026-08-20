@@ -240,7 +240,11 @@ async function main() {
 
   saveDeployment({
     poseidonT3, poseidonT4,
-    verifier,
+    // Both verifiers, because both were deployed. The claim one was omitted, which left its
+    // address recoverable only by calling the pool — fine for a client, awkward for anyone
+    // re-verifying the source or passing CLAIM_VERIFIER to reuse it on a later deploy.
+    // Neither is read at runtime; the pool holds both immutably.
+    verifier, claimVerifier,
     deployer: deployerAddress,
     // The three the SDK and app read, and only those three. A fourth address here would let a
     // client silently point at something that is not the live pool.
@@ -253,10 +257,19 @@ async function main() {
   });
 
   console.log(`\nRegistration fee: ${ethers.formatEther(await domC.registrationFee())} ETH`);
+  // Argument lists match each constructor exactly. The pool's omitted claimVerifier here,
+  // which fails as "has 3 parameters but 2 arguments were provided" only after a round trip
+  // to the explorer — and the whole point of printing these is that they can be pasted.
+  //
+  // HaliasDeployer is absent deliberately: it links PoseidonT3/T4 inside its constructor
+  // only, so the addresses are not recoverable from deployed bytecode and hardhat-verify
+  // cannot check it. It is a one-shot factory that nothing calls again.
   console.log("Verify with:");
   console.log(`  npx hardhat verify --network ${network} ${registry} ${controller}`);
-  console.log(`  npx hardhat verify --network ${network} ${pool} ${verifier} ${registry}`);
+  console.log(`  npx hardhat verify --network ${network} ${pool} ${verifier} ${claimVerifier} ${registry}`);
   console.log(`  npx hardhat verify --network ${network} ${controller} ${pool} ${registry} ${admin}`);
+  console.log(`  npx hardhat verify --network ${network} ${verifier}`);
+  console.log(`  npx hardhat verify --network ${network} ${claimVerifier}`);
 }
 
 main().catch((e) => {
