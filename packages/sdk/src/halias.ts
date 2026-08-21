@@ -1304,16 +1304,26 @@ export class Halias extends HaliasCore {
     const tempAliasHash = BigInt(ethers.keccak256(ethers.toUtf8Bytes(inviteName)));
     const registrationFee = await this.domain.registrationFee() as bigint;
 
-    // From the invite secret, for the same reason: whoever can create this registration
-    // already holds the secret, and nobody else can derive the salt from the public name.
-    const inviteSalt = ethers.keccak256(ethers.concat([
-      ethers.toBeHex(secret, 32), ethers.toUtf8Bytes(inviteName),
-    ]));
     if (resuming === null) {
-      const regTx = await contractRegister(
+      // Registered in one transaction, not two. Commit-reveal defends a name someone wants;
+      // this name is `invite-<128 bits of keccak(secret)>` and nobody wants it.
+      //
+      // Front-running it is possible — the plaintext rides in the calldata like any direct
+      // registration — and pays nothing. The funding proof binds the note to
+      // `temp.spendingCommitment`, so an attacker who registers the name with their own keys
+      // cannot receive it, cannot spend it, and cannot derive the secret from anything they
+      // have seen. All they achieve is making this registration revert as taken, at a cost of
+      // one registration fee to them and a retry at the next index to us.
+      //
+      // Against that: the reservation, the block that has to pass before it can be revealed,
+      // and a second wallet prompt — on a flow that already needs a proof and a third
+      // transaction. A user-chosen name keeps commit-reveal, where front-running actually
+      // pays: whoever takes it receives every payment meant for someone else.
+      onStep?.("register");
+      const regTx = await contractDirectRegistration(
         this.domain, inviteName, temp.spendingCommitment,
         temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
-        temp.ownerAddress, inviteSalt, onStep,
+        temp.ownerAddress,
       );
       await regTx.wait();
     }

@@ -376,12 +376,36 @@ export async function register(
   onStep?.("register");
   return revealWhenReservationRipens(
     domain, name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner, salt, fee,
-    // Nonce from the commit when we sent one; otherwise let ethers resolve it, since no
-    // second send is racing it. ethers caches the account's transaction count, and two sends
-    // from one wallet in the same tick reuse the stale value — "Nonce too low. Expected 16
-    // but got 15" — even when the first was awaited.
-    commitTx ? commitTx.nonce + 1 : undefined,
+    // The larger of the pin and what the chain reports.
+    //
+    // The pin exists because ethers caches the account's transaction count, and two sends in
+    // one tick reuse the stale value — "Nonce too low. Expected 16 but got 15" — even when
+    // the first was awaited. But a pin alone is wrong in the other direction now that a wait
+    // sits between the two: anything else the wallet sent meanwhile has already consumed that
+    // nonce, and reusing it fails just as hard. Taking the maximum covers both.
+    await revealNonce(domain, commitTx),
   );
+}
+
+/// What nonce the reveal should sign with.
+///
+/// Undefined when we did not send the commit — nothing is racing it, so ethers resolving it
+/// normally is correct and cheaper.
+async function revealNonce(
+  domain: ethers.Contract,
+  commitTx: ethers.ContractTransactionResponse | null,
+): Promise<number | undefined> {
+  if (!commitTx) return undefined;
+  const pinned = commitTx.nonce + 1;
+  try {
+    const signer = domain.runner as ethers.Signer | undefined;
+    const pending = await signer?.getNonce?.("pending");
+    return pending === undefined ? pinned : Math.max(pinned, pending);
+  } catch {
+    // A provider that will not answer is not a reason to abandon the registration — the pin
+    // is the value that was right a moment ago.
+    return pinned;
+  }
 }
 
 /// `ReservationPending()`, as the wallet reports it.

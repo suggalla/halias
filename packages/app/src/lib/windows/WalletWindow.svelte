@@ -101,8 +101,13 @@
 		// Registration is the one action that sends two transactions. Naming the step turns a
 		// second unexplained wallet prompt into an expected one — without it the natural read
 		// is that the first attempt failed.
-		if (await run(() => c.register(clean, (s: 'commit' | 'waiting' | 'register') => (step = s)))) {
-			step = null;
+		// Cleared whichever way it goes. Only clearing on success left the indicator frozen on
+		// the phase the attempt died in — most visibly "Waiting for the next block", which then
+		// sat there indefinitely describing a wait that had finished, while the error underneath
+		// said something else entirely.
+		const ok = await run(() => c.register(clean, (s: 'commit' | 'waiting' | 'register') => (step = s)));
+		step = null;
+		if (ok) {
 			// Remembered locally so the name shows before the next scan picks up the
 			// NamePublished event the registration just emitted. The chain is the source of
 			// truth; this only covers the gap.

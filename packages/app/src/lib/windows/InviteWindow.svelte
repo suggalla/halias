@@ -22,12 +22,15 @@
 	// Which phase createInvite is in. Three transactions and a proof, and the longest stretch —
 	// fetching the proving key and generating against it — prompts for nothing at all. A single
 	// "Working…" across the whole of it reads as a hang, which is what it was doing.
+	// No 'commit' or 'waiting' any more: an invite name is registered in one transaction, so
+	// there is no reservation and no block to wait out. Both are kept in the type because the
+	// SDK still reports them for user-chosen names, which do use commit-reveal.
 	type Step = 'commit' | 'waiting' | 'register' | 'proving' | 'funding';
 	let step = $state<Step | null>(null);
 	const STEP_TEXT: Record<Step, string> = {
 		commit:   'Reserving the invite name…',
 		waiting:  'Waiting for the next block…',
-		register: 'Registering the invite…',
+		register: 'Registering the invite name…',
 		proving:  'Building the proof — this fetches a 39MB key the first time…',
 		funding:  'Funding the invite…'
 	};

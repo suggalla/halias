@@ -16,14 +16,15 @@ relitigated. Not a roadmap — the README has that. This is the detail a roadmap
    client can mirror a slice of the registry without naming the alias it wants, which is the
    whole point, and that path is not wired up.
 3. **Invites are ETH-only.** `createInvite`/`claimInvite` pin `ETH_TOKEN_ADDRESS`.
-4. **Creating an invite takes three transactions, and could take one.** `reserveRegistration`,
+4. **Creating an invite takes two transactions, and could take one.** `reserveRegistration`,
    `revealRegistration`, then `pool.transact` to fund the note. Both halves are avoidable:
 
-   - The reservation defends against front-running a name out of the mempool. An invite name
-     is `invite-<128 bits of keccak(secret)>.hls` — unguessable, and generated in the same
-     flow that registers it. `HaliasController.sol:270` already says nobody can front-run the
-     first commitment because it needs the preimage, so for derived names this step defends
-     against nothing.
+   - ~~The reservation~~ **Done.** Invite names use `directRegistration`, which was already on
+     the contract. Front-running one is possible and pays nothing: the funding proof binds the
+     note to the invite's spending commitment, so an attacker who takes the name cannot
+     receive, spend, or derive anything — they only force a retry at the next index, having
+     paid a registration fee for it. That removed a transaction, a block wait and a wallet
+     prompt with no contract change.
    - Registering and funding could be one call. `domain.claim` already does exactly that for
      redemption: `transactClaim` proves against the pre-registration root and derives the
      resulting tree, so the alias need not exist before the proof is built.
