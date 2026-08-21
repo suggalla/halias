@@ -40,6 +40,7 @@ export type { HistoryEntry, PrivacyContext } from "./halias";
 export type { HaliasConfig, DepositResult, SendResult, WithdrawResult, BalanceResult, LookupResult, TokenInfo } from "./halias";
 
 
+export { CONTRACT_ERRORS } from "./errors";
 export { FileCache, BrowserCache } from "./cache";
 export type { CacheStore, CacheData } from "./cache";
 

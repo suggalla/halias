@@ -68,6 +68,7 @@ export const CONTROLLER_ABI = [
   "function directRegistration(string name, bytes32 spendingCommitment, bytes32 nullifierKeyHash, bytes32 encryptionPubkey, address owner) external payable",
   "function reserveRegistration(bytes32 commitment) external",
   "function MAX_RESERVATION_AGE() external view returns (uint256)",
+  "function reservations(bytes32 commitment) external view returns (uint256 madeAt)",
   `function claim(${REGISTRATION} r, ${TRANSACT_PARAMS} p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, string name) external`,
   "function updateAliasData(bytes32 aliasHash, bytes32 newDataHash, uint256 deadline, bytes signature) external",
   "function offerAlias(bytes32 aliasHash, address to, uint256 deadline, bytes signature) external",
@@ -299,25 +300,46 @@ export async function register(
     name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner, salt,
   );
 
-  // Must be mined, not merely sent: the reveal reads the commitment from state, and
-  // MAX_RESERVATION_AGE requires it to be at least one block old.
-  // A commitment that already exists is not a failure.
+  // Resumed, not replayed. The commitment is derived from the root, so it is the same value
+  // on every attempt and on every device — which makes it an idempotency key the chain is
+  // already storing. Reading it costs one eth_call and means a registration interrupted after
+  // the commit continues from where it stopped, instead of re-sending a transaction whose
+  // only possible outcome is a revert.
   //
-  // Anyone may commit — the hash is opaque and only the bound owner can ever reveal it — so
-  // a griefer can watch for a commit and front-run it with the identical hash purely to make
-  // this transaction revert with ReservationPending. The commitment is live either way, which
-  // is all the reveal needs, so treating that revert as fatal would hand them a denial of
-  // service over a transaction that did exactly what we wanted.
-  let commitTx: ethers.ContractTransactionResponse | null;
-  onStep?.("commit");
-  try {
-    const sent = await domain.reserveRegistration(commitment);
-    await sent.wait();
-    commitTx = sent;
-  } catch (e: any) {
-    const already = JSON.stringify(e?.info ?? e?.message ?? "").includes("ReservationPending");
-    if (!already) throw e;
-    commitTx = null;
+  // Only the hash goes over the wire, never the name. `registrationCommitment` is `pure`, so
+  // asking the chain to compute it would hand the plaintext name to the provider before the
+  // commitment is broadcast, which is the one thing commit-reveal exists to prevent. This
+  // asks about a hash that is about to be published anyway.
+  //
+  // Expiry is read rather than assumed: a reservation past MAX_RESERVATION_AGE is dead, and
+  // treating it as live would reveal straight into ReservationExpired.
+  let commitTx: ethers.ContractTransactionResponse | null = null;
+  let live = false;
+  const madeAt = BigInt(await domain.reservations(commitment));
+  if (madeAt !== 0n) {
+    const maxAge = BigInt(await domain.MAX_RESERVATION_AGE());
+    const head = await domain.runner?.provider?.getBlock("latest");
+    const now = BigInt(head?.timestamp ?? Math.floor(Date.now() / 1000));
+    live = now <= madeAt + maxAge;
+  }
+
+  if (!live) {
+    // Must be mined, not merely sent: the reveal reads the commitment from state.
+    //
+    // A commitment that already exists is still not a failure, because the read above races
+    // the chain. Anyone may commit — the hash is opaque and only the bound owner can ever
+    // reveal it — so a griefer can watch for one and front-run it with the identical hash
+    // purely to make this revert. The commitment is live either way, which is all the reveal
+    // needs, so treating that as fatal would hand them a denial of service over a transaction
+    // that did exactly what we wanted.
+    onStep?.("commit");
+    try {
+      const sent = await domain.reserveRegistration(commitment);
+      await sent.wait();
+      commitTx = sent;
+    } catch (e: any) {
+      if (!isReservationPending(e)) throw e;
+    }
   }
 
   // Retried on ReservationTooNew rather than assumed away. The reveal does land in a later
@@ -345,6 +367,24 @@ export async function register(
   );
 }
 
+/// `ReservationPending()`, as the wallet reports it.
+///
+/// Was matched on the name, which never appears: a wallet returns raw revert data and the
+/// message "execution reverted". So the one revert this flow is designed to tolerate was
+/// rethrown instead, and a resumable registration looked like a dead end.
+const RESERVATION_PENDING = "0xf032bda0";
+
+function isReservationPending(e: any): boolean {
+  return revertBlob(e).includes(RESERVATION_PENDING) || revertBlob(e).includes("ReservationPending");
+}
+
+/// Everything a wallet might have put the revert data in. Providers disagree about the shape,
+/// and the selector is worth finding wherever it landed.
+function revertBlob(e: any): string {
+  return JSON.stringify(e?.info ?? e?.error ?? e?.data ?? e?.message ?? "") +
+         String(e?.data ?? "") + String(e?.shortMessage ?? "");
+}
+
 /// `ReservationTooNew()`, as the wallet reports it.
 ///
 /// Matched on the selector rather than the name: an estimation failure arrives as raw revert
@@ -352,9 +392,7 @@ export async function register(
 const RESERVATION_TOO_NEW = "0x9d7b5dd7";
 
 function isReservationTooNew(e: any): boolean {
-  const blob = JSON.stringify(e?.info ?? e?.error ?? e?.data ?? e?.message ?? "") +
-               String(e?.data ?? "") + String(e?.shortMessage ?? "");
-  return blob.includes(RESERVATION_TOO_NEW) || blob.includes("ReservationTooNew");
+  return revertBlob(e).includes(RESERVATION_TOO_NEW) || revertBlob(e).includes("ReservationTooNew");
 }
 
 /// Send the reveal, waiting out a reservation the chain still considers same-second.

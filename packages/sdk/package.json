@@ -9,7 +9,8 @@
     "./contract": "./dist/contract.js",
     "./alias": "./dist/alias.js",
     "./seed": "./dist/seed.js",
-    "./relay": "./dist/relay.js"
+    "./relay": "./dist/relay.js",
+    "./errors": "./dist/errors.js"
   },
   "types": "dist/index.d.ts",
   "bin": {

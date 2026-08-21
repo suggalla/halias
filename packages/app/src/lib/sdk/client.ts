@@ -9,51 +9,11 @@ const ethers = { getAddress, toBeHex };
 import { POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI } from 'halias-sdk/contract';
 import { findWallet, soleWallet, legacyWallet } from './wallets.js';
 
-// Errors the contracts can revert with that no ABI fragment above declares — the SDK's ABIs
-// list functions and events, not error types.
-const ERROR_ABI = [
-	'error WrongRegistrationFee()',
-	'error AliasTaken()',
-	'error AliasKeyTaken()',
-	'error AliasNotRegistered()',
-	'error InvalidAliasHash()',
-	'error InvalidSpendingCommitment()',
-	'error InvalidNullifierKeyHash()',
-	'error InvalidEncryptionPubkey()',
-	'error SpendingCommitmentOutOfField()',
-	'error NullifierKeyHashOutOfField()',
-	'error DataHashOutOfField()',
-	'error NotAliasOwner()',
-	'error NotSignedByAuthority()',
-	'error AuthorizationExpired()',
-	'error NoOffer()',
-	'error NotController()',
-	'error NotAdmin()',
-	'error InvalidOwner()',
-	'error NameDoesNotMatchAlias()',
-	'error ClaimNotAuthorised()',
-	'error ClaimMustBeETH()',
-	'error ClaimWrongPayout(uint256,uint256)',
-	'error OnlyPoolMaySendETH()',
-	'error UseTransferAlias()',
-	'error AliasApprovalsDisabled()',
-	'error InsufficientFees()',
-	'error WrongMsgValue(uint256,uint256)',
-	'error NullifierAlreadySpent(bytes32)',
-	'error DuplicateNullifier()',
-	'error PoolRootUnknown()',
-	'error RegistryRootNotCurrent()',
-	'error InvalidTokenAddress()',
-	'error FeeOnTransferToken()',
-	'error InvalidProof()',
-	'error BadPayee()',
-	'error PoolBalanceExceeded()',
-	'error RelayerFeeExceedsWithdrawal()',
-	'error RelayerFeeRequiresWithdrawal()',
-	'error DirectETHNotAllowed()',
-	'error ZeroCommitment()',
-	'error PoolFull()'
-];
+// Every custom error the contracts declare, generated from their source rather than listed by
+// hand. The hand-written version drifted: it was missing all four reservation errors, so a
+// registration that stopped at exactly the guard meant to stop it reported "unknown custom
+// error" and told the user nothing.
+import { CONTRACT_ERRORS } from 'halias-sdk/errors';
 import { ETH_TOKEN, tokensFor, type TokenConfig, getNetwork, isSplitDeployment, usableNetworks, ARTIFACT_URLS } from './config.js';
 import type { NetworkConfig } from './config.js';
 
@@ -326,7 +286,7 @@ function describeRevert(e: any): string | null {
 		e?.data?.data ?? e?.data ?? e?.info?.error?.data?.data ?? e?.info?.error?.data;
 	if (typeof data !== 'string' || data.length < 10) return null;
 
-	for (const abi of [POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI, ERROR_ABI]) {
+	for (const abi of [CONTRACT_ERRORS as string[], POOL_ABI, REGISTRY_ABI, CONTROLLER_ABI]) {
 		try {
 			const parsed = new Interface(abi).parseError(data);
 			if (!parsed) continue;
