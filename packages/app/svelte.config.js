@@ -2,14 +2,16 @@ import adapter from '@sveltejs/adapter-static';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
-	kit: {
-		adapter: adapter({
-			fallback: 'index.html'
-		}),
-		paths: {
-			relative: true
-		}
-	}
+    kit: {
+        adapter: adapter({
+            fallback: 'index.html'
+        }),
+        paths: {
+            // Read the environment variable passed by your GitHub Action
+            base: process.env.BASE_PATH || '', 
+            relative: true
+        }
+    }
 };
 
 export default config;
