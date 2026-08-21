@@ -6,6 +6,7 @@
 	import {
 		clientState,
 		run,
+		getClient,
 		rememberName,
 		selectAlias,
 		clientFor,
@@ -24,6 +25,21 @@
 	// this level to act on.
 
 	let name = $state('');
+	// The registration fee, read from the contract and shown before the wallet opens.
+	//
+	// It is charged to the EOA, not to any shielded balance, and nothing said so — the wallet
+	// shows a value it cannot explain, and the app showed no number at all. Same omission as the
+	// invite screen had.
+	let fee = $state<bigint | null>(null);
+	let feeAsked = false;
+	$effect(() => {
+		if (feeAsked || $clientState.status !== 'ready') return;
+		feeAsked = true;
+		// Direct, not through run(): this is a cosmetic read, and routing it through the shared
+		// runner would surface a failed fee lookup as an error banner over whatever the user
+		// was actually doing — and emit the state change that re-entered this effect.
+		getClient().registrationFee().then((v: bigint) => (fee = v)).catch(() => {});
+	});
 	let msg = $state<string | null>(null);
 	// Availability, which only the chain can answer — separate from nameError, which is a
 	// shape rule this browser can check on its own. Cleared as soon as the name changes, so
@@ -291,6 +307,11 @@
 				Registering takes <strong>two transactions</strong>. The first reserves the name
 				without revealing it, so nobody watching can take it before you do; the second
 				claims it.
+			</p>
+			<p class="hint">
+				Your wallet pays {fee === null ? 'a one-time registration fee' : `${formatEther(fee)} ETH`}
+				plus gas on the second one. It is charged to this address, not to any alias balance,
+				and it is the only fee Halias takes.
 			</p>
 		{/if}
 		{#if nameError}

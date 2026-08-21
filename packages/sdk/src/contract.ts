@@ -205,12 +205,18 @@ async function sendWithMargin(
   args: readonly any[],
   overrides: Record<string, any> = {},
 ): Promise<ethers.ContractTransactionResponse> {
+  let gasLimit: bigint | undefined;
   try {
-    const estimate = await contract[method].estimateGas(...args, overrides);
-    return await contract[method](...args, { ...overrides, gasLimit: (estimate * 12n) / 10n });
+    gasLimit = (await contract[method].estimateGas(...args, overrides) * 12n) / 10n;
   } catch {
-    return await contract[method](...args, overrides);
+    // Nothing to pin. The send below estimates the ordinary way and fails the ordinary way,
+    // which is the error worth showing — decoded against the ABI rather than whatever an
+    // estimate reported.
   }
+  // Outside the try, deliberately. With the send inside it, anything that made *sending*
+  // throw — a rejected wallet prompt, most of all — was caught and sent again, so declining a
+  // transaction immediately re-opened it. Only the estimate is allowed to fail quietly.
+  return contract[method](...args, gasLimit === undefined ? overrides : { ...overrides, gasLimit });
 }
 
 export async function transact(

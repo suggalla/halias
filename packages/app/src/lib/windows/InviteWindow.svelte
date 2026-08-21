@@ -19,10 +19,14 @@
 	// when the fee and the amount are both 0.001: two debits of the same size, one from the
 	// shielded balance and one from the wallet, and no way to tell which was which.
 	let fee = $state<bigint | null>(null);
+	let feeAsked = false;
 	$effect(() => {
-		if (fee === null) run(() => getClient().registrationFee()).then((v) => {
-			if (typeof v === 'bigint') fee = v;
-		});
+		if (feeAsked || $clientState.status !== 'ready') return;
+		feeAsked = true;
+		// Direct, not through run(): this is a cosmetic read, and routing it through the shared
+		// runner would surface a failed fee lookup as an error banner over whatever the user
+		// was actually doing — and emit the state change that re-entered this effect.
+		getClient().registrationFee().then((v: bigint) => (fee = v)).catch(() => {});
 	});
 	let created = $state<{ inviteCode: string; amount: bigint } | null>(null);
 	let copied = $state<'code' | 'link' | null>(null);

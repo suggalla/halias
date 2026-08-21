@@ -156,6 +156,11 @@
 	}
 
 	async function unlockPassword(entry: VaultEntry) {
+		// Checked here rather than by disabling the button. A greyed-out "Unlock with password"
+		// is the first thing on the screen and it reads as broken — it says the action is
+		// unavailable without saying why, and the reason is only that a field above it is
+		// empty. Enabled and answering is clearer than disabled and silent.
+		if (!password) return (error = 'Enter your password.');
 		busy = true;
 		error = null;
 		try {
@@ -336,8 +341,8 @@
 								<input type="password" bind:value={password} autocomplete="current-password"
 									name="password" disabled={busy} />
 							</label>
-							<button class="ghost" type="submit" disabled={busy || !password}>
-								Unlock with password
+							<button class="ghost" type="submit" disabled={busy}>
+								{busy ? 'Unlocking…' : 'Unlock with password'}
 							</button>
 						</form>
 
