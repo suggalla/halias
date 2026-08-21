@@ -120,11 +120,11 @@ Underconstrained signals do not fail tests, so the passing suites are not eviden
 
 ## Placeholders to replace before publishing
 
-- `SECURITY.md` points at `github.com/suggalla/halias/security/advisories/new`. That page
-  404s while the repository is private — GitHub offers advisories on public repositories only,
-  and both the REST endpoints for it return 404 rather than a useful error. It starts working
-  on the day the repository goes public. An email address is listed alongside it so there is a
-  channel that works either way; change it if that is not the right one.
+- **No private channel for security reports.** `SECURITY.md` asks for an issue or a pull
+  request, which is right while nothing holds real money and wrong the moment something does.
+  GitHub's security advisories would be the obvious answer and are unavailable on private
+  repositories — both REST endpoints 404 rather than explaining why — so this resolves itself
+  on the day the repository goes public. Decide before mainnet, not after.
 - Contract headers say `Copyright 2026 Halias contributors.`
 
 ## Gotcha that cost time three times

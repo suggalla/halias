@@ -8,15 +8,16 @@ one person could have subverted.
 
 ## Reporting a vulnerability
 
-Email **suggalla@protonmail.com**, or open a
-[private security advisory](https://github.com/suggalla/halias/security/advisories/new) on this
-repository. Either gives us a private channel with you and a place to coordinate a fix.
+**Open an issue or a pull request.** For now that is the whole process, and deliberately so:
+this is testnet-only software holding no real money, so there is nothing that coordinated
+disclosure would protect. A finding is more useful in the open, where it can be discussed and
+fixed, than sitting in a private channel waiting on one person to read it.
 
-The advisory link only works while the repository is public — GitHub does not offer advisories
-on private ones, and the page 404s rather than saying so. Email is the channel that always
-works.
+A patch is welcome but not expected. A description of the problem is the valuable part.
 
-Please do not open a public issue for anything that could move or reveal someone's funds.
+**Private reporting for mainnet is not yet decided.** It has to exist before anything holds
+real funds, and this section will say what it is when it does. Until then, treat everything
+here as public by default and do not send anything you would not want read.
 
 Include what you have — a description, the affected file or circuit, and a proof of concept if
 you built one. A rough report is worth more than a polished one that arrives a month later.
