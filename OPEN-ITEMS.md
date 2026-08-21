@@ -114,9 +114,11 @@ Underconstrained signals do not fail tests, so the passing suites are not eviden
 
 `npm run check` and `npm test` are both green on a clean checkout. What is left:
 
-- **The proving keys are 37MB and 49MB**, which rules out several static hosts and makes the
-  first page load expensive on the ones it does not. They are gitignored, so any hosted build
-  needs them fetched from somewhere — a release asset, most likely.
+- **The proving keys are 37MB and 49MB.** Fetched lazily, and only the pair a given proof
+  needs, so an ordinary send never pulls the claim key. Served from the Pages site itself;
+  GitHub's soft bandwidth cap is 100GB/month, which is roughly 1,100 cold visitors.
+  `artifacts.sha256` is what ties them to the deployed verifiers, so moving them to IPFS or a
+  CDN later changes nothing about trust.
 
 ## Placeholders to replace before publishing
 

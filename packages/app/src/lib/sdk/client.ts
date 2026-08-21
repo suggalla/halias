@@ -269,10 +269,21 @@ export function isConnected(): boolean {
 	return client !== null;
 }
 
-// Proof artifacts are ~40MB combined, so they are fetched lazily — only when a proof is
-// actually needed, not on page load. The browser caches them after the first proof.
+// Proof artifacts are ~90MB across the two circuits, so they are fetched lazily — only when a
+// proof is actually needed, not on page load, and only the pair that proof requires. The
+// browser caches them afterwards.
+//
+// All four, including the claim pair. Passing only the ordinary two left getArtifacts falling
+// back to them for claims, so redeeming an invite proved against a circuit that constrains
+// pendingLeaf to zero — it fails at witness generation rather than producing a bad proof, but
+// it fails every time, and nothing in the message says the wrong circuit was used.
 function artifactPaths() {
-	return { transactWasm: ARTIFACT_URLS.transactWasm, transactZkey: ARTIFACT_URLS.transactZkey };
+	return {
+		transactWasm: ARTIFACT_URLS.transactWasm,
+		transactZkey: ARTIFACT_URLS.transactZkey,
+		claimWasm: ARTIFACT_URLS.claimWasm,
+		claimZkey: ARTIFACT_URLS.claimZkey
+	};
 }
 
 /// Turn a revert into something that names itself.
