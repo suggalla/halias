@@ -969,8 +969,15 @@ export async function run<T>(fn: () => Promise<T>): Promise<T | null> {
 		return null;
 	} finally {
 		inFlight--;
+		// Settles to 'ready' even after a failure, and the error rides in `error` instead.
+		//
+		// 'error' as a status was terminal: every screen derives `ready` from
+		// `status === 'ready'`, so one failed action greyed out the button that would have
+		// retried it — correct the amount, and nothing re-enabled. Nothing reads the status
+		// for display either; the message on screen comes from `error`. So a failure has to
+		// leave the UI usable, which is the whole point of reporting it.
 		if (inFlight === 0) {
-			clientState.update((s) => ({ ...s, status: s.error ? 'error' : 'ready' }));
+			clientState.update((s) => ({ ...s, status: 'ready' }));
 		}
 	}
 }

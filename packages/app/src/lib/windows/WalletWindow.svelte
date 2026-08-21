@@ -69,7 +69,7 @@
 		}
 	}
 
-	let step = $state<'commit' | 'register' | null>(null);
+	let step = $state<'commit' | 'waiting' | 'register' | null>(null);
 
 	async function handleRegister() {
 		step = null;
@@ -101,7 +101,7 @@
 		// Registration is the one action that sends two transactions. Naming the step turns a
 		// second unexplained wallet prompt into an expected one — without it the natural read
 		// is that the first attempt failed.
-		if (await run(() => c.register(clean, (s: 'commit' | 'register') => (step = s)))) {
+		if (await run(() => c.register(clean, (s: 'commit' | 'waiting' | 'register') => (step = s)))) {
 			step = null;
 			// Remembered locally so the name shows before the next scan picks up the
 			// NamePublished event the registration just emitted. The chain is the source of
@@ -252,7 +252,7 @@
 			<span class="suffix">.hls</span>
 			<button class="primary" disabled={busy || !ready || !!nameError || !name.trim()}
 				onclick={handleRegister}>
-				{step === 'commit' ? 'Reserving…' : step === 'register' ? 'Registering…' : 'Register'}
+				{step === 'commit' ? 'Reserving…' : step === 'waiting' ? 'Waiting for a block…' : step === 'register' ? 'Registering…' : 'Register'}
 			</button>
 		</div>
 
@@ -260,13 +260,24 @@
 		     failed first attempt, and the natural reaction is to reject the second. -->
 		{#if step}
 			<ol class="steps">
-				<li class:now={step === 'commit'} class:done={step === 'register'}>
+				<li class:now={step === 'commit'} class:done={step !== 'commit'}>
 					Reserve the name
 					<em>Approve in your wallet — this publishes only a hash.</em>
 				</li>
-				<li class:now={step === 'register'}>
+				<!-- Named, because the gap is otherwise indistinguishable from a hang. The
+				     contract requires a strictly later timestamp than the reservation, so the
+				     second wallet prompt cannot appear until the next block exists — around
+				     twelve seconds, during which nothing happens and nothing asks for anything. -->
+				<li class:now={step === 'waiting' || step === 'register'}>
 					Register it
-					<em>A second transaction, one block later.</em>
+					<em>
+						{#if step === 'waiting'}
+							Waiting for the next block — the name cannot be revealed in the same one
+							it was reserved in.
+						{:else}
+							A second transaction, one block later.
+						{/if}
+					</em>
 				</li>
 			</ol>
 		{:else}

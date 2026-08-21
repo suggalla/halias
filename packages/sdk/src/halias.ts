@@ -122,7 +122,10 @@ export class Halias extends HaliasCore {
   /// Throws {AliasTakenError} without sending anything if the name is already registered.
   async register(
     alias: string,
-    onStep?: (step: "commit" | "register") => void,
+    /// "waiting" sits between them: the reveal cannot be estimated until a block later than
+    /// the commit exists, and a caller that cannot say so shows a second step that appears
+    /// stuck. See {register} in contract.ts.
+    onStep?: (step: "commit" | "waiting" | "register") => void,
     /// One transaction instead of two, and no front-running protection. Only correct where
     /// the mempool is not public; see {directRegistration} on the contract. Defaults off, and
     /// deliberately not surfaced by the CLI.

@@ -282,7 +282,7 @@ export async function register(
   /// Reports which of the two transactions is in flight. Registration is the only operation
   /// here that needs two wallet confirmations, and a caller that cannot say which one is
   /// which leaves the user staring at a second unexplained prompt.
-  onStep?: (step: "commit" | "register") => void,
+  onStep?: (step: "commit" | "waiting" | "register") => void,
 ): Promise<ethers.ContractTransactionResponse> {
   // Computed here, never asked for over RPC.
   //
@@ -356,6 +356,20 @@ export async function register(
   // to mine while we wait. Reacting to the revert costs nothing when it does not happen and
   // recovers when it does, and it is the same answer for a builder packing both into one
   // block — which is precisely the position a front-runner is in.
+  // Waited for rather than discovered by failing. The reveal is estimated before it is sent,
+  // against the block the commit landed in — where `block.timestamp == madeAt` and the
+  // contract's guard fires — so attempting it immediately buys a rejected round trip and then
+  // the same wait anyway. One block is irreducible: the guard is on the timestamp, and the
+  // next block is when a later one exists.
+  //
+  // Only when we sent the commit ourselves. A resumed reservation is already old enough, and
+  // waiting there would add a block to a flow that needs none.
+  const provider = domain.runner?.provider;
+  if (commitTx && provider) {
+    onStep?.("waiting");
+    await waitForNextBlock(provider);
+  }
+
   onStep?.("register");
   return revealWhenReservationRipens(
     domain, name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner, salt, fee,

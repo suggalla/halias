@@ -180,6 +180,9 @@
 	// costs seconds, and a mistyped address is knowable now.
 	function toReview() {
 		formError = null;
+		// The last failure was about the last amount. Leaving it on screen beside a corrected
+		// one reads as though the correction was rejected too.
+		clientState.update((s) => ({ ...s, error: null }));
 		const amt = amount.trim();
 		if (!amt || !(Number(amt) > 0)) return (formError = 'Enter an amount greater than zero');
 		if (!target.trim())
