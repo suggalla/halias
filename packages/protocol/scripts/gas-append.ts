@@ -13,7 +13,7 @@ async function main() {
     (await (await ethers.getContractFactory(name, { libraries: libs })).deploy(admin.address)).waitForDeployment();
 
   const rows: Record<string, number[]> = {};
-  for (const name of ["HaliasRegistry", "MockAppendRegistry"]) {
+  for (const name of ["HaliasRegistry", "MockAppendRegistry", "MockNoPrefixRegistry"]) {
     const reg: any = await mk(name);
     const used: number[] = [];
     for (let i = 0; i < 12; i++) {
@@ -33,6 +33,8 @@ async function main() {
   console.log(`  register, stored nodes      ${cur}`);
   console.log(`  register, append-only       ${app}`);
   console.log(`  difference                  ${cur - app}  (${((cur - app) / cur * 100).toFixed(1)}%)`);
+  const npx = avg(pick(rows.MockNoPrefixRegistry));
+  console.log(`  register, no prefix index   ${npx}   (index costs ${cur - npx})`);
   console.log("");
   console.log(`  stored nodes, #2..#12       ${pick(rows.HaliasRegistry).join(" ")}`);
   console.log(`  append-only,  #2..#12       ${pick(rows.MockAppendRegistry).join(" ")}`);

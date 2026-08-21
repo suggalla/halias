@@ -205,7 +205,7 @@ contract HaliasRegistry is SMTRegistry {
         // Indexed here rather than in {_smtUpdate} because this is the only path that creates
         // an alias — the guard above makes that exact — while `_smtUpdate` also runs for
         // rotations and data changes, which must not append a second copy.
-        _aliasesByPrefix[_aliasPrefix(aliasHash)].push(aliasHash);
+        _indexPrefix(aliasHash);
         emit AliasRegistered(
             aliasHash, spendingCommitment, nullifierKeyHash, leaf, encryptionPubkey, aliasSlot[aliasHash]
         );
@@ -360,6 +360,13 @@ contract HaliasRegistry is SMTRegistry {
     ///      alias hash as its argument — which is a targeted question naming one person, and
     ///      the whole reason the prefix index exists. Clients compute this locally; it is a
     ///      shift. `SdkPreimage.test.ts` asserts the selector is not dispatchable.
+    /// @dev Virtual so a mock can drop it and the index can be priced. It is a real feature —
+    ///      k-anonymous lookups, see {getAliasesByPrefix} — but nothing calls it yet, so what
+    ///      it costs every registration is worth knowing rather than assuming.
+    function _indexPrefix(bytes32 aliasHash) internal virtual {
+        _aliasesByPrefix[_aliasPrefix(aliasHash)].push(aliasHash);
+    }
+
     function _aliasPrefix(bytes32 aliasHash) private pure returns (uint16) {
         return uint16(uint256(aliasHash) >> (256 - ALIAS_PREFIX_BITS));
     }
