@@ -6,7 +6,7 @@ import { PoolTrees } from "./merkle";
 import { aliasHashToSmtKey } from "./smt";
 import { proveTransact, dummyOutput, TransactOutput, POOL_INPUTS } from "./proof";
 import { findMyOutputs, Output } from "./events";
-import { deriveInviteKeys, inviteSecretAt, InviteKeys, encodeInviteCode } from "./invite";
+import { deriveInviteKeys, inviteSecretAt, inviteEntryHash, InviteKeys, encodeInviteCode } from "./invite";
 import { encodeViewKey, viewKeysFrom } from "./viewkey";
 import {
   
@@ -1280,7 +1280,7 @@ export class Halias extends HaliasCore {
     // No name. The entry the note is paid to holds keys and nothing else, so its identity is
     // its spending commitment — see {inviteEntryHash}. That is what keeps it out of the
     // namespace and out of the fee: a thing that cannot be a name cannot be bought as one.
-    const tempAliasHash = BigInt(this.inviteEntryHash(temp));
+    const tempAliasHash = BigInt(inviteEntryHash(temp.spendingCommitment));
     const registrationFee = await this.domain.registrationFee() as bigint;
 
     // One transaction, not three.
@@ -1623,7 +1623,7 @@ export class Halias extends HaliasCore {
     // claimer reconstructs it from the code and nothing else has to be transmitted. It binds
     // the alias being registered too, so a submitter cannot redirect the credit to a name of
     // their own choosing.
-    const inviteAliasHash = BigInt(this.inviteEntryHash(temp));
+    const inviteAliasHash = BigInt(inviteEntryHash(temp.spendingCommitment));
     const inviteSigner    = new ethers.Wallet(temp.ownerPrivKey, this.config.provider);
     const invite = await signClaimInvite(
       this.domain, inviteSigner, inviteAliasHash, aliasHash,
@@ -1672,15 +1672,6 @@ export class Halias extends HaliasCore {
   // Locate the unspent pool note belonging to an invite's temp keypair. The note is a
   // perfectly ordinary output encrypted to the temp encryption key, so the normal
   // decrypt-and-match path finds it — no special-case scanning.
-  /// The registry entry an invite's note is paid to.
-  ///
-  /// Derived from the invite's spending commitment, not from a name — the entry has no name.
-  /// Must match HaliasController._recordKeysOnly, which forces the same value: an entry the
-  /// caller cannot choose the identity of is an entry that can never be a name, which is what
-  /// lets it be registered without a fee.
-  private inviteEntryHash(temp: InviteKeys): string {
-    return ethers.keccak256(ethers.toBeHex(temp.spendingCommitment, 32));
-  }
 
   /// The first invite index this wallet has not used.
   ///
@@ -1690,7 +1681,7 @@ export class Halias extends HaliasCore {
   private async nextInviteIndex(limit = 256): Promise<number> {
     for (let i = 0; i < limit; i++) {
       const temp = deriveInviteKeys(inviteSecretAt(this.derivationRoot, i));
-      const taken = await this.registry.isRegistered(this.inviteEntryHash(temp)) as boolean;
+      const taken = await this.registry.isRegistered(inviteEntryHash(temp.spendingCommitment)) as boolean;
       if (!taken) return i;
     }
     throw new Error(`No free invite index below ${limit}`);
@@ -1718,7 +1709,7 @@ export class Halias extends HaliasCore {
     for (let i = 0; i < limit && missed < gap; i++) {
       const secret = inviteSecretAt(this.derivationRoot, i);
       const temp0 = deriveInviteKeys(secret);
-      if (!(await this.registry.isRegistered(this.inviteEntryHash(temp0)) as boolean)) {
+      if (!(await this.registry.isRegistered(inviteEntryHash(temp0.spendingCommitment)) as boolean)) {
         missed++;
         continue;
       }
@@ -1730,7 +1721,7 @@ export class Halias extends HaliasCore {
         index: i,
         secret,
         inviteCode: encodeInviteCode(secret),
-        entryHash: this.inviteEntryHash(temp),
+        entryHash: inviteEntryHash(temp.spendingCommitment),
         // Null once spent: the note is gone, so there is no amount left to report.
         amount: note?.amount ?? null,
         claimable: note !== null,

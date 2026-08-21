@@ -9,7 +9,7 @@ import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { aliasHashToKey } from "./helpers/smt";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
-import { registrationCommitment } from "halias-sdk";
+import { registrationCommitment, deriveInviteKeys, inviteEntryHash, init as initSdkCrypto } from "halias-sdk";
 import { FIELD_PRIME, randField } from "./helpers/field";
 import { ZERO_PROOF, NO_RELAYER, rand32 } from "./helpers/tx";
 
@@ -367,6 +367,25 @@ describe("HaliasController", function () {
       const z = inviteRegistration(ethers.ZeroAddress);
       await expect(domain.connect(user).createInvite(z, await inviteParams(z), "0x", "0x", ZERO_PROOF, { value: FEE }))
         .to.be.revertedWithCustomError(domain, "InvalidOwner");
+    });
+
+    it("accepts the entry hash the SDK derives, byte for byte", async function () {
+      // A cross-system agreement, and a silent one when it breaks: the SDK computes this
+      // hash to decide what to register and the claimer recomputes it from the secret to find
+      // the note. Drift either reverts as NotAnInviteEntry or — worse — registers at a hash
+      // the claimer cannot reproduce, stranding the funds. Only e2e-live covered it, and
+      // e2e-live is not what CI runs.
+      await initSdkCrypto();   // the SDK carries its own Poseidon, separate from the helpers'
+      const temp = deriveInviteKeys(12345678901234567890n);
+      const r = {
+        owner: other.address,
+        aliasHash: inviteEntryHash(temp.spendingCommitment),
+        spendingCommitment: ethers.toBeHex(temp.spendingCommitment, 32),
+        nullifierKeyHash:   ethers.toBeHex(temp.nullifierKeyHash, 32),
+        encryptionPubkey:   ethers.toBeHex(temp.encryptionPubkeyField, 32),
+      };
+      await expect(domain.connect(user).createInvite(r, await inviteParams(r), "0x", "0x", ZERO_PROOF, { value: FEE }))
+        .to.emit(domain, "InviteCreated").withArgs(r.aliasHash, other.address, user.address);
     });
 
     it("refuses to reuse an entry, since the same keys hash the same way", async function () {

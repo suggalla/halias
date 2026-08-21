@@ -49,6 +49,7 @@ export { TRANSACT_ABI, REGISTRY_ABI } from "./events";
 export {
   deriveInviteKeys,
   encodeInviteCode, decodeInviteCode,
+  inviteEntryHash,
 } from "./invite";
 export type { InviteKeys } from "./invite";
 export { POOL_ABI, REGISTRY_ABI as POOL_REGISTRY_ABI, CONTROLLER_ABI } from "./contract";

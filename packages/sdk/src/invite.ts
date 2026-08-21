@@ -44,6 +44,18 @@ export function inviteSecretAt(root: bigint, index: number): bigint {
   return poseidonHash([root, BigInt(index), INVITE_DOMAIN]);
 }
 
+/// The registry entry an invite's note is paid to.
+///
+/// Must match `HaliasController._recordKeysOnly`, which forces exactly this value and rejects
+/// anything else. An entry whose identity the caller cannot choose is an entry that can never
+/// be a name — which is what lets it be registered without a fee of its own.
+///
+/// Drift here is silent and expensive: the registration would revert as NotAnInviteEntry, or
+/// worse, succeed at a hash the claimer cannot recompute, stranding the note.
+export function inviteEntryHash(spendingCommitment: bigint): string {
+  return ethers.keccak256(ethers.toBeHex(spendingCommitment, 32));
+}
+
 export function deriveInviteKeys(secret: bigint): InviteKeys {
   const secretBytes = ethers.getBytes(ethers.toBeHex(secret, 32));
 
