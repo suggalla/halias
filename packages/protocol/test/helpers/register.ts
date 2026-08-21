@@ -128,3 +128,30 @@ export async function acceptAliasAs(
     aliasHash, spendingCommitment, nullifierKeyHash, encryptionPubkey, deadline, sig,
   );
 }
+
+/// Sign a claim against a prepaid invite credit.
+///
+/// The signer is derived from the invite secret, not from any wallet — which is the whole
+/// point: holding the code is what authorises spending the credit that was paid for at
+/// creation. Keyed by the invite entry's hash, so `aliasNonce` tracks the credit rather than
+/// the name being registered.
+export async function signClaimInvite(
+  domain: any,
+  inviteOwner: any,
+  inviteAliasHash: string,
+  aliasHash: string,
+  opts: { nonce?: bigint; deadline?: bigint } = {},
+): Promise<{ deadline: bigint; signature: string }> {
+  const deadline = opts.deadline ?? BigInt(Math.floor(Date.now() / 1000) + 3600);
+  const net = await ethers.provider.getNetwork();
+  const signature = await inviteOwner.signTypedData(
+    { name: "Halias", version: "1", chainId: Number(net.chainId), verifyingContract: await domain.getAddress() },
+    { ClaimInvite: [
+      { name: "inviteAliasHash", type: "bytes32" }, { name: "aliasHash", type: "bytes32" },
+      { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" },
+    ] },
+    { inviteAliasHash, aliasHash,
+      nonce: opts.nonce ?? await domain.aliasNonce(inviteAliasHash), deadline },
+  );
+  return { deadline, signature };
+}

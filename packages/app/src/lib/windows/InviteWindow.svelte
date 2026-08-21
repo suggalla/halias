@@ -4,9 +4,9 @@
 
 	// Giving someone an alias and the funds to use it, in one code.
 	//
-	// The claimer needs no wallet balance, no alias and no prior involvement — the invite note
-	// pays their registration fee and the remainder becomes their own shielded change. That is
-	// the only onboarding path here that does not assume the recipient already has something.
+	// The claimer needs no wallet balance, no alias and no prior involvement — the fee for the
+	// name they pick was paid here, in ETH, and the whole note becomes their own shielded
+	// change. It is the only onboarding path that does not assume they already have something.
 	//
 	// Creating sits with the alias's other actions because it spends the same thing they do —
 	// a note. The wallet pays only the registration fee, which is a fixed public amount that
@@ -19,20 +19,17 @@
 	let copied = $state<'code' | 'link' | null>(null);
 	let formError = $state<string | null>(null);
 
-	// Which phase createInvite is in. Three transactions and a proof, and the longest stretch —
-	// fetching the proving key and generating against it — prompts for nothing at all. A single
+	// Which phase createInvite is in. One transaction now, but the longest stretch — fetching
+	// the proving key and generating against it — prompts for nothing at all, so a single
 	// "Working…" across the whole of it reads as a hang, which is what it was doing.
-	// No 'commit' or 'waiting' any more: an invite name is registered in one transaction, so
-	// there is no reservation and no block to wait out. Both are kept in the type because the
-	// SDK still reports them for user-chosen names, which do use commit-reveal.
-	type Step = 'commit' | 'waiting' | 'register' | 'proving' | 'funding';
+	//
+	// No reservation and no block to wait out: an invite registers no name, so there is
+	// nothing front-runnable and nothing to commit to first.
+	type Step = 'proving' | 'funding';
 	let step = $state<Step | null>(null);
 	const STEP_TEXT: Record<Step, string> = {
-		commit:   'Reserving the invite name…',
-		waiting:  'Waiting for the next block…',
-		register: 'Registering the invite name…',
 		proving:  'Building the proof — this fetches a 39MB key the first time…',
-		funding:  'Funding the invite…'
+		funding:  'Creating the invite…'
 	};
 
 	// Invites already outstanding, and what can still be done about them.
@@ -45,7 +42,7 @@
 	type Pending = {
 		index: number;
 		inviteCode: string;
-		name: string;
+		entryHash: string;
 		amount: bigint | null;
 		claimable: boolean;
 	};
@@ -130,8 +127,8 @@
 	{:else if created}
 		<h3>Invite created</h3>
 		<p class="lede">
-			{formatEther(created.amount)} ETH is held for whoever redeems this. They pick a name, the
-			invite pays the registration fee, and the rest becomes their balance.
+			{formatEther(created.amount)} ETH is held for whoever redeems this. They pick a name —
+			already paid for — and the whole amount becomes their balance.
 		</p>
 
 		<!-- Unlike a prepared relay transaction — which is worthless to anyone but its named
@@ -165,8 +162,8 @@
 		<h3>Invite someone</h3>
 		<p class="lede">
 			Creates a code worth the amount you choose. Whoever redeems it registers a
-			<code>.hls</code> name and receives the remainder — without needing funds of their own
-			first.
+			<code>.hls</code> name — paid for by you, here — and receives the full amount, without
+			needing funds of their own first.
 		</p>
 
 		<label>
@@ -212,7 +209,7 @@
 					<li>
 						<div class="who">
 							<span class="amt">{p.amount === null ? '—' : formatEther(p.amount)} ETH</span>
-							<span class="nm">{p.name.replace(/\.hls$/, '')}</span>
+							<span class="nm">{p.inviteCode.slice(0, 10)}…{p.inviteCode.slice(-6)}</span>
 						</div>
 						<div class="row">
 							<button

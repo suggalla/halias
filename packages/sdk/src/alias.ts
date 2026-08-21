@@ -17,10 +17,8 @@
 /// more: `alice-bank` and `alicebank` are two names that survive being spoken as one, which
 /// is the same failure in a quieter form.
 ///
-/// Excluding them also makes `invite-…` unavailable to a user alias rather than merely
-/// improbable, so the machinery an invite registers cannot be confused with anyone's name by
-/// any client using this function. The contract enforces no charset — it cannot know what a
-/// display layer renders confusably — so this is the layer that decides.
+/// The contract enforces no charset — it cannot know what a display layer renders
+/// confusably — so this is the layer that decides.
 const VALID = /^[a-z0-9]+$/;
 
 const MIN_LENGTH = 1;

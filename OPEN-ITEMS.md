@@ -16,37 +16,20 @@ relitigated. Not a roadmap — the README has that. This is the detail a roadmap
    client can mirror a slice of the registry without naming the alias it wants, which is the
    whole point, and that path is not wired up.
 3. **Invites are ETH-only.** `createInvite`/`claimInvite` pin `ETH_TOKEN_ADDRESS`.
-4. **Creating an invite takes two transactions, and could take one.** `reserveRegistration`,
-   `revealRegistration`, then `pool.transact` to fund the note. Both halves are avoidable:
-
-   - ~~The reservation~~ **Done.** Invite names use `directRegistration`, which was already on
-     the contract. Front-running one is possible and pays nothing: the funding proof binds the
-     note to the invite's spending commitment, so an attacker who takes the name cannot
-     receive, spend, or derive anything — they only force a retry at the next index, having
-     paid a registration fee for it. That removed a transaction, a block wait and a wallet
-     prompt with no contract change.
-   - Registering and funding could be one call. `domain.claim` already does exactly that for
-     redemption: `transactClaim` proves against the pre-registration root and derives the
-     resulting tree, so the alias need not exist before the proof is built.
-
-   **Worth ~110k gas, about 5%** — the 1.24M depth-32 SMT write dominates and survives either
-   change, and Groth16 verification does not scale with constraints, so the larger claim
-   circuit verifies for the same gas. The real wins are one confirmation instead of three, and
-   atomicity: today a reveal that lands before a failed `transact` leaves a registered invite
-   alias with no note and a spent fee.
-
-   Not done because it needs a new armed-leaf path on the controller, and
-   `HaliasController.sol:421` records that arming is the only thing stopping a prover claiming
-   an insertion of their own keys into a tree of their choosing. That is the highest-risk
-   surface in the repo and the wrong place to spend 5% before an audit. Estimated 2-3 days,
-   almost all of it in tests.
-5. **A half-created invite is invisible and its fee is lost.** If `revealRegistration` lands
-   and the funding `transact` does not, the invite alias is registered but has no note.
-   `nextInviteIndex` skips it because registration is the record, and `listInvites` reports it
-   with `amount: null` and `claimable: false`, which the UI filters out. The 0.001 fee is gone
-   and nothing anywhere says so. The client can tell this apart from a redeemed invite — a
-   redeemed one has an output that decrypts to the invite keys and a spent nullifier, an
-   unfunded one never had an output at all.
+4. **Invites cannot be relayed by a stranger.** Creating one pays the registration fee in
+   ETH from `msg.value`, so whoever submits it must hold ETH. A third party *can* submit it —
+   `createInvite` never reads `msg.sender` for anything but the event — but they would be
+   paying the fee, so in practice the creator submits and their address appears on chain
+   alongside the transaction. The value itself is still private; only the act of creating is
+   visible. Fixing it properly means a fee paid some other way, which is the same problem the
+   paymaster work is for.
+5. **A reclaimed invite strands its credit.** `reclaimInvite` spends the note back but leaves
+   `prepaidClaim` set. Nobody loses money they would otherwise have had — the fee bought one
+   registration and one registration is still available — but the credit can only be redeemed
+   through `claimInvite`, which needs the note that was just spent. So it sits there
+   permanently unspendable. Releasing it would need a `cancelInvite` on the controller that
+   the credit's owner signs for; worth doing when something else takes the controller back
+   into surgery.
 6. **Added tokens do not survive a reload** — `addToken` writes session state only; should
    persist per-chain like the alias name map.
 7. **No multi-asset sweep test.** `sweepAndOffer` was fixed to drain per token rather than per
@@ -68,6 +51,16 @@ relitigated. Not a roadmap — the README has that. This is the detail a roadmap
 - **`REGISTRY_ROOT_MAX_AGE` stays 1 hour.** Raising it lengthens the window in which a payment
   can land on rotated-away or previous-owner keys, and `RELAY_MAX_AGE_SECONDS` (45 min) binds
   first anyway.
+- **One fee per invite, paid in ETH, never from the pool.** Creating an invite registers a
+  keys-only entry whose identity is forced to `keccak256(spendingCommitment)` — it cannot be a
+  name, so it is not sold as one — and stores a prepaid credit against it. Redeeming spends
+  that credit with an EIP-712 signature from the key derived from the invite secret. The
+  alternatives were all worse: taking the fee from the note is protocol revenue drawn out of
+  the shielded set (a legal line, not a preference); a free claim path lets anyone mint names
+  for nothing; a global counter is fungible, so one invite claims as many names as anyone else
+  paid for; charging twice defeats the point of removing the pool fee at all. The accepted
+  cost is that creator and claimer are linkable through the credit — acceptable because this
+  is an onboarding feature, not a privacy one, and the *amounts* stay private throughout.
 - **Railgun is upgradeable** — `PausableUpgradableProxy` under token governance, which can
   upgrade and pause. `HaliasPool` has neither. `legal-considerations.md` understates this.
 

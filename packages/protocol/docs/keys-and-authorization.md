@@ -71,9 +71,13 @@ The nullifier's 3-arity domain separator is what stops it colliding with the 2-a
 ### Invite keys
 
 `deriveInviteKeys(secret)` produces a throwaway set from a single 32-byte secret, under the
-same domain bytes as the wallet path — including `0x03`, so the temporary alias an invite
-registers is owned by a key derived from the invite secret rather than by the inviter's
+same domain bytes as the wallet path — including `0x03`, so the keys-only registry entry an
+invite creates is owned by a key derived from the invite secret rather than by the inviter's
 wallet. Otherwise creating an invite would publish who created it.
+
+That owner address is load-bearing twice over. It is stored as `prepaidClaim[entryHash]` when
+the fee is paid, and redeeming requires an EIP-712 `ClaimInvite` signature from it — so the
+registration the inviter bought can only be spent by whoever holds the code, and only once.
 
 The invite note is encrypted to its X25519 key, so **holding the secret is sufficient** to
 discover and decrypt it — nothing else is transmitted, and the code is a bearer instrument.

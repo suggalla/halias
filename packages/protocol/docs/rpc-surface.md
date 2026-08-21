@@ -183,10 +183,10 @@ logs, which the client is positioned to scan; the nonces are not in any event.
 
 ### 3. That you are enumerating invites
 
-`halias.ts:1503` and `:1531` — `isRegistered(inviteAliasHash)`, walking indices until a gap.
-Introduced with `listInvites`. The secret is not revealed (the name carries a hash of it), but
-the walk is a recognisable pattern that links an IP to a set of invites. `isRegistered` is
-answerable from scanned registrations.
+`isRegistered(inviteEntryHash)`, walking indices until a gap — in `nextInviteIndex` and
+`listInvites`. The secret is not revealed (the entry hash is `keccak256(spendingCommitment)`,
+one-way from it), but the walk is a recognisable pattern that links an IP to a set of invites.
+`isRegistered` is answerable from scanned registrations.
 
 ### 4. Which asset you hold
 

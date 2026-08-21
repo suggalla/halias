@@ -72,8 +72,9 @@ export interface ScanResult {
   aliasHashByPubkey: Map<bigint, bigint>;
   /// aliasHash → the plaintext registered under it, for those that published one.
   ///
-  /// One-shot and set at registration, so this never goes stale. An alias registered without
-  /// a name — an invite account, whose aliasHash is random — simply has no entry.
+  /// One-shot and set at registration, so this never goes stale. A registry entry with no
+  /// name — an invite account, whose hash is its own spending commitment — has no entry
+  /// here at all.
   namesByAlias: Map<string, string>;
   /// Spending spendingCommitment → the block at which it became an alias's key.
   ///

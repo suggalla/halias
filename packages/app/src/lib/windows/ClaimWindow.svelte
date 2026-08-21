@@ -13,8 +13,8 @@
 	// Redeeming an invite is how someone arrives with nothing.
 	//
 	// It is deliberately not on the alias screen: a claimer has no alias yet — this is what
-	// creates one. The invite note pays their registration fee and the remainder becomes their
-	// shielded balance, so the only thing they must bring is gas.
+	// creates one. The registration was paid for in ETH when the invite was created, so the
+	// whole note becomes their shielded balance and the only thing they must bring is gas.
 
 	let code = $state('');
 	let name = $state('');
@@ -23,9 +23,10 @@
 	let fromLink = $state(false);
 
 	// Redeeming is the one place where the person genuinely has nothing, so needing gas to
-	// get started partly defeats the invite. The fee comes out of the invite note itself and
-	// is chosen here, at redemption — whoever created it specified nothing, because they
-	// could not know gas prices days in advance.
+	// get started partly defeats the invite. The relay fee comes out of the invite note itself
+	// and is chosen here, at redemption — whoever created it specified nothing, because they
+	// could not know gas prices days in advance. The registration is not paid for here at all;
+	// it was bought in ETH when the invite was created.
 	let delegate = $state(false);
 	let submitter = $state('');
 	let submitterFee = $state('0.05');
@@ -148,8 +149,8 @@
 	<header>
 		<h2>Redeem an invite</h2>
 		<p class="lede">
-			An invite carries both a name and the funds to use it. Pick what you want to be called;
-			the invite pays the registration fee and the rest becomes your balance.
+			An invite carries both a name and the funds to use it. Pick what you want to be called —
+			the name is already paid for, and the whole invite becomes your balance.
 		</p>
 	</header>
 
@@ -208,7 +209,7 @@
 				<div class="est">
 					<button class="ghost sm" disabled={busy} onclick={suggest}>Estimate</button>
 					<span class="hint">
-						{estimate ?? 'Taken from the invite, so it must be large enough to cover this and the registration fee.'}
+						{estimate ?? 'Taken from the invite, so it must be large enough to cover this.'}
 					</span>
 				</div>
 			</div>

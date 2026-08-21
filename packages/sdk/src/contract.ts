@@ -69,7 +69,9 @@ export const CONTROLLER_ABI = [
   "function reserveRegistration(bytes32 commitment) external",
   "function MAX_RESERVATION_AGE() external view returns (uint256)",
   "function reservations(bytes32 commitment) external view returns (uint256 madeAt)",
-  `function claim(${REGISTRATION} r, ${TRANSACT_PARAMS} p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, string name) external`,
+  `function claim(${REGISTRATION} r, ${TRANSACT_PARAMS} p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof, string name, bytes32 inviteAliasHash, uint256 deadline, bytes signature) external`,
+  `function createInvite(${REGISTRATION} r, ${TRANSACT_PARAMS} p, bytes encryptedOutput0, bytes encryptedOutput1, bytes proof) external payable`,
+  "function prepaidClaim(bytes32 inviteAliasHash) external view returns (address)",
   "function updateAliasData(bytes32 aliasHash, bytes32 newDataHash, uint256 deadline, bytes signature) external",
   "function offerAlias(bytes32 aliasHash, address to, uint256 deadline, bytes signature) external",
   "function cancelOffer(bytes32 aliasHash, uint256 deadline, bytes signature) external",
@@ -761,6 +763,11 @@ export function encodeRegistration(r: Registration): string {
   ));
 }
 
+/// Redeem an invite: register the claimer's name against the credit the inviter paid for.
+///
+/// `invite` carries the credit and the authority to spend it. The signature is by the invite
+/// alias's owner — an address derived from the invite secret — so holding the code is what
+/// entitles someone to the free registration, and the credit is one-use.
 export async function claim(
   domain: ethers.Contract,
   registration: Registration,
@@ -776,13 +783,85 @@ export async function claim(
   proofBytes: string,
   name: string = "",
   pendingLeaf: bigint = 0n,
+  invite?: { aliasHash: bigint; deadline: bigint; signature: string },
 ): Promise<ethers.ContractTransactionResponse> {
+  if (!invite) throw new Error("claim needs the invite credit it is redeeming");
   return domain.claim(
     registrationTuple(registration),
     buildTransactParams(poolRoot, treeNumber, registryRoot, publicAmount, 0n,
                         inputNullifiers, outputCommitments, params, pendingLeaf),
     encryptedOutput0, encryptedOutput1, proofBytes, name,
+    h32(invite.aliasHash), invite.deadline, invite.signature,
   );
+}
+
+/// Create an invite: register the keys-only entry its note is paid to, and fund it, in one
+/// transaction.
+///
+/// Payable, and the fee is the creator's. The entry itself is free — it has no name and can
+/// never be one — so the fee pays forward the registration the claimer will make. An invite
+/// costs one fee and takes nothing from the pool.
+export async function createInvite(
+  domain: ethers.Contract,
+  registration: Registration,
+  poolRoot: bigint[],
+  treeNumber: number[],
+  registryRoot: bigint,
+  publicAmount: bigint,
+  inputNullifiers: bigint[],
+  outputCommitments: [bigint, bigint],
+  params: TransactParams,
+  encryptedOutput0: string,
+  encryptedOutput1: string,
+  proofBytes: string,
+  pendingLeaf: bigint,
+  fee: bigint,
+): Promise<ethers.ContractTransactionResponse> {
+  return domain.createInvite(
+    registrationTuple(registration),
+    buildTransactParams(poolRoot, treeNumber, registryRoot, publicAmount, 0n,
+                        inputNullifiers, outputCommitments, params, pendingLeaf),
+    encryptedOutput0, encryptedOutput1, proofBytes,
+    { value: fee },
+  );
+}
+
+/// Sign the authority to spend an invite's prepaid registration.
+///
+/// Signed with the key derived from the invite secret, which is the whole entitlement — the
+/// claimer reconstructs it from the code rather than being sent anything extra.
+export async function signClaimInvite(
+  domain: ethers.Contract,
+  inviteOwner: ethers.Signer,
+  inviteAliasHash: bigint,
+  aliasHash: bigint,
+  opts: { deadlineSeconds?: number } = {},
+): Promise<{ aliasHash: bigint; deadline: bigint; signature: string }> {
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + (opts.deadlineSeconds ?? 3600));
+  const net = await domain.runner!.provider!.getNetwork();
+  const signature = await (inviteOwner as any).signTypedData(
+    {
+      name: "Halias",
+      version: "1",
+      chainId: Number(net.chainId),
+      verifyingContract: await domain.getAddress(),
+    },
+    {
+      ClaimInvite: [
+        { name: "inviteAliasHash", type: "bytes32" },
+        { name: "aliasHash",       type: "bytes32" },
+        { name: "nonce",           type: "uint256" },
+        { name: "deadline",        type: "uint256" },
+      ],
+    },
+    {
+      inviteAliasHash: h32(inviteAliasHash),
+      aliasHash:       h32(aliasHash),
+      nonce:           await domain.aliasNonce(h32(inviteAliasHash)) as bigint,
+      deadline,
+    },
+  );
+  return { aliasHash: inviteAliasHash, deadline, signature };
 }
 
 /// Mirrors HaliasPool._computeParamsHash exactly.

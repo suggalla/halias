@@ -523,9 +523,12 @@ async function main() {
      (await balanceOf(provider, pauperWallet.address)).toString(), "0");
 
   await pauper.refresh();
-  eq("and receives the invite less the registration and relay fees",
+  // Less the relay fee, and nothing else. The registration was paid for in ETH when the
+  // invite was created, so a claim takes no fee out of the note — a relayer is a third party
+  // selling inclusion, which is a different thing from the protocol taking a cut.
+  eq("and receives the invite less only the relay fee",
      ethers.formatEther((await pauper.balance()).total),
-     ethers.formatEther(ethers.parseEther("0.3") - (await pauper.registrationFee()) - claimFee));
+     ethers.formatEther(ethers.parseEther("0.3") - claimFee));
 
   // ── a prepared claim survives concurrent registry writes (F1) ────────────
   // A claim's change note is a non-zero output, so it needs registry membership for an alias
@@ -1115,13 +1118,12 @@ async function main() {
      await controllerContract.ownerOf(BigInt(claimHash)), claimerWallet.address);
   check("the claimer registered without pre-existing funds", beforeClaim === 0n);
 
-  // The note pays the registration fee; the remainder comes back as the claimer's own
-  // shielded change.
+  // All of it lands as the claimer's own shielded change: the whole note, because the
+  // registration it buys was already paid for.
   await claimer.refresh();
   const afterClaim = (await claimer.balance()).total;
-  eq("the invite's remainder lands as the claimer's change",
-     ethers.formatEther(afterClaim - beforeClaim),
-     ethers.formatEther(ethers.parseEther(inviteAmount) - (await claimer.registrationFee())));
+  eq("the whole invite lands as the claimer's change",
+     ethers.formatEther(afterClaim - beforeClaim), inviteAmount);
 
   let replayed = false;
   try { await claimer.claimInvite(invite.secret, `replay${suffix}`); } catch { replayed = true; }

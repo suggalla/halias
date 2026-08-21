@@ -606,7 +606,7 @@ async function main() {
         process.exit(1);
       }
 
-      const result = await withSpinner("Registering invite account + funding note", () =>
+      const result = await withSpinner("Creating invite", () =>
         halias.createInvite(amount)
       );
 

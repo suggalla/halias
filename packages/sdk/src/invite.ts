@@ -18,6 +18,10 @@ export interface InviteKeys {
   /// else here, so the inviter's own wallet does not appear as the owner of a throwaway
   /// account — which would tie them to the invite in public state.
   ownerAddress:          string;
+  /// The key behind {ownerAddress}. Exposed because redeeming an invite is authorised by a
+  /// signature from it: holding the code has to be what entitles someone to the registration
+  /// the inviter paid forward, and the code is all a claimer ever receives.
+  ownerPrivKey:          string;
 }
 
 /// Domain tag for invite secrets. "INVT" ascii (0x494e5654), verified by derivation in the
@@ -65,6 +69,7 @@ export function deriveInviteKeys(secret: bigint): InviteKeys {
     encryption:            { privateKey: encPriv, publicKey: encKeypair.publicKey },
     encryptionPubkeyField: BigInt(ethers.hexlify(encKeypair.publicKey)),
     ownerAddress:          ethers.computeAddress(ownerPriv),
+    ownerPrivKey:          ownerPriv,
   };
 }
 

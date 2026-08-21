@@ -18,6 +18,10 @@ error NotPendingAdmin();
 error NotAliasOwner();
 error InvalidOwner();
 error WrongRegistrationFee();
+error NoPrepaidClaim();
+error NotAnInviteEntry();
+error InviteMustNotPayOut();
+error ClaimMustPayNothing(uint256 received);
 error NoReservation();
 error ReservationTooNew();
 error ReservationExpired();
@@ -116,6 +120,13 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     bytes32 private constant CANCEL_OFFER_TYPEHASH = keccak256(
         "CancelOffer(bytes32 aliasHash,uint256 nonce,uint256 deadline)"
     );
+    /// @dev Signed by the invite alias's owner — an address derived from the invite secret,
+    ///      so only whoever holds the code can produce it. Binds the alias being registered as
+    ///      well as the invite, so a signature cannot be moved to a different registration.
+    bytes32 private constant CLAIM_INVITE_TYPEHASH = keccak256(
+        "ClaimInvite(bytes32 inviteAliasHash,bytes32 aliasHash,uint256 nonce,uint256 deadline)"
+    );
+
     bytes32 private constant UPDATE_ALIAS_DATA_TYPEHASH = keccak256(
         "UpdateAliasData(bytes32 aliasHash,bytes32 dataHash,uint256 nonce,uint256 deadline)"
     );
@@ -139,6 +150,24 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
 
     uint256 public registrationFee = 0.001 ether;
     uint256 public accumulatedFees;
+
+    /// @notice Invite entries whose registration fee has been paid forward, each entitling
+    ///         exactly one claim, and the address entitled to spend it.
+    /// @dev    An invite costs the creator one fee, and that fee covers two registry writes:
+    ///         the keys-only entry its note is paid to, and the name the claimer will pick.
+    ///         One name, two leaves — it only adds up because the first leaf is worthless,
+    ///         which is what {_recordKeysOnly} enforces.
+    ///
+    ///         An address rather than a flag, because a keys-only entry mints no token and
+    ///         there is no `ownerOf` to ask. Set by {createInvite} and deleted by {claim}, so
+    ///         it is one-use; consuming it also needs an EIP-712 signature from the address
+    ///         stored here, which is derived from the invite secret. Both halves are load
+    ///         bearing. Without the deletion the secret holder mints names forever; without
+    ///         the signature anyone watching the chain spends a credit they did not pay for.
+    ///
+    ///         A global counter was the obvious alternative and is unsound: credits would be
+    ///         fungible, so one invite could claim as many names as everyone else had bought.
+    mapping(bytes32 => address) public prepaidClaim;
     string  private baseTokenURI;
 
     /// @dev The registration a claim is authorised to perform. Hashed into
@@ -165,6 +194,10 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     event AliasOffered(bytes32 indexed aliasHash, address indexed from, address indexed to);
     event AliasOfferCancelled(bytes32 indexed aliasHash);
     event AliasClaimed(bytes32 indexed aliasHash, address indexed owner, address indexed submitter);
+    /// @dev Distinct from {AliasClaimed}, which is the other half. Both register an alias and
+    ///      run a pool transaction, so sharing an event would have every creation indexed as a
+    ///      redemption — and the two say opposite things about who paid and who received.
+    event InviteCreated(bytes32 indexed aliasHash, address indexed owner, address indexed submitter);
     event RegistrationFeeSet(uint256 fee);
     event FeesWithdrawn(address indexed to, uint256 amount);
     event AdminTransferStarted(address indexed from, address indexed to);
@@ -400,12 +433,68 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
         }), name);
     }
 
-    /// @notice Register an alias by spending a note already held in the pool, with no ETH
-    ///         of your own.
-    /// @dev    This is what makes an invite work: the inviter funds a note against a keypair
-    ///         derived from the invite secret, and the claimer spends it to buy their name.
-    ///         The claimer still pays gas, or names a relayer in `p.relayerFee` and lets the
-    ///         pool pay it out of the same withdrawal.
+    /// @notice Create an invite: register the account its note pays, and fund it, in one
+    ///         transaction.
+    /// @dev    One fee, from the creator's wallet, covering two registry writes — this
+    ///         throwaway account and the name the claimer will choose. Only the second is a
+    ///         name; the first is a leaf and nothing else. Nothing is taken from the pool,
+    ///         which is the point: see {claim}.
+    ///
+    ///         The entry it registers has no name and no token — see {_recordKeysOnly}. That
+    ///         is what makes the arithmetic hold. The deal works because the first leaf is
+    ///         worthless, and an entry whose identity is forced to
+    ///         `keccak256(spendingCommitment)` cannot be a name however hard the caller tries.
+    ///         An earlier draft registered a real alias and had to police its *shape* instead,
+    ///         which left the whole namespace one forgotten check away from selling two names
+    ///         for the price of one.
+    ///
+    ///         Same armed-leaf shape as {claim}: the note is addressed to an alias that does
+    ///         not exist when the proof is built, so the proof carries the insertion and the
+    ///         registry is armed across exactly the one call that may perform it.
+    function createInvite(
+        Registration calldata r,
+        TransactParams calldata p,
+        bytes calldata encryptedOutput0,
+        bytes calldata encryptedOutput1,
+        bytes calldata proof
+    ) external payable nonReentrant {
+        if (keccak256(abi.encode(r)) != p.externalData) revert ClaimNotAuthorised();
+        if (p.tokenAddress != address(0)) revert ClaimMustBeETH();
+        if (msg.value != registrationFee) revert WrongRegistrationFee();
+        // Nothing may leave to a public recipient. A relayer is still payable, because the
+        // pool settles `relayerFee` separately from `recipientPayout` — so someone else can
+        // submit this and be reimbursed from the note, though they would be paying the fee
+        // from their own wallet to do it. Withdrawing on this path is refused twice over:
+        // here, and by the pool's own {_checkPayee} if the recipient were zero with value
+        // still owed.
+        if (p.recipient != address(0)) revert InviteMustNotPayOut();
+        accumulatedFees += msg.value;
+
+        _recordKeysOnly(r);
+        // The credit carries the address allowed to spend it. Set before the pool is called,
+        // not after: a credit written after an external call exists for a window something
+        // else could act in.
+        prepaidClaim[r.aliasHash] = r.owner;
+        registry.authorizePendingLeaf(r.aliasHash);
+
+        // Nothing may leave the pool on this path: the note is funded from the creator's own
+        // shielded balance, so `publicAmount` is zero and the transaction is a transfer.
+        uint256 balanceBefore = address(this).balance;
+        pool.transact(p, encryptedOutput0, encryptedOutput1, proof);
+        uint256 received = address(this).balance - balanceBefore;
+        registry.clearPendingLeaf();
+        if (received != 0) revert ClaimMustPayNothing(received);
+
+        emit InviteCreated(r.aliasHash, r.owner, msg.sender);
+    }
+
+    /// @notice Redeem an invite: register a name against the credit its creator paid for,
+    ///         with no ETH of your own.
+    /// @dev    The other half of {createInvite}: the inviter funded a note against a keypair
+    ///         derived from the invite secret and prepaid the registration in ETH, and this
+    ///         spends both. The claimer pays gas, or names a relayer in `p.relayerFee` and
+    ///         lets the pool pay it out of the note — a third party selling inclusion, which
+    ///         is a different thing from this contract taking a cut.
     ///
     ///         Ordering is load-bearing. The claimer's change note is a non-zero output, and
     ///         the circuit demands registry membership for every non-zero output — so their
@@ -422,36 +511,74 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///         `transact` path could claim an insertion of their own unregistered keys into a
     ///         tree of their choosing and pay themselves, which is precisely what the registry
     ///         proof exists to prevent.
+    /// @param inviteAliasHash The invite whose prepaid registration this consumes.
+    /// @param deadline        When `signature` stops being valid.
+    /// @param signature       From the invite alias's owner, an address derived from the
+    ///                        invite secret — so only whoever holds the code can redeem it.
     function claim(
         Registration calldata r,
         TransactParams calldata p,
         bytes calldata encryptedOutput0,
         bytes calldata encryptedOutput1,
         bytes calldata proof,
-        string calldata name
+        string calldata name,
+        bytes32 inviteAliasHash,
+        uint256 deadline,
+        bytes calldata signature
     ) external nonReentrant {
         // The prover authorised exactly this registration. A submitter can decline to
         // submit; it cannot substitute itself for `r.owner` or alter a single key.
         if (keccak256(abi.encode(r)) != p.externalData) revert ClaimNotAuthorised();
         if (p.tokenAddress != address(0)) revert ClaimMustBeETH();
 
+        // The fee was paid at creation. Both halves are needed: the deletion makes it
+        // one-use, so the secret holder cannot mint free names forever, and the signature
+        // makes it theirs, so a stranger cannot spend a credit they did not pay for.
+        address inviteOwner = prepaidClaim[inviteAliasHash];
+        if (inviteOwner == address(0)) revert NoPrepaidClaim();
+        delete prepaidClaim[inviteAliasHash];
+        // Not {_authorizeOwner}: that resolves the principal through `ownerOf`, and an invite
+        // entry mints no token. The stored address is the authority, and it was fixed when the
+        // fee was paid.
+        _consumeAuthorization(
+            inviteOwner,
+            inviteAliasHash,
+            keccak256(abi.encode(
+                CLAIM_INVITE_TYPEHASH, inviteAliasHash, r.aliasHash,
+                aliasNonce[inviteAliasHash], deadline
+            )),
+            deadline,
+            signature
+        );
+
         _record(r, name);
         registry.authorizePendingLeaf(r.aliasHash);
 
-        // The pool settles both destinations: the relayer is paid its fee directly, and
-        // whatever is left over arrives here. Nothing about the relayer is this contract's
-        // business, which is why there is no relayer logic anywhere in this file.
+        // The pool settles the relayer directly, and nothing is owed to this contract. A
+        // relayer being paid out of the note is a third party selling inclusion; this
+        // contract taking a fee out of the note would be revenue drawn from the pool, which
+        // is the thing the prepaid credit exists to avoid.
         uint256 balanceBefore = address(this).balance;
         pool.transact(p, encryptedOutput0, encryptedOutput1, proof);
         uint256 received = address(this).balance - balanceBefore;
         registry.clearPendingLeaf();
-
-        // Measured rather than recomputed. Deriving the expected payout would mean
-        // duplicating the pool's signed-amount decoding here, and the two could drift.
-        if (received != registrationFee) revert ClaimWrongPayout(registrationFee, received);
-        accumulatedFees += received;
+        if (received != 0) revert ClaimMustPayNothing(received);
 
         emit AliasClaimed(r.aliasHash, r.owner, msg.sender);
+    }
+
+    /// @dev A registry entry with keys and nothing else — no name, no token, no place in the
+    ///      namespace. What an invite needs: the note must prove membership against a leaf, and
+    ///      a leaf needs keys, but nothing about that requires a name anyone could type.
+    ///
+    ///      Its identity is `keccak256(spendingCommitment)`, so the caller cannot choose it.
+    ///      That is what makes a free entry safe here: the fee buys a *name*, and this can
+    ///      never be one — not by collision either, since matching a name's hash would mean
+    ///      finding a spending commitment that keccaks to it.
+    function _recordKeysOnly(Registration memory r) private {
+        if (r.owner == address(0)) revert InvalidOwner();
+        if (r.aliasHash != keccak256(abi.encode(r.spendingCommitment))) revert NotAnInviteEntry();
+        registry.register(r.aliasHash, r.spendingCommitment, r.nullifierKeyHash, r.encryptionPubkey);
     }
 
     function _record(Registration memory r, string calldata name) private {
@@ -481,10 +608,9 @@ contract HaliasController is ERC721, EIP712, ReentrancyGuard {
     ///      address the failure it exists for — and the plaintext exists nowhere else, since
     ///      `aliasHash` is one-way.
     ///
-    ///      Empty is accepted for an alias with no name to publish. The SDK never sends one —
-    ///      an invite account is named `invite-<64 bits of keccak(secret)>`, so even machinery
-    ///      is resolvable from chain — but the contract does not require a name, because
-    ///      requiring one would mean requiring a preimage that may not exist. It is deliberately NOT a
+    ///      Empty is accepted for an alias with no name to publish, because requiring one
+    ///      would mean requiring a preimage that may not exist. An invite entry is the case:
+    ///      it goes through {_recordKeysOnly}, never here, and has no plaintext at all. It is deliberately NOT a
     ///      privacy setting, and the client no longer offers it as one. Withholding the name
     ///      of a *named* alias hides very little — the hash is public in the registration
     ///      event either way, so any name short enough to type falls to a wordlist — while

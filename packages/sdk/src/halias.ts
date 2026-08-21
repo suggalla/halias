@@ -15,11 +15,13 @@ import {
   transact as contractTransact,
   register as contractRegister,
   directRegistration as contractDirectRegistration,
+  createInvite as contractCreateInvite,
   signOfferAlias as contractSignOfferAlias,
   signCancelOffer as contractSignCancelOffer,
   signUpdateAliasData as contractSignUpdateAliasData,
   acceptAlias as contractAcceptAlias,
   claim as contractClaim,
+  signClaimInvite,
   registrationTuple,
   encodeRegistration,
   computeParamsHash,
@@ -45,8 +47,9 @@ export interface InviteSummary {
   index: number;
   secret: bigint;
   inviteCode: string;
-  /// The alias it registered, derived from the secret.
-  name: string;
+  /// The registry entry its note is paid to, derived from the secret. Not a name — an invite
+  /// entry has none, which is why it is free.
+  entryHash: string;
   /// What it still holds, or null once the note has been spent.
   amount: bigint | null;
   /// False once claimed. Says nothing about who claimed it — nothing on chain does.
@@ -1236,9 +1239,9 @@ export class Halias extends HaliasCore {
 
   // ── Invite links ──────────────────────────────────────────────────────────
   //
-  // The inviter does everything up front, alone: derive a temp keypair from a random
-  // secret, register it as an UNNAMED account (a random aliasHash with no name
-  // preimage), and fund it with a note. The claimer only needs the secret.
+  // The inviter does everything up front, alone: derive a temp keypair from a secret,
+  // register it as a keys-only entry — no name, nothing in the namespace — and fund it with
+  // a note. The claimer only needs the secret.
   //
   // Registering the temp account is not optional. The circuit enforces registry
   // membership for every non-zero output, so an unregistered recipient cannot be paid
@@ -1250,11 +1253,10 @@ export class Halias extends HaliasCore {
   // generates the secret knows it.
   async createInvite(
     amountEth: string,
-    /// Which of the four phases is in flight. Creating an invite is three transactions and a
-    /// proof, and the longest wait — fetching a 39MB proving key and generating against it —
-    /// prompts for nothing while it runs. Without this the whole minute is one "Working…",
-    /// which is indistinguishable from a hang.
-    onStep?: (step: "commit" | "waiting" | "register" | "proving" | "funding") => void,
+    /// Which phase is in flight. One transaction, but the longest wait — fetching a 39MB
+    /// proving key and generating against it — prompts for nothing while it runs. Without
+    /// this the whole minute is one "Working…", indistinguishable from a hang.
+    onStep?: (step: "proving" | "funding") => void,
   ): Promise<InviteResult> {
     this.ensureInit();
     this.ensureSpendable();
@@ -1271,86 +1273,90 @@ export class Halias extends HaliasCore {
     // The index is the first whose invite alias is unregistered. Registration is the record —
     // there is no separate ledger to keep in step, and an invite created on another device
     // shows up here because the chain already knows about it.
-    //
-    // A half-built invite is finished rather than stepped over. See {resumableInviteIndex}:
-    // registration is the record, so an index whose funding failed still reads as taken, and
-    // starting a fresh one would leave the fee already paid there unrecoverable.
-    const resuming = await this.resumableInviteIndex();
-    const index  = resuming ?? await this.nextInviteIndex();
+    const index  = await this.nextInviteIndex();
     const secret = inviteSecretAt(this.derivationRoot, index);
     const temp   = deriveInviteKeys(secret);
 
-    // The invite account needs a registry entry — its note is a non-zero output, and those
-    // must prove membership — so it needs a name like any other alias.
-    //
-    // Derived from the secret rather than random, and through a hash rather than directly:
-    // deterministic means the claimer recomputes it instead of being sent it, and hashing
-    // means publishing the name does not publish the secret that spends the note.
-    //
-    // What stops someone registering the name first is the derivation, not the prefix. The
-    // name carries 64 bits of keccak(secret), so squatting a *particular* invite means
-    // guessing them — and the inviter registers it in the same flow that generates the
-    // secret, so there is no window in which anyone else could know it.
-    //
-    // The prefix is a label, not a namespace: `invite-…` is a perfectly valid user alias
-    // (hyphens are allowed), and nothing here treats the prefix as meaningful. Anyone may
-    // register one; they simply cannot register *this* one.
-    // 128 bits of it, not 64. The old width was a birthday bound: two invites collide with
-    // even odds at around 2^32 of them, and the loser's registration reverts as taken. It
-    // failed safely, but only because it failed loudly. At 128 bits the bound is 2^64, which
-    // is past anything this will ever see, and the label still fits the 63-character
-    // convention the rest of the namespace keeps — the whole hash would not.
-    const inviteName = `invite-${ethers.keccak256(ethers.toBeHex(secret, 32)).slice(2, 34)}.hls`;
-    const tempAliasHash = BigInt(ethers.keccak256(ethers.toUtf8Bytes(inviteName)));
+    // No name. The entry the note is paid to holds keys and nothing else, so its identity is
+    // its spending commitment — see {inviteEntryHash}. That is what keeps it out of the
+    // namespace and out of the fee: a thing that cannot be a name cannot be bought as one.
+    const tempAliasHash = BigInt(this.inviteEntryHash(temp));
     const registrationFee = await this.domain.registrationFee() as bigint;
 
-    if (resuming === null) {
-      // Registered in one transaction, not two. Commit-reveal defends a name someone wants;
-      // this name is `invite-<128 bits of keccak(secret)>` and nobody wants it.
-      //
-      // Front-running it is possible — the plaintext rides in the calldata like any direct
-      // registration — and pays nothing. The funding proof binds the note to
-      // `temp.spendingCommitment`, so an attacker who registers the name with their own keys
-      // cannot receive it, cannot spend it, and cannot derive the secret from anything they
-      // have seen. All they achieve is making this registration revert as taken, at a cost of
-      // one registration fee to them and a retry at the next index to us.
-      //
-      // Against that: the reservation, the block that has to pass before it can be revealed,
-      // and a second wallet prompt — on a flow that already needs a proof and a third
-      // transaction. A user-chosen name keeps commit-reveal, where front-running actually
-      // pays: whoever takes it receives every payment meant for someone else.
-      onStep?.("register");
-      const regTx = await contractDirectRegistration(
-        this.domain, inviteName, temp.spendingCommitment,
-        temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
-        temp.ownerAddress,
-      );
-      await regTx.wait();
-    }
-    await this.refresh();
-
-    // Funded from notes, not from the wallet. This used to be shaped like a deposit — no
-    // inputs, a positive publicAmount, the amount as msg.value — which put the invite's
-    // value in plaintext on chain, two blocks after a registration that names the invite.
-    // Anyone reading the chain learned which address funded which invite and for how much,
-    // which is the one thing the pool exists to hide. As a transfer, publicAmount is zero and
-    // nothing about the amount is visible.
+    // One transaction, not three.
     //
-    // The registration fee stays on the wallet deliberately: it is a fixed public amount that
-    // says nothing about the invite, and paying it from a note would tie an operational EOA
-    // to pool activity for no gain.
+    // Recording the invite entry and funding it are the same call: `createInvite` writes the
+    // registry and runs a pool transaction inside it, the same armed-leaf shape redeeming
+    // already uses. What that buys, beyond two fewer wallet prompts and the block a reveal
+    // had to wait for, is atomicity — there is no longer a state where the entry exists and
+    // the note does not, so a half-built invite cannot occur.
     const keys                 = this.keys!;
     const selfNullifierKeyHash = this.myNullifierKeyHash();
 
+    // The fee is the creator's, from msg.value, and it covers both registry writes: this
+    // keys-only entry and the name the claimer will later choose. One name, two leaves —
+    // charging for the second was never a decision, it fell out of every non-zero output
+    // needing registry membership, which forced the invite account to be registered at all.
+    // Nothing is taken from the pool, which is the point.
     const spend  = this.selectEntries(amount, ETH_TOKEN_ADDRESS);
     const inputs = this.buildInputs(spend);
 
-    // Both proofs are read after the registration above landed, so the invite's leaf is in
-    // the tree they describe. `send` takes the root from the self proof the same way — the
-    // two have to agree, and a root from one block against siblings from another verifies
-    // against nothing.
-    const tempProof = await this.registryProof(temp.spendingCommitment, "Invite account");
-    const selfProof = await this.selfRegistryProof();
+    // Where the invite's leaf will go, and the witness for it.
+    //
+    // `nextAliasSlot` is unassigned — nobody holds it — and getSmtSiblings answers for an empty
+    // slot as it does for a full one. Those siblings prove the slot is empty against the
+    // current root, and the circuit derives the tree that results from filling it. Nothing is
+    // predicted, so an unrelated registration landing in between cannot invalidate this.
+    const inviteSmtKey    = aliasHashToSmtKey(tempAliasHash);
+    const inviteLeafValue = poseidonHash([temp.spendingCommitment, temp.nullifierKeyHash, 0n]);
+    const pendingLeaf     = poseidonHash([inviteSmtKey, inviteLeafValue, 1n]);
+
+    // Read, and read again after a rescan if the mirror disagrees.
+    //
+    // A stale mirror here is ordinary rather than exceptional — any registration by anyone
+    // moves the root, and this is the one path that needs the whole tree rather than a single
+    // witness the chain could be asked for directly. Both reads have to be re-taken after the
+    // rescan, not just compared again: the scan advances to a newer head, so the mirror would
+    // then be ahead of the root rather than behind it, and the check would fail the other way.
+    let pendingSiblings: bigint[] = [];
+    let registryRoot = 0n;
+    let inviteSlot = 0;
+    let selfProof!: Awaited<ReturnType<typeof this.selfRegistryProof>>;
+    for (let attempt = 0; ; attempt++) {
+      // The slot is read here too, and pinned to the same block. A registration landing
+      // between the two reads moves `nextAliasSlot`, and a proof that inserts at the wrong
+      // slot derives a tree the contract will not agree with.
+      const blockTag = await this.headBlock();
+      inviteSlot = Number(await this.registry.nextAliasSlot({ blockTag }) as bigint);
+      const [pendingSiblingsRaw, registryRootRaw] = await Promise.all([
+        this.registry.getSmtSiblings(inviteSlot, { blockTag }) as Promise<string[]>,
+        this.registry.getRegistryRoot({ blockTag }) as Promise<string>,
+      ]);
+      pendingSiblings = pendingSiblingsRaw.map(BigInt);
+      registryRoot    = BigInt(registryRootRaw);
+      selfProof       = await this.selfRegistryProof();
+
+      if (selfProof.registryRoot === registryRoot && this.registrySMT.root === registryRoot) break;
+      if (attempt > 0) {
+        throw new Error("Registry mirror is behind the chain — refresh and try again");
+      }
+      await this.refresh();
+    }
+
+    // The change goes to this alias, which is already registered — and that is what makes this
+    // harder than a redemption. A claim's only real output sits at the very slot being
+    // inserted, so its siblings are the pending ones. Here the change sits somewhere else in
+    // the tree, and every output is checked against the root *including* the insertion
+    // (transactCore: "Against effectiveRoot, not registryRoot"). Inserting a leaf moves the
+    // sibling path of anything sharing an ancestor with it, so the change's witness has to come
+    // from the tree as it will be, not as it is.
+    //
+    // Derived from the local mirror, and only after that mirror is shown to reproduce the root
+    // the chain just reported. Siblings from a stale tree against a fresh root is the failure
+    // that produces a proof verifying against nothing, with no error to say why.
+    const afterInsert = this.registrySMT.clone();
+    afterInsert.update(inviteSlot, inviteSmtKey, inviteLeafValue);
+    const changeSiblings = afterInsert.getSiblings(selfProof.registrySlot);
 
     // The blinding is `temp.blinding`, not random: the claimer recomputes it from the secret
     // to find and spend this note. A random one would strand the funds.
@@ -1367,50 +1373,81 @@ export class Halias extends HaliasCore {
 
     const inviteOut: TransactOutput = {
       spendingCommitment: temp.spendingCommitment, nullifierKeyHash: temp.nullifierKeyHash,
-      registrySlot: tempProof.registrySlot, blinding: temp.blinding, amount,
-      aliasHash: tempAliasHash, dataHash: 0n, registrySiblings: tempProof.siblings,
+      registrySlot: inviteSlot, blinding: temp.blinding, amount,
+      aliasHash: inviteSmtKey, dataHash: 0n, registrySiblings: pendingSiblings,
     };
     const changeOut: TransactOutput = {
       spendingCommitment: keys.spendingCommitment, nullifierKeyHash: selfNullifierKeyHash,
       registrySlot: selfProof.registrySlot, blinding: changeBlinding, amount: changeAmount,
       aliasHash: selfProof.aliasHash, dataHash: selfProof.dataHash,
-      registrySiblings: selfProof.siblings,
+      registrySiblings: changeSiblings,
     };
 
-    // Shuffled like a send, so output order does not say which commitment is the invite.
-    // Safe because findInviteNote matches by decryption and commitment rather than by index.
+    // Shuffled like a send, so output order does not say which commitment is the invite and
+    // which is the creator's change.
+    //
+    // It matters more here than on a send. `createInvite` is its own selector and the creator
+    // pays the fee from their own address, so an observer already knows what this transaction
+    // is and who sent it — a fixed order would hand them the creator's change commitment
+    // outright, tying a public address to one specific note in the pool. That is the linkage
+    // the pool exists to prevent, and a coin flip is the whole cost of denying it.
+    //
+    // Safe because nothing depends on the position. The circuit checks each output against
+    // its own slot and siblings (`outRegistryIndex`/`outRegistrySiblings` are per-output, and
+    // the insertion rides on separate `pending*` signals), the controller never looks at the
+    // outputs at all, and findInviteNote matches by decryption rather than by index.
     const flip = Math.random() < 0.5;
     const [out0, out1]   = flip ? [changeOut, inviteOut] : [inviteOut, changeOut];
     const [comm0, comm1] = flip ? [changeEntry.commitment, inviteEntry.commitment]
                                 : [inviteEntry.commitment, changeEntry.commitment];
     const [blob0, blob1] = flip ? [changeBlob, inviteBlob] : [inviteBlob, changeBlob];
 
-    const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, blob0, blob1, BigInt(this.config.chainId), this.config.poolAddress);
-    const registryRoot = selfProof.registryRoot;
+    // The registration the proof authorises. Hashing it into externalData is what stops a
+    // submitter minting the alias to itself — the domain recomputes it from its own arguments
+    // and refuses anything that does not match.
+    const registration = {
+      owner:            temp.ownerAddress,
+      aliasHash:        tempAliasHash,
+      spendingCommitment:   temp.spendingCommitment,
+      nullifierKeyHash: temp.nullifierKeyHash,
+      encryptionPubkey: temp.encryptionPubkeyField,
+    };
+    const params: TransactParams = {
+      recipient:    ethers.ZeroAddress,
+      relayerFee:   NO_RELAYER,
+      externalData: encodeRegistration(registration),
+    };
 
-    // The long one. The first call fetches the proving key before it can even start.
+    // Zero: this is a transfer. The domain is paid from msg.value, and it checks that the
+    // pool sent it nothing — an invite must not draw revenue out of the shielded set.
+    const publicAmount = 0n;
+    const paramsHash   = computeParamsHash(params, blob0, blob1, BigInt(this.config.chainId), this.config.poolAddress);
+
+    // The long one. The first call fetches the proving key before it can even start, and this
+    // is the claim circuit rather than the ordinary one.
     onStep?.("proving");
     const { proofBytes } = await proveTransact({
       poolRoot: inputs.poolRoots, treeNumber: inputs.treeNumbers,
-      registryRoot, publicAmount: 0n, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
+      registryRoot, publicAmount, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
       inputNullifiers:   inputs.nullifiers,
       outputCommitments: [comm0, comm1],
       inputs:            inputs.inputs,
       outputs: [out0, out1],
+      pending: { leaf: pendingLeaf, slot: inviteSlot, siblings: pendingSiblings },
     }, this.getArtifacts());
 
     onStep?.("funding");
-    const tx = await contractTransact(
-      this.pool, inputs.poolRoots, inputs.treeNumbers, registryRoot, 0n, ETH_TOKEN_ADDRESS,
-      inputs.nullifiers,
-      [comm0, comm1],
-      ZERO_TRANSACT_PARAMS,
-      blob0, blob1, proofBytes,
+    const tx = await contractCreateInvite(
+      this.domain, registration,
+      inputs.poolRoots, inputs.treeNumbers, registryRoot, publicAmount,
+      inputs.nullifiers, [comm0, comm1],
+      params, blob0, blob1, proofBytes, pendingLeaf,
+      registrationFee,
     );
     return { txHash: await this.settle(tx), secret, inviteCode: encodeInviteCode(secret), amount };
   }
 
-  // Claim an invite: register `alias` and pay registrationFee out of the invite note.
+  // Claim an invite: register `alias` against the credit the inviter already paid for.
   //
   // relayerFee > 0 lets a third party broadcast this and be reimbursed from the note, so
   // a claimer holding no ETH at all can still be registered. The relayer is named inside
@@ -1424,7 +1461,8 @@ export class Halias extends HaliasCore {
   /// `relayerFee` comes out of the invite note itself and is chosen here, by the claimer —
   /// the person who created the invite specifies nothing. That is deliberate: they cannot
   /// know gas prices at redemption, which may be days later. Their only obligation is to
-  /// fund enough to cover the registration fee plus whatever relaying costs.
+  /// fund enough to cover whatever relaying costs — the registration itself they already
+  /// paid for in ETH, so the note is not touched for it.
   ///
   /// `prepare` returns the transaction instead of sending it, so someone else can submit it.
   /// Safe to hand over: the blob carries the proof rather than the secret, and `owner` is
@@ -1455,10 +1493,15 @@ export class Halias extends HaliasCore {
     const nullifierKeyHash = this.myNullifierKeyHash();
     const encBytes32       = BigInt(ethers.hexlify(keys.encryption.publicKey));
 
-    const registrationFee = await this.domain.registrationFee() as bigint;
-    const absAmount       = registrationFee + relayerFee;
+    // No registration fee here. The inviter paid it when they created this invite, and the
+    // domain holds the receipt — see prepaidClaim. Charging again was the double charge, and
+    // taking it out of the note would be revenue drawn from the pool.
+    //
+    // A relayer is still paid from the note, because a relayer is a third party selling
+    // inclusion rather than the protocol taking a cut.
+    const absAmount = relayerFee;
     if (note.amount < absAmount)
-      throw new Error(`Invite note ${ethers.formatEther(note.amount)} ETH cannot cover fee + relayer (${ethers.formatEther(absAmount)} ETH)`);
+      throw new Error(`Invite note ${ethers.formatEther(note.amount)} ETH cannot cover the relay fee (${ethers.formatEther(absAmount)} ETH)`);
 
     // The change belongs to the claimer, and it has to.
     //
@@ -1546,16 +1589,23 @@ export class Halias extends HaliasCore {
       encryptionPubkey: encBytes32,
     };
 
-    // The relayer is now a first-class field the pool settles directly, rather than a
-    // packed word this contract has to split up. The pool pays the relayer its fee and
-    // sends the remainder — exactly the registration fee — on to the domain.
+    // The relayer is a first-class field the pool settles directly. It is also the only
+    // thing paid out here: the controller is owed nothing, and checks that it received
+    // nothing, because revenue drawn from the pool is the one thing this path must not do.
     const params: TransactParams = {
-      recipient:    this.config.controllerAddress,
+      // Nothing leaves to a public recipient: the domain is owed nothing, and the relayer is
+      // settled from its own field. The pool refuses a non-zero payout to the zero address, so
+      // this is a guard rather than a convention.
+      recipient:    ethers.ZeroAddress,
       relayerFee:   relayerFee > 0n ? { relayer, amount: relayerFee } : NO_RELAYER,
       externalData: encodeRegistration(registration),
     };
 
-    const publicAmount = FIELD_PRIME - absAmount;
+    // Zero is zero, not FIELD_PRIME - 0. The field has no negative zero, and a public signal
+    // of FIELD_PRIME is not a field element at all — the verifier rejects it outright. This
+    // only became reachable when the registration fee left this path: absAmount was
+    // fee + relayerFee, which could not be zero, and now it is the relay fee alone.
+    const publicAmount = absAmount > 0n ? FIELD_PRIME - absAmount : 0n;
     const paramsHash   = computeParamsHash(params, changeBlob, "0x", BigInt(this.config.chainId), this.config.poolAddress);
     
     const { proofBytes } = await proveTransact({
@@ -1566,6 +1616,18 @@ export class Halias extends HaliasCore {
       outputs: [changeOut, out1],
       pending: { leaf: pendingLeaf, slot: ownSlot, siblings: pendingSiblings },
     }, this.getArtifacts());
+
+    // The authority to spend the invite's prepaid registration.
+    //
+    // Signed with the key derived from the secret, which is the whole entitlement — the
+    // claimer reconstructs it from the code and nothing else has to be transmitted. It binds
+    // the alias being registered too, so a submitter cannot redirect the credit to a name of
+    // their own choosing.
+    const inviteAliasHash = BigInt(this.inviteEntryHash(temp));
+    const inviteSigner    = new ethers.Wallet(temp.ownerPrivKey, this.config.provider);
+    const invite = await signClaimInvite(
+      this.domain, inviteSigner, inviteAliasHash, aliasHash,
+    );
 
     if (opts.prepare) {
       return {
@@ -1586,6 +1648,11 @@ export class Halias extends HaliasCore {
             domain: this.config.controllerAddress,
             registration: registrationTuple(registration),
             name: `${cleanAlias}.hls`,
+            // Carried with the rest: a submitter cannot produce this, and without it the
+            // prepared transaction is unsubmittable rather than merely unauthorised.
+            inviteAliasHash: ethers.toBeHex(invite.aliasHash, 32),
+            deadline:        invite.deadline.toString(),
+            signature:       invite.signature,
           },
         }),
       };
@@ -1597,6 +1664,7 @@ export class Halias extends HaliasCore {
       pad.inputNullifiers,
       [comm0, comm1],
       params, changeBlob, "0x", proofBytes, `${cleanAlias}.hls`, pendingLeaf,
+      invite,
     );
     return { txHash: await this.settle(tx) };
   }
@@ -1604,30 +1672,25 @@ export class Halias extends HaliasCore {
   // Locate the unspent pool note belonging to an invite's temp keypair. The note is a
   // perfectly ordinary output encrypted to the temp encryption key, so the normal
   // decrypt-and-match path finds it — no special-case scanning.
-  /// The name an invite registers, which is a pure function of its secret.
-  private inviteNameFor(secret: bigint): string {
-    return `invite-${ethers.keccak256(ethers.toBeHex(secret, 32)).slice(2, 34)}.hls`;
-  }
-
-  /// The registry key for an invite's name.
+  /// The registry entry an invite's note is paid to.
   ///
-  /// Hashed directly rather than through {aliasHashOf}, which normalises first and rejects the
-  /// hyphen: user aliases are alphanumeric, and `invite-…` is deliberately outside that set so
-  /// nobody can type one by hand. The registration hashes the raw string, so this must too —
-  /// anything else looks up a name that was never written.
-  private inviteAliasHash(name: string): string {
-    return ethers.keccak256(ethers.toUtf8Bytes(name));
+  /// Derived from the invite's spending commitment, not from a name — the entry has no name.
+  /// Must match HaliasController._recordKeysOnly, which forces the same value: an entry the
+  /// caller cannot choose the identity of is an entry that can never be a name, which is what
+  /// lets it be registered without a fee.
+  private inviteEntryHash(temp: InviteKeys): string {
+    return ethers.keccak256(ethers.toBeHex(temp.spendingCommitment, 32));
   }
 
   /// The first invite index this wallet has not used.
   ///
-  /// Read off the chain rather than from local state. The invite's alias registration *is* the
+  /// Read off the chain rather than from local state. The invite's registry entry *is* the
   /// record, so an invite created from another device — or before this browser's cache was
   /// cleared — is already accounted for, and two devices cannot pick the same index.
   private async nextInviteIndex(limit = 256): Promise<number> {
     for (let i = 0; i < limit; i++) {
-      const name = this.inviteNameFor(inviteSecretAt(this.derivationRoot, i));
-      const taken = await this.registry.isRegistered(this.inviteAliasHash(name)) as boolean;
+      const temp = deriveInviteKeys(inviteSecretAt(this.derivationRoot, i));
+      const taken = await this.registry.isRegistered(this.inviteEntryHash(temp)) as boolean;
       if (!taken) return i;
     }
     throw new Error(`No free invite index below ${limit}`);
@@ -1654,8 +1717,8 @@ export class Halias extends HaliasCore {
 
     for (let i = 0; i < limit && missed < gap; i++) {
       const secret = inviteSecretAt(this.derivationRoot, i);
-      const name   = this.inviteNameFor(secret);
-      if (!(await this.registry.isRegistered(this.inviteAliasHash(name)) as boolean)) {
+      const temp0 = deriveInviteKeys(secret);
+      if (!(await this.registry.isRegistered(this.inviteEntryHash(temp0)) as boolean)) {
         missed++;
         continue;
       }
@@ -1667,7 +1730,7 @@ export class Halias extends HaliasCore {
         index: i,
         secret,
         inviteCode: encodeInviteCode(secret),
-        name,
+        entryHash: this.inviteEntryHash(temp),
         // Null once spent: the note is gone, so there is no amount left to report.
         amount: note?.amount ?? null,
         claimable: note !== null,
@@ -1786,28 +1849,6 @@ export class Halias extends HaliasCore {
   private async findInviteNote(temp: InviteKeys): Promise<OwnedEntry | null> {
     const owned = await this.ownedInviteOutputs(temp);
     return owned.find(e => !this.spentNullifiers.has(computeNullifier(temp.nullifierKey, e.treeNumber, e.leafIndex))) ?? null;
-  }
-
-  /// An invite whose alias was registered but whose note never landed.
-  ///
-  /// createInvite is three transactions — reserve, reveal, fund — and only the first two
-  /// resume on their own. If the funding one fails, the alias is registered, so
-  /// {nextInviteIndex} steps over that index and the next invite is built at a fresh one:
-  /// the half-built invite is orphaned, its registration fee is spent, and listInvites hides
-  /// it because it holds nothing. Resuming costs one funding transaction instead of another
-  /// registration, and is the difference between a recoverable interruption and a small
-  /// permanent loss.
-  ///
-  /// Stops at the first unregistered index. Beyond that there is nothing registered to
-  /// resume, and walking further would only re-ask the chain about invites that do not exist.
-  private async resumableInviteIndex(limit = 256): Promise<number | null> {
-    for (let i = 0; i < limit; i++) {
-      const secret = inviteSecretAt(this.derivationRoot, i);
-      const name   = this.inviteNameFor(secret);
-      if (!(await this.registry.isRegistered(this.inviteAliasHash(name)) as boolean)) return null;
-      if ((await this.ownedInviteOutputs(deriveInviteKeys(secret))).length === 0) return i;
-    }
-    return null;
   }
 
   /// Everything this alias has done, newest first.

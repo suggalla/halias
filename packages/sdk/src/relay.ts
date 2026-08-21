@@ -37,6 +37,14 @@ export interface ClaimExtras {
   };
   /// Published alongside the registration, or "" to keep the name private.
   name: string;
+  /// The invite whose prepaid registration this redeems, and the authority to spend it.
+  ///
+  /// Part of the blob because a submitter cannot produce the signature — it is by a key
+  /// derived from the invite secret, which only the claimer holds. Without these the prepared
+  /// transaction is not merely unauthorised, it is unsubmittable.
+  inviteAliasHash: string;
+  deadline: string;
+  signature: string;
 }
 
 export interface RelayPayload {
@@ -86,7 +94,7 @@ export function decodeRelayBlob(blob: string): RelayPayload {
   if (raw?.v !== RELAY_VERSION) throw new Error(`Unsupported relay blob version ${raw?.v}`);
   if (raw.kind !== "transact" && raw.kind !== "claim")
     throw new Error(`Unknown relay kind ${raw?.kind}`);
-  if (raw.kind === "claim" && !raw.claim?.domain)
+  if (raw.kind === "claim" && (!raw.claim?.domain || !raw.claim?.signature))
     throw new Error("Claim blob is missing its registration");
   // Only the fields the encoder turned into hex because they were bigints come back. The
   // address-typed members — `recipient`, `relayerFee.relayer`, and `tokenAddress` — survive
@@ -331,6 +339,10 @@ function bind(payload: RelayPayload, runner: ethers.ContractRunner) {
       args: [
         c.registration, payload.params,
         payload.encryptedOutput0, payload.encryptedOutput1, payload.proof, c.name,
+        // The prepaid credit and the authority to spend it. Bound into the signature along
+        // with the alias being registered, so a submitter can decline to submit but cannot
+        // point the credit at a name of its own.
+        c.inviteAliasHash, BigInt(c.deadline), c.signature,
       ] as const,
     };
   }

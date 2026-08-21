@@ -2,11 +2,10 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { aliasHashToKey } from "./helpers/smt";
-import { registerAlias } from "./helpers/register";
+import { registerAlias, signClaimInvite } from "./helpers/register";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { ensurePoseidon } from "../scripts/poseidon";
 import { anchorOf } from "./helpers/anchor";
-import { FIELD_PRIME } from "./helpers/field";
 import { ZERO_PROOF, NO_RELAYER, rand32 } from "./helpers/tx";
 
 // HaliasDeployer — the three contracts brought up wired, in one transaction.
@@ -127,11 +126,11 @@ describe("HaliasDeployer", function () {
     expect(await ethers.provider.getBalance(await pool.getAddress())).to.equal(deposit);
   });
 
-  it("supports a claim, which needs all three at once", async function () {
+  it("supports an invite and its claim, which need all three at once", async function () {
     await initPoseidon();
-    // The claim path is the only flow that touches every contract: the domain writes the
-    // registry, calls the pool, and is paid by it. If any reference were wrong this is
-    // where it shows.
+    // Together these are the only flow that touches every contract: the domain writes the
+    // registry, arms a leaf on it, and calls the pool, which pays out against a root the
+    // registry owns. If any reference were wrong this is where it shows.
     const fee = await domain.registrationFee();
     const poolAddr = await pool.getAddress();
 
@@ -145,34 +144,58 @@ describe("HaliasDeployer", function () {
       outputsEmpty:      false,
     }, "0x", "0x", ZERO_PROOF, { value: deposit })).wait();
 
-    const r = {
-      owner: user.address, aliasHash: rand32(),
-      spendingCommitment: ethers.toBeHex(11n, 32),
-      nullifierKeyHash: ethers.toBeHex(22n, 32),
-      encryptionPubkey: ethers.toBeHex(33n, 32),
-    };
-    const externalData = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
+    const encode = (r: any) => ethers.AbiCoder.defaultAbiCoder().encode(
       ["tuple(address owner,bytes32 aliasHash,bytes32 spendingCommitment,bytes32 nullifierKeyHash,bytes32 encryptionPubkey)"],
       [r],
-    ));
-
-    await (await domain.connect(admin).claim(r, {
+    );
+    // The insertion a proof on these paths performs. The registry arms it from its own state
+    // during the registration, and the pool requires the public signal to match.
+    const pendingLeafFor = (r: any) => ethers.toBeHex(poseidonHash([
+      aliasHashToKey(r.aliasHash),
+      poseidonHash([BigInt(r.spendingCommitment), BigInt(r.nullifierKeyHash), 0n]),
+      1n,
+    ]), 32);
+    const params = async (r: any, extra: any = {}) => ({
       poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree], registryRoot: await registry.getRegistryRoot(),
-      publicAmount: FIELD_PRIME - fee, tokenAddress: ethers.ZeroAddress,
+      publicAmount: 0n, tokenAddress: ethers.ZeroAddress,
       inputNullifiers: [rand32(), rand32(), rand32(), rand32()], outputCommitments: [rand32(), rand32()],
-      recipient: await domain.getAddress(), relayerFee: NO_RELAYER, externalData,
-      // The insertion the claim's proof performs. The registry arms it from its own state
-      // during the registration, and the pool requires the public signal to match.
-      pendingLeaf: ethers.toBeHex(poseidonHash([
-        aliasHashToKey(r.aliasHash),
-        poseidonHash([BigInt(r.spendingCommitment), BigInt(r.nullifierKeyHash), 0n]),
-        1n,
-      ]), 32),
+      recipient: ethers.ZeroAddress, relayerFee: NO_RELAYER,
+      externalData: ethers.keccak256(encode(r)),
+      pendingLeaf: pendingLeafFor(r),
       outputsEmpty: false,
-    }, "0x", "0x", ZERO_PROOF, "")).wait();
+      ...extra,
+    });
+
+    // The invite: a keys-only entry, its hash forced to keccak256(spendingCommitment), paid
+    // for in ETH from the wallet.
+    const inviteOwner = ethers.Wallet.createRandom();
+    const spendingCommitment = ethers.toBeHex(11n, 32);
+    const invite = {
+      owner: inviteOwner.address, aliasHash: ethers.keccak256(spendingCommitment),
+      spendingCommitment, nullifierKeyHash: ethers.toBeHex(22n, 32),
+      encryptionPubkey: ethers.toBeHex(33n, 32),
+    };
+    await (await domain.connect(admin)
+      .createInvite(invite, await params(invite), "0x", "0x", ZERO_PROOF, { value: fee })).wait();
+    expect(await domain.prepaidClaim(invite.aliasHash)).to.equal(inviteOwner.address);
+
+    // The claim: a real alias, paid for by that credit rather than by the pool.
+    const r = {
+      owner: user.address, aliasHash: rand32(),
+      spendingCommitment: ethers.toBeHex(44n, 32),
+      nullifierKeyHash: ethers.toBeHex(55n, 32),
+      encryptionPubkey: ethers.toBeHex(66n, 32),
+    };
+    const { deadline, signature } =
+      await signClaimInvite(domain, inviteOwner, invite.aliasHash, r.aliasHash);
+    await (await domain.connect(admin).claim(
+      r, await params(r), "0x", "0x", ZERO_PROOF, "", invite.aliasHash, deadline, signature,
+    )).wait();
 
     expect(await domain.ownerOf(BigInt(r.aliasHash))).to.equal(user.address);
+    // One fee, from the wallet, for both registrations — the pool still holds every wei it
+    // was deposited.
     expect(await domain.accumulatedFees()).to.equal(fee);
-    expect(await ethers.provider.getBalance(poolAddr)).to.equal(deposit - fee);
+    expect(await ethers.provider.getBalance(poolAddr)).to.equal(deposit);
   });
 });

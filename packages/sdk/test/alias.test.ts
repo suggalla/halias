@@ -47,12 +47,10 @@ describe("alias normalisation", () => {
   it("allows letters and digits, and nothing else", () => {
     expect(normalizeAlias("myalias1")).to.equal("myalias1");
     // Hyphens were allowed once. They are not, because `alice-bank` and `alicebank` are two
-    // names that survive being spoken as one — and because excluding them puts `invite-…`,
-    // the name an invite registers, out of reach of any user alias.
+    // names that survive being spoken as one.
     expect(isValidAlias("my-alias")).to.equal(false);
     expect(isValidAlias("-alice")).to.equal(false);
     expect(isValidAlias("alice-")).to.equal(false);
-    expect(isValidAlias("invite-0123456789abcdef")).to.equal(false);
     // Unicode never was, and is what a homoglyph attack needs.
     expect(isValidAlias("аlice")).to.equal(false);   // Cyrillic а
     expect(isValidAlias("alice_bank")).to.equal(false);

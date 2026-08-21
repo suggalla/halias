@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   registerAlias, acceptAliasAs, signOwnerAction,
-  offerAliasAs, cancelOfferAs, updateAliasDataAs,
+  offerAliasAs, cancelOfferAs, updateAliasDataAs, signClaimInvite,
 } from "./helpers/register";
 import { initPoseidon, poseidonHash } from "./helpers/poseidon";
 import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
@@ -87,14 +87,62 @@ describe("HaliasController", function () {
       outputsEmpty:      false,
       poolRoot: [(await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root, (await anchorOf(pool)).root], treeNumber: [(await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree, (await anchorOf(pool)).tree],
       registryRoot:      await registry.getRegistryRoot(),
-      publicAmount:      withdrawOf(FEE + relayerFee.amount),
+      // Only the relayer is paid from the note. The registration fee was paid in ETH when
+      // the invite was created, so a claim owes this contract nothing — and withdrawOf(0)
+      // would be FIELD_PRIME, which is not a field element.
+      publicAmount:      relayerFee.amount > 0n ? withdrawOf(relayerFee.amount) : 0n,
       tokenAddress:      ethers.ZeroAddress,
       inputNullifiers:   [rand32(), rand32(), rand32(), rand32()],
       outputCommitments: [rand32(), rand32()],
-      recipient:         domainAddr,
+      recipient:         ethers.ZeroAddress,
       relayerFee,
       externalData:      ethers.keccak256(encodeRegistration(r)),
     };
+  }
+
+  // An invite entry: keys, and deliberately nothing else. Its identity is forced to
+  // keccak256(spendingCommitment), so the caller cannot point it at a name — which is what
+  // lets one fee buy this registration and the claimer's without selling two names for one.
+  function inviteRegistration(owner: string, overrides: any = {}) {
+    const spendingCommitment = ethers.toBeHex(randField(), 32);
+    return {
+      owner, aliasHash: ethers.keccak256(spendingCommitment),
+      spendingCommitment, nullifierKeyHash: NKH, encryptionPubkey: ENC,
+      ...overrides,
+    };
+  }
+
+  // Funding an invite is a transfer, not a withdrawal: the value comes from the creator's own
+  // shielded balance and never becomes public. Nothing may leave the pool here at all.
+  async function inviteParams(r: any, overrides: any = {}) {
+    return { ...await claimParams(r), publicAmount: 0n, recipient: ethers.ZeroAddress, ...overrides };
+  }
+
+  /// Create an invite and hand back the credit plus the key that can spend it.
+  ///
+  /// The owner is a throwaway wallet because that is what it is in practice — an address
+  /// derived from the invite secret, holding no ETH and never submitting anything. Whoever
+  /// holds the code can reconstruct it; that is the entire access control on the credit.
+  async function makeInvite(submitter?: any) {
+    const inviteOwner = ethers.Wallet.createRandom();
+    const r = inviteRegistration(inviteOwner.address);
+    await (await domain.connect(submitter ?? user)
+      .createInvite(r, await inviteParams(r), "0x", "0x", ZERO_PROOF, { value: FEE })).wait();
+    return { inviteOwner, entryHash: r.aliasHash, r };
+  }
+
+  /// Redeem a credit: the claimer's registration, signed by the invite key.
+  async function claimAgainst(
+    invite: { inviteOwner: any; entryHash: string },
+    r: any,
+    opts: { params?: any; name?: string; submitter?: any; sig?: any } = {},
+  ) {
+    const { deadline, signature } = opts.sig ??
+      await signClaimInvite(domain, invite.inviteOwner, invite.entryHash, r.aliasHash);
+    return domain.connect(opts.submitter ?? relayer).claim(
+      r, opts.params ?? await claimParams(r), "0x", "0x", ZERO_PROOF, opts.name ?? "",
+      invite.entryHash, deadline, signature,
+    );
   }
 
   // Puts ETH in the pool so a claim has something to withdraw against.
@@ -238,18 +286,111 @@ describe("HaliasController", function () {
 
   // ── claim ───────────────────────────────────────────────────────────────────
 
+  describe("createInvite", function () {
+    it("registers a keys-only account and takes one fee, from the wallet", async function () {
+      const inviteOwner = ethers.Wallet.createRandom();
+      const r = inviteRegistration(inviteOwner.address);
+      const before = await ethers.provider.getBalance(poolAddr);
+
+      const tx = domain.connect(user).createInvite(r, await inviteParams(r), "0x", "0x", ZERO_PROOF, { value: FEE });
+      await expect(tx)
+        .to.emit(domain, "InviteCreated").withArgs(r.aliasHash, inviteOwner.address, user.address);
+      // Nothing published, because there is no plaintext to publish. Every client labels
+      // aliases from NamePublished, and this entry is meant to be invisible to all of them.
+      await expect(tx).to.not.emit(domain, "NamePublished");
+
+      // A leaf the note can prove membership against, a credit for the claimer to spend, and
+      // no name: the entry is in the registry but not in the namespace.
+      expect(await registry.isRegistered(r.aliasHash)).to.equal(true);
+      expect(await domain.prepaidClaim(r.aliasHash)).to.equal(inviteOwner.address);
+      // And no token, so it cannot be transferred, listed, or mistaken for an alias.
+      await expect(domain.ownerOf(BigInt(r.aliasHash))).to.be.reverted;
+
+      // One fee, and it came from the wallet — the pool's balance is untouched, which is the
+      // legal line this whole design exists to hold.
+      expect(await domain.accumulatedFees()).to.equal(FEE);
+      expect(await ethers.provider.getBalance(poolAddr)).to.equal(before);
+    });
+
+    it("refuses an entry whose identity is not derived from its own keys", async function () {
+      // THE REGRESSION TEST for two names on one fee. If the caller could choose the hash,
+      // this path would register an arbitrary name and then hand out a second one free.
+      const { h } = freshName();
+      const r = inviteRegistration(other.address, { aliasHash: h });
+      await expect(domain.connect(user).createInvite(r, await inviteParams(r), "0x", "0x", ZERO_PROOF, { value: FEE }))
+        .to.be.revertedWithCustomError(domain, "NotAnInviteEntry");
+      expect(await registry.isRegistered(h)).to.equal(false);
+    });
+
+    it("requires exactly the registration fee", async function () {
+      const r = inviteRegistration(other.address);
+      for (const value of [FEE - 1n, FEE + 1n, 0n]) {
+        await expect(domain.connect(user).createInvite(r, await inviteParams(r), "0x", "0x", ZERO_PROOF, { value }))
+          .to.be.revertedWithCustomError(domain, "WrongRegistrationFee");
+      }
+    });
+
+    it("refuses to let anything leave the pool", async function () {
+      // The point of paying in ETH. A withdrawal here would be protocol revenue drawn from
+      // shielded funds however it were dressed up, so the recipient field is refused before
+      // the pool is ever called.
+      const r = inviteRegistration(other.address);
+      const p = await inviteParams(r, { recipient: user.address, publicAmount: withdrawOf(FEE) });
+      await expect(domain.connect(user).createInvite(r, p, "0x", "0x", ZERO_PROOF, { value: FEE }))
+        .to.be.revertedWithCustomError(domain, "InviteMustNotPayOut");
+    });
+
+    it("refuses a withdrawal aimed at this contract by leaving the recipient empty", async function () {
+      // The second half of the same guard: dodge `recipient` by omitting it, and the pool's
+      // own payee check refuses to send value to nobody.
+      await fundPool(FEE);
+      const r = inviteRegistration(other.address);
+      const p = await inviteParams(r, { publicAmount: withdrawOf(FEE) });
+      await expect(domain.connect(user).createInvite(r, p, "0x", "0x", ZERO_PROOF, { value: FEE }))
+        .to.be.revertedWithCustomError(pool, "BadPayee");
+    });
+
+    it("rejects a registration the proof did not authorise", async function () {
+      const r = inviteRegistration(other.address);
+      const p = await inviteParams(r);
+      const tampered = inviteRegistration(relayer.address, { aliasHash: r.aliasHash });
+      await expect(domain.connect(user).createInvite(tampered, p, "0x", "0x", ZERO_PROOF, { value: FEE }))
+        .to.be.revertedWithCustomError(domain, "ClaimNotAuthorised");
+    });
+
+    it("rejects a token-denominated invite and a zero owner", async function () {
+      const r = inviteRegistration(other.address);
+      await expect(domain.connect(user).createInvite(
+        r, await inviteParams(r, { tokenAddress: await token.getAddress() }), "0x", "0x", ZERO_PROOF, { value: FEE },
+      )).to.be.revertedWithCustomError(domain, "ClaimMustBeETH");
+
+      const z = inviteRegistration(ethers.ZeroAddress);
+      await expect(domain.connect(user).createInvite(z, await inviteParams(z), "0x", "0x", ZERO_PROOF, { value: FEE }))
+        .to.be.revertedWithCustomError(domain, "InvalidOwner");
+    });
+
+    it("refuses to reuse an entry, since the same keys hash the same way", async function () {
+      const { r } = await makeInvite();
+      await expect(domain.connect(user).createInvite(r, await inviteParams(r), "0x", "0x", ZERO_PROOF, { value: FEE }))
+        .to.be.revertedWithCustomError(registry, "AliasTaken");
+    });
+  });
+
+  // ── claim ───────────────────────────────────────────────────────────────────
+
   describe("claim", function () {
     it("a relayer submitting a claim does not receive the alias", async function () {
       // THE REGRESSION TEST. The relayer submits, pays the gas, takes its fee — and the
       // alias belongs to the claimer named in the proof-bound registration.
       const relayerFee = ethers.parseEther("0.01");
-      await fundPool(FEE + relayerFee);
+      await fundPool(relayerFee);
+      const invite = await makeInvite();
 
       const r = registration();
       const p = await claimParams(r, { relayer: relayer.address, amount: relayerFee });
       const before = await ethers.provider.getBalance(relayer.address);
 
-      await expect(domain.connect(relayer).claim(r, p, "0x", "0x", ZERO_PROOF, ""))
+      await expect(claimAgainst(invite, r, { params: p }))
         .to.emit(domain, "AliasClaimed").withArgs(r.aliasHash, claimer.address, relayer.address);
 
       expect(await domain.ownerOf(BigInt(r.aliasHash))).to.equal(claimer.address);
@@ -258,73 +399,129 @@ describe("HaliasController", function () {
       // And the relayer was paid by the pool directly, not by this contract.
       const spent = before - await ethers.provider.getBalance(relayer.address);
       expect(spent).to.be.lessThan(relayerFee);   // fee exceeded the gas it cost to submit
-      expect(await domain.accumulatedFees()).to.equal(FEE);
     });
 
-    it("registers with no ETH of the claimer's own", async function () {
-      await fundPool(FEE);
-      const r = registration();
-      const p = await claimParams(r);
+    it("takes no second fee, and nothing at all out of the pool", async function () {
+      // The arithmetic the whole prepaid design exists for: one fee, paid in ETH at creation,
+      // buying both registrations. A claim that drew its fee from the note would be revenue
+      // out of shielded funds — the thing this must never do.
+      await fundPool(ethers.parseEther("1"));
+      const invite = await makeInvite();
+      const poolBefore = await ethers.provider.getBalance(poolAddr);
 
-      await (await domain.connect(user).claim(r, p, "0x", "0x", ZERO_PROOF, "")).wait();
+      const r = registration();
+      await (await claimAgainst(invite, r)).wait();
 
       expect(await domain.ownerOf(BigInt(r.aliasHash))).to.equal(claimer.address);
-      expect(await ethers.provider.getBalance(poolAddr)).to.equal(0n);
+      expect(await domain.accumulatedFees()).to.equal(FEE);
+      expect(await ethers.provider.getBalance(poolAddr)).to.equal(poolBefore);
       expect(await ethers.provider.getBalance(domainAddr)).to.equal(FEE);
     });
 
+    it("refuses a claim with no prepaid credit", async function () {
+      // Without this the claim path is a free registration for anyone who calls it, and the
+      // fee is optional for everybody.
+      const r = registration();
+      await expect(claimAgainst({ inviteOwner: ethers.Wallet.createRandom(), entryHash: rand32() }, r))
+        .to.be.revertedWithCustomError(domain, "NoPrepaidClaim");
+    });
+
+    it("spends a credit exactly once", async function () {
+      // A counter would have been fungible: hold one invite, watch the total, claim as many
+      // names as anyone else had paid for. One credit, one name, keyed to the entry.
+      const invite = await makeInvite();
+      await (await claimAgainst(invite, registration())).wait();
+
+      await expect(claimAgainst(invite, registration()))
+        .to.be.revertedWithCustomError(domain, "NoPrepaidClaim");
+    });
+
+    it("refuses a credit signed by anyone but the invite key", async function () {
+      // The credit is stored with the address allowed to spend it, so watching the chain for
+      // an outstanding invite is not enough to take it. Only the code is.
+      const invite = await makeInvite();
+      const r = registration();
+      const stranger = { inviteOwner: ethers.Wallet.createRandom(), entryHash: invite.entryHash };
+      await expect(claimAgainst(stranger, r))
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
+      // Refused, and still there for its rightful holder.
+      expect(await domain.prepaidClaim(invite.entryHash)).to.equal(invite.inviteOwner.address);
+    });
+
+    it("binds the signature to the name it authorises", async function () {
+      // Otherwise a signature captured in flight — from a mempool, say — registers the credit
+      // to a name of the observer's choosing instead.
+      const invite = await makeInvite();
+      const sig = await signClaimInvite(domain, invite.inviteOwner, invite.entryHash, rand32());
+      await expect(claimAgainst(invite, registration(), { sig }))
+        .to.be.revertedWithCustomError(domain, "NotSignedByAuthority");
+    });
+
+    it("refuses an expired signature", async function () {
+      const invite = await makeInvite();
+      const r = registration();
+      const deadline = BigInt(await time.latest()) - 1n;
+      const sig = await signClaimInvite(domain, invite.inviteOwner, invite.entryHash, r.aliasHash, { deadline });
+      await expect(claimAgainst(invite, r, { sig }))
+        .to.be.revertedWithCustomError(domain, "AuthorizationExpired");
+    });
+
+    it("registers with no ETH of the claimer's own", async function () {
+      // The onboarding claim: submitted by the claimer, from an address that has never held
+      // anything. Nothing in the transaction is payable and no fee is owed.
+      const invite = await makeInvite();
+      const fresh = ethers.Wallet.createRandom().connect(ethers.provider);
+      await (await user.sendTransaction({ to: fresh.address, value: ethers.parseEther("0.05") })).wait();
+      const r = registration({ owner: fresh.address });
+
+      await (await claimAgainst(invite, r, { submitter: fresh })).wait();
+      expect(await domain.ownerOf(BigInt(r.aliasHash))).to.equal(fresh.address);
+    });
+
     it("rejects a registration the proof did not authorise", async function () {
-      await fundPool(FEE);
+      const invite = await makeInvite();
       const r = registration();
       const p = await claimParams(r);
 
       // Every field is bound. Swapping any one of them invalidates the claim.
       for (const tampered of [
         { ...r, owner: relayer.address },
-        { ...r, aliasHash: rand32() },
         { ...r, spendingCommitment: ethers.toBeHex(99n, 32) },
         { ...r, nullifierKeyHash: ethers.toBeHex(99n, 32) },
         { ...r, encryptionPubkey: ethers.toBeHex(99n, 32) },
       ]) {
-        await expect(domain.connect(relayer).claim(tampered, p, "0x", "0x", ZERO_PROOF, ""))
+        await expect(claimAgainst(invite, tampered, { params: p }))
           .to.be.revertedWithCustomError(domain, "ClaimNotAuthorised");
       }
     });
 
-    it("rejects a payout that is not exactly the registration fee", async function () {
+    it("rejects a claim that pays this contract anything", async function () {
+      // Belt and braces around the fee: whatever the proof says, if value lands here the
+      // claim is refused rather than quietly booked as revenue.
       await fundPool(ethers.parseEther("1"));
+      const invite = await makeInvite();
       const r = registration();
-      const p = { ...await claimParams(r), publicAmount: withdrawOf(FEE + 1n) };
-      // externalData still matches, so this gets past authorisation and fails on the money.
+      const p = { ...await claimParams(r), publicAmount: withdrawOf(FEE), recipient: domainAddr };
       p.externalData = ethers.keccak256(encodeRegistration(r));
 
-      await expect(domain.connect(relayer).claim(r, p, "0x", "0x", ZERO_PROOF, ""))
-        .to.be.revertedWithCustomError(domain, "ClaimWrongPayout").withArgs(FEE, FEE + 1n);
-    });
-
-    it("rejects a claim whose payout goes somewhere else", async function () {
-      await fundPool(FEE);
-      const r = registration();
-      const p = { ...await claimParams(r), recipient: relayer.address };
-      p.externalData = ethers.keccak256(encodeRegistration(r));
-
-      await expect(domain.connect(relayer).claim(r, p, "0x", "0x", ZERO_PROOF, ""))
-        .to.be.revertedWithCustomError(domain, "ClaimWrongPayout").withArgs(FEE, 0n);
+      await expect(claimAgainst(invite, r, { params: p }))
+        .to.be.revertedWithCustomError(domain, "ClaimMustPayNothing").withArgs(FEE);
     });
 
     it("rejects a token-denominated claim", async function () {
+      const invite = await makeInvite();
       const r = registration();
       const p = { ...await claimParams(r), tokenAddress: await token.getAddress() };
       p.externalData = ethers.keccak256(encodeRegistration(r));
 
-      await expect(domain.connect(relayer).claim(r, p, "0x", "0x", ZERO_PROOF, ""))
+      await expect(claimAgainst(invite, r, { params: p }))
         .to.be.revertedWithCustomError(domain, "ClaimMustBeETH");
     });
 
     it("rejects a zero owner", async function () {
-      await fundPool(FEE);
+      const invite = await makeInvite();
       const r = registration({ owner: ethers.ZeroAddress });
-      await expect(domain.connect(relayer).claim(r, await claimParams(r), "0x", "0x", ZERO_PROOF, ""))
+      await expect(claimAgainst(invite, r))
         .to.be.revertedWithCustomError(domain, "InvalidOwner");
     });
   });
@@ -345,6 +542,7 @@ describe("HaliasController", function () {
     it("survives registry writes landing between preparation and submission", async function () {
       await initPoseidon();
       await fundPool(FEE * 4n);
+      const invite = await makeInvite();
       const r = registration();
       // Prepared against the root as it stands now.
       const p = await claimParams(r);
@@ -358,7 +556,7 @@ describe("HaliasController", function () {
 
       // The prepared claim still goes through: its root is superseded but known, and the
       // insertion is derived rather than guessed.
-      await expect(domain.connect(relayer).claim(r, p, "0x", "0x", ZERO_PROOF, ""))
+      await expect(claimAgainst(invite, r, { params: p }))
         .to.emit(registry, "AliasRegistered");
       expect(await domain.ownerOf(BigInt(r.aliasHash))).to.equal(claimer.address);
       // The NFT and the registry entry are written by different contracts, so one landing
@@ -387,9 +585,10 @@ describe("HaliasController", function () {
     it("refuses a claim carrying an insertion other than the one being registered", async function () {
       await initPoseidon();
       await fundPool(FEE * 4n);
+      const invite = await makeInvite();
       const r = registration();
       const p = { ...(await claimParams(r)), pendingLeaf: rand32() , outputsEmpty: false};
-      await expect(domain.connect(relayer).claim(r, p, "0x", "0x", ZERO_PROOF, ""))
+      await expect(claimAgainst(invite, r, { params: p }))
         .to.be.revertedWithCustomError(pool, "PendingLeafNotArmed");
     });
 
@@ -404,12 +603,10 @@ describe("HaliasController", function () {
       // elsewhere. Nothing is stolen; the lie is in what people see.
       await initPoseidon();
       await fundPool(FEE * 4n);
+      const invite = await makeInvite();
       const r = registration();
-      await expect(
-        domain.connect(relayer).claim(
-          r, await claimParams(r), "0x", "0x", ZERO_PROOF, "somebodyelse.hls",
-        ),
-      ).to.be.revertedWithCustomError(domain, "NameDoesNotMatchAlias");
+      await expect(claimAgainst(invite, r, { name: "somebodyelse.hls" }))
+        .to.be.revertedWithCustomError(domain, "NameDoesNotMatchAlias");
     });
 
     it("does not leave the authorisation set for a later transaction", async function () {
@@ -417,8 +614,9 @@ describe("HaliasController", function () {
       // persistent, the next ordinary transact would have to carry a stale leaf or revert.
       await initPoseidon();
       await fundPool(FEE * 4n);
+      const invite = await makeInvite();
       const r = registration();
-      await (await domain.connect(relayer).claim(r, await claimParams(r), "0x", "0x", ZERO_PROOF, "")).wait();
+      await (await claimAgainst(invite, r)).wait();
 
       expect(await registry.pendingLeaf()).to.equal(ethers.ZeroHash);
       await expect(pool.connect(user).transact({
