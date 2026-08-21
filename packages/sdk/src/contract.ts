@@ -314,6 +314,9 @@ export async function register(
   // Expiry is read rather than assumed: a reservation past MAX_RESERVATION_AGE is dead, and
   // treating it as live would reveal straight into ReservationExpired.
   let commitTx: ethers.ContractTransactionResponse | null = null;
+  /// The block the reservation landed in. What the reveal has to get past — not "one more
+  /// block than whenever we happened to start waiting".
+  let commitBlock: number | null = null;
   let live = false;
   const madeAt = BigInt(await domain.reservations(commitment));
   if (madeAt !== 0n) {
@@ -335,8 +338,9 @@ export async function register(
     onStep?.("commit");
     try {
       const sent = await domain.reserveRegistration(commitment);
-      await sent.wait();
+      const receipt = await sent.wait();
       commitTx = sent;
+      commitBlock = receipt?.blockNumber ?? null;
     } catch (e: any) {
       if (!isReservationPending(e)) throw e;
     }
@@ -365,9 +369,8 @@ export async function register(
   // Only when we sent the commit ourselves. A resumed reservation is already old enough, and
   // waiting there would add a block to a flow that needs none.
   const provider = domain.runner?.provider;
-  if (commitTx && provider) {
-    onStep?.("waiting");
-    await waitForNextBlock(provider);
+  if (commitBlock !== null && provider) {
+    await waitForBlockAfter(provider, commitBlock, onStep);
   }
 
   onStep?.("register");
@@ -438,21 +441,42 @@ async function revealWhenReservationRipens(
       );
     } catch (e: any) {
       if (i >= attempts - 1 || !isReservationTooNew(e) || !provider) throw e;
-      await waitForNextBlock(provider);
+      // The safety net, for the case the proactive wait did not cover — a reservation made by
+      // someone else in this same block, or a builder packing both transactions together.
+      // Anchored to the current head, because that is the block the estimation just rejected.
+      await waitForBlockAfter(provider, await provider.getBlockNumber());
     }
   }
 }
 
-/// Block until the chain's head moves, or give up.
+/// Block until the head is past `block`, or give up.
 ///
-/// Giving up is not a failure here — the caller retries the send regardless, and a chain that
-/// has not produced a block in this long will report the real reason itself.
-async function waitForNextBlock(provider: ethers.Provider, timeoutMs = 30_000): Promise<void> {
-  const from = await provider.getBlockNumber();
+/// Anchored to the block the reservation landed in rather than to whenever this was called.
+/// Those differ whenever anything took time in between — awaiting the receipt, reading the
+/// registration fee, deriving the salt — and by then the chain has often already moved, so
+/// the correct wait is none at all. Waiting "one more block from now" spent a block interval
+/// on a condition that was already true.
+///
+/// Checked before sleeping for the same reason, and the step is only announced once a wait is
+/// actually going to happen: a "Waiting for the next block" that flashes up and vanishes is
+/// worse than silence.
+///
+/// Giving up is not a failure — the caller retries the send regardless, and a chain that has
+/// not produced a block in this long will report the real reason itself.
+async function waitForBlockAfter(
+  provider: ethers.Provider,
+  block: number,
+  onStep?: (step: "waiting") => void,
+  timeoutMs = 30_000,
+): Promise<void> {
+  if (await provider.getBlockNumber() > block) return;
+  onStep?.("waiting");
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
-    await new Promise((r) => setTimeout(r, 2_000));
-    if (await provider.getBlockNumber() > from) return;
+    // A second, not two. Block times vary by chain and the cost of asking is one eth_blockNumber
+    // — on a fast chain a two-second granularity is most of the wait it is measuring.
+    await new Promise((r) => setTimeout(r, 1_000));
+    if (await provider.getBlockNumber() > block) return;
   }
 }
 

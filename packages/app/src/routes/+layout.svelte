@@ -47,12 +47,28 @@
 	// the same alias name on a testnet and on mainnet are unrelated identities.
 	const net = $derived($clientState.chainId !== null ? getNetwork($clientState.chainId) : undefined);
 
-	// A relay link opens on the relay screen, connected or not — RelayWindow asks for a wallet
-	// itself. Landing on the connect page instead would look like the link had failed.
+	// A relay or claim link opens on its screen, connected or not — landing on the connect page
+	// instead would look like the link had failed.
+	//
+	// Opened again when a wallet arrives, which is the fix for arriving by link and finding a
+	// dead end. Neither screen can act without one, so the user has to leave the panel to
+	// connect; without this they come back to a closed panel and a link that appears to have
+	// done nothing.
+	//
+	// Keyed on the address so it fires once per connection state rather than on every store
+	// emission. Closing the panel by hand has to stick, and an effect that reopened it on any
+	// change would make it unclosable.
+	let openedFor: string | null = null;
 	$effect(() => {
+		const addr = $clientState.address;
 		if (typeof location === 'undefined') return;
-		if (/[#&]relay=/.test(location.hash)) panel = 'relay';
-		else if (/[#&]claim=/.test(location.hash)) panel = 'redeem';
+		const relay = /[#&]relay=/.test(location.hash);
+		const claim = /[#&]claim=/.test(location.hash);
+		if (!relay && !claim) return;
+		const key = addr ?? 'disconnected';
+		if (key === openedFor) return;
+		openedFor = key;
+		panel = relay ? 'relay' : 'redeem';
 	});
 </script>
 

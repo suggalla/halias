@@ -154,7 +154,16 @@
 	</header>
 
 	{#if !connected}
-		<p class="hint">Connect a wallet to redeem. You need gas, but no balance beyond it.</p>
+		<!-- Says what to do and where, because this panel cannot do it. Redeeming registers a
+		     new alias, so it needs note keys as well as a wallet — "connect a wallet" was
+		     understating it, and a reader who connected one and came back to the same message
+		     would have no idea what was still missing. The link survives all of it now. -->
+		<p class="hint">
+			{#if fromLink}Your invite is loaded and will keep.{/if}
+			Redeeming needs two things: a wallet to pay gas, and a recovery phrase for the alias
+			you are about to register. Close this and set both up — this panel reopens by itself
+			when you are done.
+		</p>
 	{:else}
 		{#if fromLink}
 			<p class="hint">Invite loaded from a link.</p>
