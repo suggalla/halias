@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { keccak256, toUtf8Bytes, parseEther, formatEther, isAddress } from 'ethers';
+	import { RELAY_LABEL, RELAY_HINT } from '../copy.js';
 	import {
 		clientState,
 		clientFor,
@@ -187,12 +188,8 @@
 		<label class="check">
 			<input type="checkbox" bind:checked={delegate} disabled={busy} />
 			<span>
-				I have no ETH for gas
-				<em>
-					Someone else submits this and is paid out of the invite itself, so you need nothing
-					at all. The alias is still yours — the address is fixed inside the proof and a
-					submitter cannot redirect it.
-				</em>
+				{RELAY_LABEL}
+				<em>{RELAY_HINT}</em>
 			</span>
 		</label>
 

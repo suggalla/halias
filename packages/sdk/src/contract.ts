@@ -184,6 +184,35 @@ export function buildTransactParams(
   };
 }
 
+/// Send with a gas limit a fifth above the estimate.
+///
+/// Every call routed through here has already paid for a proof by the time it is broadcast,
+/// so running out of gas does not cost a retry — it costs the proof as well, and the proof is
+/// the expensive part. A fifth of headroom is far cheaper than that, and unspent gas is
+/// refunded, so the only cost of the margin is a slightly larger balance check.
+///
+/// It also pins the limit rather than leaving it to the wallet. An estimate that fails for a
+/// transient reason — a root that moved, a momentary RPC error — leaves some wallets falling
+/// back to a default far below what these calls need, which surfaces as "ran out of gas"
+/// rather than as the estimation failure it actually was.
+///
+/// Falling back to an unpinned send when estimation throws is deliberate: the error that
+/// comes back from the real send is the one worth showing, decoded against the ABI, rather
+/// than whatever an estimate reported.
+async function sendWithMargin(
+  contract: ethers.Contract,
+  method: string,
+  args: readonly any[],
+  overrides: Record<string, any> = {},
+): Promise<ethers.ContractTransactionResponse> {
+  try {
+    const estimate = await contract[method].estimateGas(...args, overrides);
+    return await contract[method](...args, { ...overrides, gasLimit: (estimate * 12n) / 10n });
+  } catch {
+    return await contract[method](...args, overrides);
+  }
+}
+
 export async function transact(
   pool: ethers.Contract,
   poolRoot: bigint[],
@@ -199,11 +228,11 @@ export async function transact(
   proofBytes: string,
   value: bigint = 0n,
 ): Promise<ethers.ContractTransactionResponse> {
-  return pool.transact(
+  return sendWithMargin(pool, "transact", [
     buildTransactParams(poolRoot, treeNumber, registryRoot, publicAmount, tokenAddress,
                         inputNullifiers, outputCommitments, params),
-    encryptedOutput0, encryptedOutput1, proofBytes, { value },
-  );
+    encryptedOutput0, encryptedOutput1, proofBytes,
+  ], { value });
 }
 
 /// Register in two steps, because one step is a race.
@@ -815,13 +844,13 @@ export async function claim(
   invite?: { aliasHash: bigint; deadline: bigint; signature: string },
 ): Promise<ethers.ContractTransactionResponse> {
   if (!invite) throw new Error("claim needs the invite credit it is redeeming");
-  return domain.claim(
+  return sendWithMargin(domain, "claim", [
     registrationTuple(registration),
     buildTransactParams(poolRoot, treeNumber, registryRoot, publicAmount, 0n,
                         inputNullifiers, outputCommitments, params, pendingLeaf),
     encryptedOutput0, encryptedOutput1, proofBytes, name,
     h32(invite.aliasHash), invite.deadline, invite.signature,
-  );
+  ]);
 }
 
 /// Create an invite: register the keys-only entry its note is paid to, and fund it, in one
@@ -846,13 +875,12 @@ export async function createInvite(
   pendingLeaf: bigint,
   fee: bigint,
 ): Promise<ethers.ContractTransactionResponse> {
-  return domain.createInvite(
+  return sendWithMargin(domain, "createInvite", [
     registrationTuple(registration),
     buildTransactParams(poolRoot, treeNumber, registryRoot, publicAmount, 0n,
                         inputNullifiers, outputCommitments, params, pendingLeaf),
     encryptedOutput0, encryptedOutput1, proofBytes,
-    { value: fee },
-  );
+  ], { value: fee });
 }
 
 /// Sign the authority to spend an invite's prepaid registration.

@@ -16,6 +16,7 @@
 	import PrivacyNote from './PrivacyNote.svelte';
 	import InviteWindow from './InviteWindow.svelte';
 	import ReviewStep from './ReviewStep.svelte';
+	import { RELAY_LABEL, RELAY_HINT } from '../copy.js';
 	import OwnershipView from './OwnershipView.svelte';
 	import DepositWindow from './DepositWindow.svelte';
 	import ViewKeyView from './ViewKeyView.svelte';
@@ -310,10 +311,13 @@
 			phase = 'handoff';
 			return;
 		}
+		// `reviewTarget`, not the raw input — the same string the review asked you to confirm.
+		// Reporting "sent to gg" when the payment went to gg.hls describes a different thing
+		// from what happened, and read before `reset()` clears the field it derives from.
 		msg =
 			mode === 'transfer'
-				? `Transferred ${amt} ${sym} to ${to}`
-				: `Withdrew ${amt} ${sym} to ${to}`;
+				? `Transferred ${amt} ${sym} to ${reviewTarget}`
+				: `Withdrew ${amt} ${sym} to ${reviewTarget}`;
 		reset();
 	}
 
@@ -534,12 +538,8 @@
 				<label class="check">
 					<input type="checkbox" bind:checked={delegate} disabled={busy} />
 					<span>
-						Submit with another account
-						<em>
-							A relayer, or another wallet of your own. Whoever sends it pays the gas and
-							collects the fee, so this alias needs no ETH — and only their address appears
-							on chain.
-						</em>
+						{RELAY_LABEL}
+						<em>{RELAY_HINT}</em>
 					</span>
 				</label>
 

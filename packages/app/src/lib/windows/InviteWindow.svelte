@@ -15,6 +15,15 @@
 	// balance, so it lives in the top bar where someone holding only a code can reach it.
 
 	let amount = $state('');
+	// Named rather than described. "Your wallet pays the registration fee" is true and useless
+	// when the fee and the amount are both 0.001: two debits of the same size, one from the
+	// shielded balance and one from the wallet, and no way to tell which was which.
+	let fee = $state<bigint | null>(null);
+	$effect(() => {
+		if (fee === null) run(() => getClient().registrationFee()).then((v) => {
+			if (typeof v === 'bigint') fee = v;
+		});
+	});
 	let created = $state<{ inviteCode: string; amount: bigint } | null>(null);
 	let copied = $state<'code' | 'link' | null>(null);
 	let formError = $state<string | null>(null);
@@ -171,10 +180,14 @@
 			<input class="mono" bind:value={amount} placeholder="0.2" inputmode="decimal" disabled={busy} />
 		</label>
 		<p class="hint">
-			From this alias's shielded balance of {formatEther(source.balance)} ETH, so the amount
-			never appears on chain. Your wallet pays only the registration fee. A relay fee — if
-			they have no ETH and need someone to submit for them — comes out of the invite, so
-			leave room for it. They choose it at redemption, not you.
+			Comes out of this alias's shielded balance of {formatEther(source.balance)} ETH, so the
+			amount never appears on chain. Separately, your wallet pays
+			{fee === null ? 'the registration fee' : `${formatEther(fee)} ETH`} plus gas — that
+			buys the name whoever redeems this will pick, so they receive the full amount.
+		</p>
+		<p class="hint">
+			A relay fee is the one thing that does come out of the invite, if they have no ETH and
+			need someone to submit for them. They choose it at redemption, not you, so leave room.
 		</p>
 
 		<button class="primary" disabled={busy} onclick={create}>
