@@ -59,7 +59,7 @@
 <div class="app">
 	<header class="bar">
 		<a class="brand" href="/" onclick={(e) => { e.preventDefault(); panel = 'none'; }}>
-			halias
+			Halias
 		</a>
 		<!-- Breadcrumb rather than a progress meter: these are places you can be, and you can go
 		     back to one — which it now actually does. It was inert, and it also carried both

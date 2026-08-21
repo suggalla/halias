@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-// Copyright 2026 halias contributors.
+// Copyright 2026 Halias contributors.
 pragma solidity 0.8.28;
 
 import { HaliasRegistry } from "./HaliasRegistry.sol";

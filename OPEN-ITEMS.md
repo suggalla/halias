@@ -122,7 +122,7 @@ Underconstrained signals do not fail tests, so the passing suites are not eviden
 
 - `SECURITY.md` points at `github.com/suggalla/halias/security/advisories/new`, inferred from
   git config. If the repository is published under a different name or owner, that link 404s.
-- Contract headers say `Copyright 2026 halias contributors.`
+- Contract headers say `Copyright 2026 Halias contributors.`
 
 ## Gotcha that cost time three times
 

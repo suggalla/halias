@@ -1,4 +1,4 @@
-# halias
+# Halias
 
 **Private payments made simple. No admin keys, no clunky addresses.**
 
@@ -8,7 +8,7 @@ zero-knowledge proofs rather than by trusting an operator.
 **[Try it → suggalla.github.io/halias](https://suggalla.github.io/halias/)** — running against
 Sepolia. Bring a wallet with some Sepolia ETH; everything else the app derives for you.
 
-*halias = Hal (Finney) + alias*
+*Halias = Hal (Finney) + alias*
 
 **This is unaudited testnet software with a single-contributor trusted setup. Do not put real
 money in it.** See [Status](#status).
@@ -55,7 +55,7 @@ money in it.** See [Status](#status).
 ## Why it exists
 
 Privacy tools and naming services are separate systems today. Railgun, Tornado and Aztec hide
-value behind keys; ENS and Fluidkey make addresses readable without hiding much. halias joins
+value behind keys; ENS and Fluidkey make addresses readable without hiding much. Halias joins
 them at the circuit level — the proof spans the identity registry and the payment pool at once.
 
 The consequence that matters is not "names are nicer than hex". It is that **registry
@@ -305,6 +305,13 @@ than redeployed. `HaliasDeployer` at `0xCed57E02…fE4e` created the first three
 transaction and is not verifiable: it links Poseidon inside its constructor only, so the
 addresses cannot be recovered from deployed bytecode.
 
+These were deployed and verified from `e0eee20`, before the project name was capitalised in
+the source headers. Recompiling at `main` therefore differs from the deployed bytecode in its
+last 32 bytes and nowhere else: solc embeds a hash of the source, and a changed comment
+changes that hash. The executable code is byte-identical, which is checkable by compiling both
+and comparing everything before the trailing metadata. The next deployment removes the
+discrepancy.
+
 **The proving key cannot be rebuilt.** A phase-2 ceremony draws fresh entropy every run, so
 recompiling the circuits produces a different key that will not verify against these
 contracts. Check a downloaded artifact against
@@ -340,7 +347,7 @@ Under `packages/protocol/docs/`:
 - [prior-art-review.md](packages/protocol/docs/prior-art-review.md) — checked against
   Semaphore, World ID and zk.money; two real bugs came out of it.
 - [legal-considerations.md](packages/protocol/docs/legal-considerations.md) — the Tornado Cash
-  and Railgun record, and where halias differs. Engineering analysis, not legal advice.
+  and Railgun record, and where Halias differs. Engineering analysis, not legal advice.
 - [rpc-surface.md](packages/protocol/docs/rpc-surface.md) — what the client reveals to its
   RPC provider. The category no contract audit covers.
 - [static-analysis.md](packages/protocol/docs/static-analysis.md) — Slither, Aderyn,
@@ -396,4 +403,4 @@ GPL-3.0-only. See [LICENSE](LICENSE).
 
 Required by the dependencies — circomlib, Tornado Nova, snarkjs are all GPL-3.0 — and the right
 licence regardless. Nobody should run a privacy tool they cannot read, and copyleft is what
-keeps a modified halias readable too.
+keeps a modified Halias readable too.

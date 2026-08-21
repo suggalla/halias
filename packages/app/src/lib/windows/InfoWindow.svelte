@@ -7,7 +7,7 @@
 </script>
 
 <div class="info">
-	<h1>halias</h1>
+	<h1>Halias</h1>
 	<p class="lede">
 		Named private payments. Register a <code>.hls</code> alias, and every transfer provably
 		goes between registered identities — without revealing which ones.

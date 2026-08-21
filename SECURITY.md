@@ -2,7 +2,7 @@
 
 ## The short version
 
-halias is **unaudited** and its trusted setup has **one contributor**. Do not put real money in
+Halias is **unaudited** and its trusted setup has **one contributor**. Do not put real money in
 it. Anything you deposit today is at risk from bugs nobody has found yet and from a setup that
 one person could have subverted.
 
