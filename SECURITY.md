@@ -72,7 +72,7 @@ it is not written by the code path that would be exploited.
 
 ## What we have done, and what that is worth
 
-- 180 in-process tests, 86 SDK tests, 133 live-RPC checks, including E2E with real proofs.
+- 243 in-process tests, 92 SDK tests, 158 live-RPC checks, including E2E with real proofs.
 - Slither, Aderyn, circomspect and Picus, triaged in `docs/static-analysis.md`.
 - A pre-freeze under-constraint audit of `transact.circom`, which found and fixed a nullifier
   domain collision.

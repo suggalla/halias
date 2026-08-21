@@ -278,7 +278,7 @@ from a wallet signature was removed as phishable and must not come back — see
 | Circuit | Frozen at 4 in / 2 out, with the claim path in a second circuit |
 | Trusted setup | **One contributor. Ours.** Not suitable for real funds |
 | Networks | **Sepolia**, and local. No mainnet deployment, and there will not be one before an audit |
-| Tests | 228 hardhat, 86 SDK, 17 app, 157 e2e-live |
+| Tests | 243 hardhat, 92 SDK, 17 app, 158 e2e-live |
 
 Two things gate mainnet and neither is negotiable: an external audit of the circuit and the
 contracts, and a multi-party ceremony over a public Powers of Tau file. A privacy pool whose

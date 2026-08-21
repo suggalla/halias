@@ -1814,9 +1814,9 @@ export class Halias extends HaliasCore {
 
   /// Every output ever addressed to an invite's keys, spent or not.
   ///
-  /// Split out from {findInviteNote} because "no unspent note" has two causes that need
-  /// telling apart: an invite that was claimed, and one that was registered but never funded.
-  /// The first is finished, the second is a half-built invite waiting to be resumed.
+  /// Split out from {findInviteNote} because {listInvites} needs to distinguish an invite that
+  /// was claimed from one that never existed, and both read as "no unspent note". Creation is
+  /// atomic, so there is no third case: an entry in the registry always has its note.
   private async ownedInviteOutputs(temp: InviteKeys): Promise<OwnedEntry[]> {
     // The one place ciphertext is needed after the fact. The cache drops it — it is the bulk
     // of the bytes and its only use is trial decryption, which has already happened for every

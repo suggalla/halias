@@ -80,9 +80,7 @@ abstract contract SMTRegistry {
     // Identity and position are separate: the leaf commits to aliasKey while the path follows
     // the slot assigned at first registration, which makes collisions impossible rather than
     // merely expensive. A rotation reuses the alias's slot and updates in place.
-    /// @dev Virtual for the same reason as {_registryCapacity}: so a mock can swap the write
-    ///      strategy and be measured against this one with everything around it identical.
-    function _smtUpdate(bytes32 aliasHash, bytes32 value) internal virtual {
+    function _smtUpdate(bytes32 aliasHash, bytes32 value) internal {
         uint256 key = uint256(aliasHash) % FIELD_PRIME;
 
         uint32 slot = aliasSlot[aliasHash];

@@ -46,8 +46,10 @@ relitigated. Not a roadmap — the README has that. This is the detail a roadmap
   Android WebView, and replacing `window.ethereum`.
 - **No `hls1…` payment strings.** Passing opaque strings is the thing the product exists to
   remove.
-- **Registry depth stays 32.** Registration measures ~1.13M gas and depth dominates it, but the
-  registry has no rollover, so over-provisioning is deliberate.
+- **Registry depth stays 32.** Depth is 81% of a registration and cutting it is the largest
+  single saving available — 237,080 at depth 24, 474,160 at depth 16 — but every one of them
+  buys a permanent capacity ceiling frozen by the ceremony, and 32 levels is 4.29e9 aliases
+  with no ceiling at all. See the gas entry below for the rest of the arithmetic.
 - **`REGISTRY_ROOT_MAX_AGE` stays 1 hour.** Raising it lengthens the window in which a payment
   can land on rotated-away or previous-owner keys, and `RELAY_MAX_AGE_SECONDS` (45 min) binds
   first anyway.
@@ -61,9 +63,11 @@ relitigated. Not a roadmap — the README has that. This is the detail a roadmap
   paid for; charging twice defeats the point of removing the pool fee at all. The accepted
   cost is that creator and claimer are linkable through the credit — acceptable because this
   is an onboarding feature, not a privacy one, and the *amounts* stay private throughout.
-- **Gas: nothing left is worth a ceremony.** Measured, not estimated — `scripts/gas-probe.ts`
-  for the primitives, `scripts/gas-append.ts` for registration end to end. A transact is
-  ~882k with the real verifier and a registration 1,176,025.
+- **Gas: the constants are spent; what remains is structural.** Measured against the canonical
+  Poseidon build, with throwaway probes since deleted — one Poseidon(2) is 18,841 gas, one
+  registry level 29,635, one Groth16 public signal ~6,150 (ECMUL 6,000 + ECADD 150). A transact
+  is ~882k with the real verifier and a registration 1,187,200. **Deferred: this is a Sepolia
+  deployment and there is no mainnet plan, so none of the below is worth doing now.**
   - *Packing all 20 public signals into one hashed signal:* saves ~117k in the verifier
     (~6,150 per signal: ECMUL 6,000 + ECADD 150), and costs 345,372 to fold 20 values with
     Poseidon on chain — a **net loss of 228k**. Keccak costs 325 gas on chain but needs
@@ -83,16 +87,32 @@ relitigated. Not a roadmap — the README has that. This is the detail a roadmap
     237,080, 32→20 saves 355,620, 32→16 saves 474,160. All of them buy a permanent capacity
     ceiling frozen by the ceremony. Rejected: 32 levels is 4.29e9 aliases and no ceiling at all.
   - *Making registration take an append-only path* (registrations are already appends; only
-    rotations are true updates) measures **108,556, 9.1%** — `MockAppendRegistry` is the real
+    rotations are true updates) measures **108,556, 9.1%**, from a mock that was the real
     contract with only the tree write swapped. Rejected for what the other half costs: with no
     stored nodes a rotation must carry its sibling path in calldata and verify it before
     recomputing (~64 hashes against 32), the `filledSubtrees` entries a rotation's path runs
     through must be repaired or the root corrupts silently, and `getSmtSiblings` disappears —
     which is the SDK's fallback whenever a client's local mirror is stale.
-  - What remains is a privacy decision rather than an engineering one: `HaliasPool.sol:267`
-    writes all four nullifier slots unconditionally, so a one-note spend pays four cold
-    SSTOREs. Skipping the unused ones leaks how many real inputs a transaction has — the same
-    trade `outputsEmpty` documents and declines by default.
+  - *The prefix index* costs 44,566 per registration and nothing calls `getAliasesByPrefix`
+    yet — see item 2. Reconstructible from `AliasRegistered`, which the SDK already scans.
+  - *Four nullifier SSTOREs*, 88,400 per transact, `HaliasPool.sol:267`. Skipping the unused
+    ones leaks how many real inputs a transaction has — the same trade `outputsEmpty`
+    documents and declines by default.
+  - *INPUTS 4 -> 2* is the largest ceremony-gated lever left: two fewer nullifier writes and
+    six fewer public signals, ~81,000 (9%), plus a smaller circuit.
+    `circuit-freeze-review.md` already says that choice expires at the mainnet ceremony.
+
+  **None of it changes the order of magnitude, which is the point.** ~404k of a transact and
+  ~948k of a registration is on-chain Poseidon walking a tree, and the only way to remove it
+  is to move the insertion into a proof. Doing that per-transaction reintroduces exactly what
+  `f1-claim-root-prediction.md` rejected — a proof that commits to a leaf index dies whenever
+  anyone else's lands first, so every transact would race every other one. The version that
+  works is deferring insertion to a batch, and `gasbench`'s exit path shows the floor it
+  leaves: 160,796 without insertion, so ~500k with a real verifier. Below that sits the
+  Groth16 pairing at 181,000, fixed by BN254, removable only by amortising one proof over many
+  transactions. Both exits sell a property the design currently holds — immediate finality, or
+  submittable-by-anyone — and both are larger than everything else left before launch. The
+  deployment target decides whether either is ever worth it, and on an L2 neither is.
 - **Railgun is upgradeable** — `PausableUpgradableProxy` under token governance, which can
   upgrade and pause. `HaliasPool` has neither. `legal-considerations.md` understates this.
 
@@ -129,7 +149,14 @@ the repo:
 hardhat. **Pointing it at a testnet occasionally is the highest-value testing change
 available** — it needs an RPC URL and a funded key, and nothing else about it changes.
 
-## Still gating mainnet
+## Target: Sepolia. There is no mainnet plan
+
+Stated because so much of this page only makes sense against it. Gas work, ceremony work and
+capacity limits all matter differently on a testnet, and the answer to most of them right now
+is "not yet, and possibly not by us" — the optimisation items are written up with their
+numbers precisely so someone else can pick them up without re-deriving anything.
+
+## What mainnet would still need
 
 An external audit and a multi-party ceremony. Nothing else on this page moves either.
 

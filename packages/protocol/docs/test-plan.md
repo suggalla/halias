@@ -2,7 +2,7 @@
 
 What is covered, what is not, and the gap that matters before anyone else runs this.
 
-All four boundaries are covered — **376 checks**: 179 hardhat, 86 SDK, 111 e2e-live. `scripts/e2e-live.ts` closed the last gap
+All four boundaries are covered — **493 checks**: 243 hardhat, 92 SDK, 158 e2e-live. `scripts/e2e-live.ts` closed the last gap
 and found eight real SDK bugs doing it, one of them permanent fund loss.
 
 ## Coverage by layer
@@ -16,7 +16,7 @@ The system has four boundaries, and a bug at each one fails differently.
 | SDK internals | `packages/sdk/test/sdk.test.ts` | 44 |
 | SDK ↔ contracts | `scripts/e2e-live.ts` | 46 |
 
-179 protocol tests and 86 SDK tests pass. `e2e-live.ts` is not part of either suite — it
+243 protocol tests and 92 SDK tests pass. `e2e-live.ts` is not part of either suite — it
 needs a running node and real proving artifacts — and passes against a local node in ~25s.
 
 ### Contracts alone
