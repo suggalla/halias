@@ -1261,7 +1261,12 @@ export class Halias extends HaliasCore {
     // The index is the first whose invite alias is unregistered. Registration is the record —
     // there is no separate ledger to keep in step, and an invite created on another device
     // shows up here because the chain already knows about it.
-    const index  = await this.nextInviteIndex();
+    //
+    // A half-built invite is finished rather than stepped over. See {resumableInviteIndex}:
+    // registration is the record, so an index whose funding failed still reads as taken, and
+    // starting a fresh one would leave the fee already paid there unrecoverable.
+    const resuming = await this.resumableInviteIndex();
+    const index  = resuming ?? await this.nextInviteIndex();
     const secret = inviteSecretAt(this.derivationRoot, index);
     const temp   = deriveInviteKeys(secret);
 
@@ -1294,12 +1299,14 @@ export class Halias extends HaliasCore {
     const inviteSalt = ethers.keccak256(ethers.concat([
       ethers.toBeHex(secret, 32), ethers.toUtf8Bytes(inviteName),
     ]));
-    const regTx = await contractRegister(
-      this.domain, inviteName, temp.spendingCommitment,
-      temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
-      temp.ownerAddress, inviteSalt,
-    );
-    await regTx.wait();
+    if (resuming === null) {
+      const regTx = await contractRegister(
+        this.domain, inviteName, temp.spendingCommitment,
+        temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
+        temp.ownerAddress, inviteSalt,
+      );
+      await regTx.wait();
+    }
     await this.refresh();
 
     // Funded from notes, not from the wallet. This used to be shaped like a deposit — no
@@ -1728,7 +1735,12 @@ export class Halias extends HaliasCore {
     return { txHash: await this.settle(tx), amount: note.amount };
   }
 
-  private async findInviteNote(temp: InviteKeys): Promise<OwnedEntry | null> {
+  /// Every output ever addressed to an invite's keys, spent or not.
+  ///
+  /// Split out from {findInviteNote} because "no unspent note" has two causes that need
+  /// telling apart: an invite that was claimed, and one that was registered but never funded.
+  /// The first is finished, the second is a half-built invite waiting to be resumed.
+  private async ownedInviteOutputs(temp: InviteKeys): Promise<OwnedEntry[]> {
     // The one place ciphertext is needed after the fact. The cache drops it — it is the bulk
     // of the bytes and its only use is trial decryption, which has already happened for every
     // output the client itself owns. An invite is decrypted with a *different* key, so a warm
@@ -1743,10 +1755,36 @@ export class Halias extends HaliasCore {
       this.spentNullifiers = new Set();
       await this.refresh();
     }
-    const owned = findMyOutputs(
+    return findMyOutputs(
       this.allOutputs, temp.spendingCommitment, temp.nullifierKey, temp.encryption.privateKey,
     );
+  }
+
+  private async findInviteNote(temp: InviteKeys): Promise<OwnedEntry | null> {
+    const owned = await this.ownedInviteOutputs(temp);
     return owned.find(e => !this.spentNullifiers.has(computeNullifier(temp.nullifierKey, e.treeNumber, e.leafIndex))) ?? null;
+  }
+
+  /// An invite whose alias was registered but whose note never landed.
+  ///
+  /// createInvite is three transactions — reserve, reveal, fund — and only the first two
+  /// resume on their own. If the funding one fails, the alias is registered, so
+  /// {nextInviteIndex} steps over that index and the next invite is built at a fresh one:
+  /// the half-built invite is orphaned, its registration fee is spent, and listInvites hides
+  /// it because it holds nothing. Resuming costs one funding transaction instead of another
+  /// registration, and is the difference between a recoverable interruption and a small
+  /// permanent loss.
+  ///
+  /// Stops at the first unregistered index. Beyond that there is nothing registered to
+  /// resume, and walking further would only re-ask the chain about invites that do not exist.
+  private async resumableInviteIndex(limit = 256): Promise<number | null> {
+    for (let i = 0; i < limit; i++) {
+      const secret = inviteSecretAt(this.derivationRoot, i);
+      const name   = this.inviteNameFor(secret);
+      if (!(await this.registry.isRegistered(this.inviteAliasHash(name)) as boolean)) return null;
+      if ((await this.ownedInviteOutputs(deriveInviteKeys(secret))).length === 0) return i;
+    }
+    return null;
   }
 
   /// Everything this alias has done, newest first.

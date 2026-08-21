@@ -163,10 +163,18 @@ export async function scanEvents(
     if (onProgress) onProgress(Math.floor(((cur - fromBlock) / (total || 1)) * 100));
     // The final chunk ends at "latest", resolved by the node, so anything mined since the
     // block number was read is still picked up.
+    // Clamped, because `cur` can be past the provider's view of the head — see above, a
+    // resumed scan does that routinely. Asking for `fromBlock` above `toBlock` is not merely
+    // empty: a node computes the span unsigned, so it underflows to 18446744073709551615 and
+    // comes back as "range exceeds limit of 10000", which reads like a chunk-size problem and
+    // is not one. Hardhat answers it happily, so this only ever appears against a real node.
+    //
+    // Re-reading those few blocks costs nothing: outputs dedupe by global index and
+    // nullifiers land in a Set, so a scan that overlaps itself is idempotent by construction.
     const chunk = await provider.getLogs({
       address: [poolAddress, registryAddress, controllerAddress],
       topics: [wanted],
-      fromBlock: cur,
+      fromBlock: Math.min(cur, latestBlock),
       toBlock: isLast ? "latest" : end,
     });
     allLogs.push(...chunk);
