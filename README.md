@@ -5,6 +5,9 @@
 Send ETH and ERC-20s privately, to a recipient you can actually name — both guaranteed by
 zero-knowledge proofs rather than by trusting an operator.
 
+**[Try it → suggalla.github.io/halias](https://suggalla.github.io/halias/)** — running against
+Sepolia. Bring a wallet with some Sepolia ETH; everything else the app derives for you.
+
 *halias = Hal (Finney) + alias*
 
 **This is unaudited testnet software with a single-contributor trusted setup. Do not put real
@@ -284,7 +287,9 @@ because transactions are opaque, nobody could tell afterwards whether they had.
 
 ## Live on Sepolia
 
-Verified on Etherscan, so the source behind each address can be read rather than trusted.
+The app is at **[suggalla.github.io/halias](https://suggalla.github.io/halias/)**, built from
+`main` and pointed at the contracts below. Verified on Etherscan, so the source behind each
+address can be read rather than trusted.
 
 | | |
 |---|---|
