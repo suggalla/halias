@@ -1,3 +1,4 @@
+import { base } from '$app/paths';
 // Every network is optional. A static import of a missing file is a build error, and neither
 // deployment is guaranteed to exist: a fresh clone has never run a local deploy, and there is
 // currently no live Sepolia deployment at all — the last one predates the contract split and
@@ -130,13 +131,19 @@ export function isSplitDeployment(net: NetworkConfig): boolean {
 
 // One circuit handles deposit, transfer and withdraw via a signed publicAmount, so there
 // is a single wasm/zkey pair. The v0 split into withdraw/transfer is long gone.
+// Prefixed with `base`, which is empty in dev and "/halias" on Pages.
+//
+// These are fetched as strings rather than resolved as links, so `paths.relative` does not
+// reach them — a leading slash means the domain root wherever the app is actually served
+// from. Served under a subpath, every one of them 404s, and the 404 page is HTML: the failure
+// surfaces as WebAssembly.compile() rejecting "3c 21 44 4f", which is "<!DO".
 export const ARTIFACT_URLS = {
-	transactWasm: '/artifacts/transact.wasm',
-	transactZkey: '/artifacts/transact_final.zkey',
+	transactWasm: `${base}/artifacts/transact.wasm`,
+	transactZkey: `${base}/artifacts/transact_final.zkey`,
 	// Claiming an invite is the one flow that registers an alias while spending, and it needs
 	// the larger circuit. Fetched only when that flow runs — see getArtifacts().
-	claimWasm: '/artifacts/transactClaim.wasm',
-	claimZkey: '/artifacts/transactClaim_final.zkey'
+	claimWasm: `${base}/artifacts/transactClaim.wasm`,
+	claimZkey: `${base}/artifacts/transactClaim_final.zkey`
 };
 
 /// What this chain offers, ETH first. Falls back to ETH alone for an unknown chain, which is
