@@ -538,9 +538,6 @@ async function main() {
   // shows the target slot empty there, and derives the result. Intervening writes are
   // irrelevant as long as the root stays inside the freshness window.
   console.log(`\nclaim vs concurrent registry writes`);
-  // Topped up because an invite now costs its amount *plus* the registration fee: creating one
-  // is a single `claim`, and the domain is paid out of the notes rather than from the wallet.
-  await bob.deposit("0.4");
   const raceInvite = await bob.createInvite("0.3");
   const racer = mk(new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider) as any);
   await (await new ethers.Wallet(LOCAL_KEY, provider)
@@ -806,15 +803,10 @@ async function main() {
   // deposit — no inputs, a positive publicAmount, the amount as msg.value — which put the
   // invite's value in plaintext on chain and left this balance untouched. The check below
   // only ever bounded the balance from underneath, so it passed either way and the drift
-  // went unnoticed.
-  //
-  // Amount *plus* the registration fee: creating an invite is one `claim` now, and the domain
-  // is paid by the pool rather than by the wallet. This assertion is what caught that, to the
-  // wei, which is the whole argument for writing it two-sided.
-  const inviteFee = await alice.registrationFee();
-  eq("creating an invite spends the amount and the registration fee",
+  // went unnoticed. Funding from notes has to *reduce* this balance by exactly the amount.
+  eq("creating an invite spends notes rather than depositing",
      ethers.formatEther((await alice.balance()).total),
-     ethers.formatEther(before - ethers.parseEther("0.3") - inviteFee));
+     ethers.formatEther(before - ethers.parseEther("0.3")));
 
   const listed = await alice.listInvites();
   check("a created invite appears in the list", listed.length > 0, `${listed.length} listed`);
@@ -835,12 +827,12 @@ async function main() {
   check("a reclaimed invite is no longer claimable", !after.claimable);
   eq("and reports no amount", String(after.amount), "null");
 
-  // Exactly back less the fee, not approximately. The registration bought a real alias and is
-  // not refundable — reclaiming recovers the invite's value and nothing else. An inequality
-  // here is what let a deposit-shaped createInvite pass for months.
+  // Exactly back, not approximately. The registration fee is paid by the wallet rather than
+  // out of a note, so nothing leaves the shielded balance across a create-and-reclaim round
+  // trip. An inequality here is what let a deposit-shaped createInvite pass for months.
   const recovered = (await alice.balance()).total;
-  eq("the funds came back, less the registration fee",
-     ethers.formatEther(recovered), ethers.formatEther(before - inviteFee));
+  eq("the funds came back, to the wei",
+     ethers.formatEther(recovered), ethers.formatEther(before));
 
   let twice = "";
   try { await alice.reclaimInvite(mine.index); } catch (e: any) { twice = e?.message ?? ""; }

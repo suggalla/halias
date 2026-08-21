@@ -168,9 +168,9 @@ export interface DummyInput {
 /// the circuit packs it from `pathIndices` and folds it into the global position.
 ///
 /// `treeNumber` must match the tree of whatever root this input names, because the pool
-/// checks that pairing for both inputs whether or not either is a dummy. Callers pass the
-/// same tree and root as the real input beside it, which costs nothing: two genuine notes
-/// spent together are usually proven against one root anyway.
+/// checks that pairing for every input whether or not any is a dummy. Callers pass the same
+/// tree and root as a real input beside it, which costs nothing: notes spent together are
+/// usually proven against one root anyway.
 export function dummyInput(
   treeNumber: number,
   leafIndex: number = 0,
