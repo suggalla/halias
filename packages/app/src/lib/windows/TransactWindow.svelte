@@ -4,6 +4,9 @@
 		clientState, getClient, run, deselectAlias, wallet, setToken, addToken
 	} from '../sdk/client.js';
 	import { POOL_INPUTS } from 'halias-sdk';
+	// From the alias module, not the package root — pure string handling, and the root
+	// re-exports the proving stack. See the note in sdk/client.ts.
+	import { fullAlias } from 'halias-sdk/alias';
 
 	// How many merges take a wallet from `n` notes to fully sendable. Each merge spends
 	// POOL_INPUTS notes and leaves one, so it removes POOL_INPUTS - 1; once the balance fits in
@@ -150,6 +153,25 @@
 		mode === 'transfer' ? 'Recipient alias' : mode === 'withdraw' ? 'Destination address' : ''
 	);
 	const targetPlaceholder = $derived(mode === 'transfer' ? 'bob.hls' : '0x…');
+
+	// What will actually be paid, not what was typed.
+	//
+	// A transfer normalises before it resolves — "GG" and "gg" and "gg.hls" are one alias —
+	// so a review showing the raw input asks for confirmation of a string the system will not
+	// use. The suffix is the visible half; case folding is the half nobody would notice.
+	//
+	// Withdrawals pass straight through: the target is an address, and appending .hls to one
+	// would be worse than showing it unchanged. Falls back to the raw text when it does not
+	// normalise, since the form has already refused to advance in that case.
+	const reviewTarget = $derived.by(() => {
+		const t = target.trim();
+		if (mode !== 'transfer') return t;
+		try {
+			return fullAlias(t);
+		} catch {
+			return t;
+		}
+	});
 
 	function reset() {
 		phase = 'form';
@@ -579,7 +601,7 @@
 				mode={txMode}
 				{token}
 				amount={amount.trim()}
-				target={target.trim()}
+				target={reviewTarget}
 				alias={label}
 				from={$clientState.address ?? ''}
 				canDelegate
