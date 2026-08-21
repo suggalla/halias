@@ -269,18 +269,19 @@
 					Reserve the name
 					<em>Approve in your wallet — this publishes only a hash.</em>
 				</li>
-				<!-- Named, because the gap is otherwise indistinguishable from a hang. The
-				     contract requires a strictly later timestamp than the reservation, so the
-				     second wallet prompt cannot appear until the next block exists — around
-				     twelve seconds, during which nothing happens and nothing asks for anything. -->
+				<!-- 'waiting' is rare now and used to be the whole flow. The contract wants a
+				     later timestamp than the reservation, which the second transaction gets by
+				     being mined in a later block — it never needed one to exist first, only the
+				     gas estimate did. This step is the leftover case: a chain whose blocks can
+				     share a timestamp. -->
 				<li class:now={step === 'waiting' || step === 'register'}>
 					Register it
 					<em>
 						{#if step === 'waiting'}
-							Waiting for the next block — the name cannot be revealed in the same one
-							it was reserved in.
+							Waiting for the next block — this chain put both transactions in the
+							same second, so the reveal has to land after it.
 						{:else}
-							A second transaction, one block later.
+							A second transaction, straight after the first.
 						{/if}
 					</em>
 				</li>
@@ -289,7 +290,7 @@
 			<p class="hint">
 				Registering takes <strong>two transactions</strong>. The first reserves the name
 				without revealing it, so nobody watching can take it before you do; the second
-				claims it a block later.
+				claims it.
 			</p>
 		{/if}
 		{#if nameError}

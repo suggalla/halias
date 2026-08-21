@@ -316,9 +316,6 @@ export async function register(
   // Expiry is read rather than assumed: a reservation past MAX_RESERVATION_AGE is dead, and
   // treating it as live would reveal straight into ReservationExpired.
   let commitTx: ethers.ContractTransactionResponse | null = null;
-  /// The block the reservation landed in. What the reveal has to get past — not "one more
-  /// block than whenever we happened to start waiting".
-  let commitBlock: number | null = null;
   let live = false;
   const madeAt = BigInt(await domain.reservations(commitment));
   if (madeAt !== 0n) {
@@ -340,9 +337,10 @@ export async function register(
     onStep?.("commit");
     try {
       const sent = await domain.reserveRegistration(commitment);
-      const receipt = await sent.wait();
+      // Awaited, and that is what makes the reveal safe to send immediately: the commit is in
+      // a block, so the reveal cannot share it.
+      await sent.wait();
       commitTx = sent;
-      commitBlock = receipt?.blockNumber ?? null;
     } catch (e: any) {
       if (!isReservationPending(e)) throw e;
     }
@@ -358,23 +356,19 @@ export async function register(
   // Hardhat hides this by estimating against a pending block with an advanced timestamp, so
   // every local suite and e2e-live pass while a real chain stalls at the second step.
   //
-  // Waiting unconditionally is the wrong fix: a chain that only mines on demand has nothing
-  // to mine while we wait. Reacting to the revert costs nothing when it does not happen and
-  // recovers when it does, and it is the same answer for a builder packing both into one
-  // block — which is precisely the position a front-runner is in.
-  // Waited for rather than discovered by failing. The reveal is estimated before it is sent,
-  // against the block the commit landed in — where `block.timestamp == madeAt` and the
-  // contract's guard fires — so attempting it immediately buys a rejected round trip and then
-  // the same wait anyway. One block is irreducible: the guard is on the timestamp, and the
-  // next block is when a later one exists.
+  // Nothing is waited for here, and an earlier version waiting for the next block was the
+  // whole of the "Waiting for the next block…" complaint.
   //
-  // Only when we sent the commit ourselves. A resumed reservation is already old enough, and
-  // waiting there would add a block to a flow that needs none.
-  const provider = domain.runner?.provider;
-  if (commitBlock !== null && provider) {
-    await waitForBlockAfter(provider, commitBlock, onStep);
-  }
-
+  // The wait was never needed for the guard. Awaiting the commit's receipt means the commit
+  // is in block N, so the reveal can only be mined in N+1 or later, and consensus requires a
+  // block's timestamp to exceed its parent's — `block.timestamp <= madeAt` is already false
+  // by the time the reveal executes. What fails is the *estimate*, which simulates against
+  // block N where the timestamp is exactly `madeAt`.
+  //
+  // So the fix belongs at the estimate, not in front of it. Waiting cost a block interval on
+  // every registration — and on a chain that only mines on demand it cost the full timeout,
+  // because nothing was ever going to produce the block being waited for. That is every
+  // local node, which is where this is tested.
   onStep?.("register");
   return revealWhenReservationRipens(
     domain, name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner, salt, fee,
@@ -456,22 +450,57 @@ async function revealWhenReservationRipens(
   nonce?: number,
   attempts = 4,
 ): Promise<ethers.ContractTransactionResponse> {
-  const overrides = nonce === undefined ? { value: fee } : { value: fee, nonce };
+  const base = nonce === undefined ? { value: fee } : { value: fee, nonce };
   const provider = domain.runner?.provider;
+  const args = [
+    name, h32(spendingCommitment), h32(nullifierKeyHash), h32(encryptionPubkey), owner, salt,
+  ] as const;
+
+  // Estimated against `pending`, so the simulation sees a timestamp past `madeAt` rather than
+  // the commit's own. Supplying the result as `gasLimit` is also what stops ethers estimating
+  // again against `latest`, which is the call that was failing.
+  //
+  // Best-effort: a node that rejects the block parameter, or ignores it and reverts anyway,
+  // just yields null and the send below estimates the ordinary way. Hardhat needs none of
+  // this — it already estimates against a pending block with an advanced timestamp, which is
+  // exactly why this bug never showed up in any local suite.
+  const gasLimit = provider ? await pendingEstimate(domain, args, base, provider) : null;
+  const overrides = gasLimit === null ? base : { ...base, gasLimit };
 
   for (let i = 0; ; i++) {
     try {
-      return await domain.revealRegistration(
-        name, h32(spendingCommitment), h32(nullifierKeyHash), h32(encryptionPubkey), owner,
-        salt, overrides,
-      );
+      return await domain.revealRegistration(...args, overrides);
     } catch (e: any) {
       if (i >= attempts - 1 || !isReservationTooNew(e) || !provider) throw e;
-      // The safety net, for the case the proactive wait did not cover — a reservation made by
-      // someone else in this same block, or a builder packing both transactions together.
-      // Anchored to the current head, because that is the block the estimation just rejected.
+      // Last resort, for the case neither the ordering nor the pending estimate covered: a
+      // chain whose blocks may share a timestamp, or a builder packing both transactions
+      // together. Anchored to the current head, because that is the block just rejected.
       await waitForBlockAfter(provider, await provider.getBlockNumber());
     }
+  }
+}
+
+/// What the reveal costs when simulated one block ahead, with margin, or null if the node
+/// will not answer that question.
+async function pendingEstimate(
+  domain: ethers.Contract,
+  args: readonly any[],
+  overrides: { value: bigint; nonce?: number },
+  provider: ethers.Provider,
+): Promise<bigint | null> {
+  try {
+    const from = await (domain.runner as ethers.Signer).getAddress();
+    const tx = await domain.revealRegistration.populateTransaction(...args, overrides);
+    const hex = await (provider as any).send("eth_estimateGas", [
+      { from, to: tx.to, data: tx.data, value: ethers.toQuantity(overrides.value) },
+      "pending",
+    ]);
+    // A fifth over. The estimate is against the same state the transaction will run on, so
+    // this covers ordering effects — a registration opening a fresh prefix bucket costs more
+    // than one landing in a bucket somebody else already opened.
+    return (BigInt(hex) * 12n) / 10n;
+  } catch {
+    return null;
   }
 }
 
