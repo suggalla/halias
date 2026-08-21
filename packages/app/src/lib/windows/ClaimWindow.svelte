@@ -59,16 +59,32 @@
 	const busy = $derived($clientState.status === 'syncing');
 	const connected = $derived($clientState.address !== null);
 
-	// Arriving by link. The code is a bearer secret, so it rides in the fragment — which
-	// browsers never send to a server — and is cleared from the address bar once read.
+	// Arriving by link. The code is a bearer secret, so it rides in the fragment, which
+	// browsers never send to a server.
+	//
+	// The fragment stays until the claim succeeds, and that is the fix rather than an
+	// oversight. Clearing it on read meant the code lived only in this component's state:
+	// connecting a wallet remounts the panel, `code` came back empty, and the address bar no
+	// longer had it either — so arriving by link and then connecting lost the invite with no
+	// way to recover it. Redeeming needs a wallet, so that path is the normal one, not an edge
+	// case.
+	//
+	// Re-read whenever `code` is empty, so a remount recovers it. Cleared in `claim()` once the
+	// invite is actually spent, at which point the code is worthless anyway.
 	$effect(() => {
 		if (code || typeof location === 'undefined') return;
 		const m = location.hash.match(/[#&]claim=([^&]+)/);
 		if (!m) return;
 		code = decodeURIComponent(m[1]);
 		fromLink = true;
-		history.replaceState(null, '', location.pathname + location.search);
 	});
+
+	/// Drop the code from the address bar. Called once it has been redeemed.
+	function clearLink() {
+		if (typeof location === 'undefined') return;
+		if (!/[#&]claim=/.test(location.hash)) return;
+		history.replaceState(null, '', location.pathname + location.search);
+	}
 
 	async function claim() {
 		formError = null;
@@ -115,6 +131,7 @@
 			return;
 		}
 		if (r) {
+			clearLink();
 			// Remembered locally so the name shows immediately. The claim publishes it in
 			// NamePublished, so the chain answers from the next scan on; this covers the gap.
 			rememberName(keccak256(toUtf8Bytes(clean + '.hls')), clean);
