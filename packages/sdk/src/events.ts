@@ -144,7 +144,10 @@ export async function scanEvents(
 
   const allLogs: ethers.Log[] = [];
   let cur = fromBlock;
-  const total = latestBlock - fromBlock;
+  // Clamped for the same reason the request below is: on a resumed scan `fromBlock` can sit
+  // above the provider's view of the head, and a negative denominator turns the progress
+  // reading into a negative percentage.
+  const total = Math.max(0, latestBlock - fromBlock);
   // At least one request, always, even when fromBlock is already past `latestBlock`.
   //
   // That happens routinely on a resumed scan: `latestBlock` comes from the provider, which
@@ -171,7 +174,7 @@ export async function scanEvents(
     //
     // Re-reading those few blocks costs nothing: outputs dedupe by global index and
     // nullifiers land in a Set, so a scan that overlaps itself is idempotent by construction.
-    const chunk = await provider.getLogs({
+    const chunk = await getLogsWithRetry(provider, {
       address: [poolAddress, registryAddress, controllerAddress],
       topics: [wanted],
       fromBlock: Math.min(cur, latestBlock),
@@ -336,6 +339,32 @@ export async function scanEvents(
   };
 }
 
+
+/// One chunk, with a few attempts at it.
+///
+/// A scan is a long sequence of requests against a provider shared with every other tab and
+/// extension on the machine, and a single rate-limited or dropped one used to abort the whole
+/// thing. What the user sees is a refresh that never finishes, which is indistinguishable
+/// from the client being broken.
+///
+/// Bounded and rethrowing, deliberately. A permanent error — a range a node refuses, a
+/// contract that is not there — has to surface rather than be retried into a hang; this only
+/// buys back the failures that go away on their own.
+async function getLogsWithRetry(
+  provider: ethers.Provider,
+  filter: ethers.Filter,
+  attempts = 3,
+): Promise<ethers.Log[]> {
+  for (let i = 0; ; i++) {
+    try {
+      return await provider.getLogs(filter);
+    } catch (e) {
+      if (i >= attempts - 1) throw e;
+      // Backing off rather than hammering: a rate limit answers a fast retry the same way.
+      await delay(DELAY_MS * Math.pow(4, i + 1));
+    }
+  }
+}
 
 export function findMyOutputs(
   outputs: Output[],

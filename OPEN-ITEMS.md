@@ -84,6 +84,25 @@ SDK's `paramsHash` against the pool's own, reproduces the registry root from log
 derives sibling paths for every occupied slot, and pins nullifier derivation and tree depth
 against the contract. Those are the tests worth keeping green.
 
+## The gap between hardhat and a real node
+
+Three bugs in one evening lived here, and none of them could have been caught by any suite in
+the repo:
+
+- **`ReservationTooNew` on registration.** The reveal is estimated before it is sent, and
+  `eth_estimateGas` simulates against the latest block — the one the commit just landed in,
+  where `block.timestamp == madeAt`. Hardhat estimates against a pending block with an
+  advanced timestamp, so it never fires there.
+- **`range 18446744073709551615 exceeds limit of 10000`.** A resumed scan asks to start from a
+  block the provider does not believe exists yet, and the last chunk ends at `"latest"`. A
+  node computes that span unsigned and it wraps. Hardhat answers the same request happily.
+- **`ReservationPending` matched by name.** A wallet returns raw revert data, so the name is
+  never in the error. In-process tests get decoded errors and the string is there.
+
+`e2e-live` was built to catch exactly this class and cannot, because it also runs against
+hardhat. **Pointing it at a testnet occasionally is the highest-value testing change
+available** — it needs an RPC URL and a funded key, and nothing else about it changes.
+
 ## Still gating mainnet
 
 An external audit and a multi-party ceremony. Nothing else on this page moves either.
