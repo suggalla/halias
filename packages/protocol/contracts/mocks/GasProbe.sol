@@ -16,6 +16,28 @@ contract GasProbe {
     mapping(uint256 => bytes32)[32] private nodes;
     uint32 private slot;
 
+    // The same walk if the tree were append-only, in the shape MerkleTreeWithHistory uses:
+    // a fixed `filledSubtrees` array instead of a node per position, written only on the even
+    // branch and permanently warm. This is what making the registry immutable would buy — the
+    // question is whether it buys levels or only cheaper levels.
+    bytes32[32] private filled;
+    uint32 private appendIndex;
+
+    function walkAppend(uint256 levels) external {
+        uint256 idx = appendIndex++;
+        bytes32 current = bytes32(PoseidonT4.hash([uint256(1), uint256(2), 1]));
+        for (uint256 i = 0; i < levels; i++) {
+            if (idx % 2 == 0) {
+                filled[i] = current;
+                current = bytes32(PoseidonT3.hash([uint256(current), uint256(TreeZeros.zeros(i))]));
+            } else {
+                current = bytes32(PoseidonT3.hash([uint256(filled[i]), uint256(current)]));
+            }
+            idx /= 2;
+        }
+        sink = uint256(current);
+    }
+
     function walk(uint256 levels) external {
         uint256 pathKey = slot++;
         bytes32 current = bytes32(PoseidonT4.hash([uint256(1), uint256(2), 1]));

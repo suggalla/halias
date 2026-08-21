@@ -40,6 +40,15 @@ async function main() {
   console.log(`  32 -> 16 saves              ${16 * perLevel}`);
   console.log(`  32 -> 20 saves              ${12 * perLevel}`);
   console.log(`  32 -> 24 saves              ${8 * perLevel}`);
+
+  // The same level if the tree were append-only. Averaged over four inserts because the
+  // even branch writes and the odd branch does not, so a single sample is one or the other.
+  for (let i = 0; i < 8; i++) await used(probe.walkAppend(32n));
+  let a32 = 0, a16 = 0;
+  for (let i = 0; i < 4; i++) { a32 += await used(probe.walkAppend(32n)); a16 += await used(probe.walkAppend(16n)); }
+  const perLevelAppend = Math.round((a32 - a16) / 4 / 16);
+  console.log(`  one append-only level       ${perLevelAppend} gas`);
+  console.log(`  immutability saves, at 32   ${32 * (perLevel - perLevelAppend)}`);
   console.log("");
   console.log(`  Groth16 per public signal   ~6150 (ECMUL 6000 + ECADD 150)`);
   console.log(`  20 signals cost             ~${20 * 6150}`);
