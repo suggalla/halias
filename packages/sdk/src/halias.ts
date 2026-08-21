@@ -1248,7 +1248,14 @@ export class Halias extends HaliasCore {
   // note normally. That also means they could claw it back after the claimer sees it,
   // so a claimer should claim promptly. This is inherent to any one-shot link: whoever
   // generates the secret knows it.
-  async createInvite(amountEth: string): Promise<InviteResult> {
+  async createInvite(
+    amountEth: string,
+    /// Which of the four phases is in flight. Creating an invite is three transactions and a
+    /// proof, and the longest wait — fetching a 39MB proving key and generating against it —
+    /// prompts for nothing while it runs. Without this the whole minute is one "Working…",
+    /// which is indistinguishable from a hang.
+    onStep?: (step: "commit" | "waiting" | "register" | "proving" | "funding") => void,
+  ): Promise<InviteResult> {
     this.ensureInit();
     this.ensureSpendable();
     await this.ensureSync();
@@ -1306,7 +1313,7 @@ export class Halias extends HaliasCore {
       const regTx = await contractRegister(
         this.domain, inviteName, temp.spendingCommitment,
         temp.nullifierKeyHash, temp.encryptionPubkeyField, registrationFee,
-        temp.ownerAddress, inviteSalt,
+        temp.ownerAddress, inviteSalt, onStep,
       );
       await regTx.wait();
     }
@@ -1371,6 +1378,8 @@ export class Halias extends HaliasCore {
     const paramsHash   = computeParamsHash(ZERO_TRANSACT_PARAMS, blob0, blob1, BigInt(this.config.chainId), this.config.poolAddress);
     const registryRoot = selfProof.registryRoot;
 
+    // The long one. The first call fetches the proving key before it can even start.
+    onStep?.("proving");
     const { proofBytes } = await proveTransact({
       poolRoot: inputs.poolRoots, treeNumber: inputs.treeNumbers,
       registryRoot, publicAmount: 0n, tokenAddress: ETH_TOKEN_ADDRESS, paramsHash,
@@ -1380,6 +1389,7 @@ export class Halias extends HaliasCore {
       outputs: [out0, out1],
     }, this.getArtifacts());
 
+    onStep?.("funding");
     const tx = await contractTransact(
       this.pool, inputs.poolRoots, inputs.treeNumbers, registryRoot, 0n, ETH_TOKEN_ADDRESS,
       inputs.nullifiers,

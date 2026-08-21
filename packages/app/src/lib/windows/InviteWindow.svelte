@@ -19,6 +19,19 @@
 	let copied = $state<'code' | 'link' | null>(null);
 	let formError = $state<string | null>(null);
 
+	// Which phase createInvite is in. Three transactions and a proof, and the longest stretch —
+	// fetching the proving key and generating against it — prompts for nothing at all. A single
+	// "Working…" across the whole of it reads as a hang, which is what it was doing.
+	type Step = 'commit' | 'waiting' | 'register' | 'proving' | 'funding';
+	let step = $state<Step | null>(null);
+	const STEP_TEXT: Record<Step, string> = {
+		commit:   'Reserving the invite name…',
+		waiting:  'Waiting for the next block…',
+		register: 'Registering the invite…',
+		proving:  'Building the proof — this fetches a 39MB key the first time…',
+		funding:  'Funding the invite…'
+	};
+
 	// Invites already outstanding, and what can still be done about them.
 	//
 	// Listable at all only because the secret is derived from this wallet's root rather than
@@ -87,7 +100,9 @@
 			return (formError =
 				`${source.name ? source.name + '.hls' : 'That alias'} holds ${formatEther(source.balance)} ETH`);
 
-		const r = await run(() => getClient().createInvite(amt));
+		step = null;
+		const r = await run(() => getClient().createInvite(amt, (s: Step) => (step = s)));
+		step = null;
 		if (r) {
 			created = { inviteCode: (r as any).inviteCode, amount: (r as any).amount };
 			amount = '';
@@ -165,6 +180,7 @@
 		<button class="primary" disabled={busy} onclick={create}>
 			{busy ? 'Working…' : 'Create invite'}
 		</button>
+		{#if step}<p class="hint">{STEP_TEXT[step]}</p>{/if}
 	{/if}
 
 	<!-- Shown alongside creating rather than behind a tab, because an outstanding invite is
