@@ -8,8 +8,13 @@ one person could have subverted.
 
 ## Reporting a vulnerability
 
-Open a [private security advisory](https://github.com/suggalla/halias/security/advisories/new)
-on this repository. That gives us a private channel with you and a place to coordinate a fix.
+Email **suggalla@protonmail.com**, or open a
+[private security advisory](https://github.com/suggalla/halias/security/advisories/new) on this
+repository. Either gives us a private channel with you and a place to coordinate a fix.
+
+The advisory link only works while the repository is public — GitHub does not offer advisories
+on private ones, and the page 404s rather than saying so. Email is the channel that always
+works.
 
 Please do not open a public issue for anything that could move or reveal someone's funds.
 

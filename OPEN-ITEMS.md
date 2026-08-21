@@ -120,8 +120,11 @@ Underconstrained signals do not fail tests, so the passing suites are not eviden
 
 ## Placeholders to replace before publishing
 
-- `SECURITY.md` points at `github.com/suggalla/halias/security/advisories/new`, inferred from
-  git config. If the repository is published under a different name or owner, that link 404s.
+- `SECURITY.md` points at `github.com/suggalla/halias/security/advisories/new`. That page
+  404s while the repository is private — GitHub offers advisories on public repositories only,
+  and both the REST endpoints for it return 404 rather than a useful error. It starts working
+  on the day the repository goes public. An email address is listed alongside it so there is a
+  channel that works either way; change it if that is not the right one.
 - Contract headers say `Copyright 2026 Halias contributors.`
 
 ## Gotcha that cost time three times
