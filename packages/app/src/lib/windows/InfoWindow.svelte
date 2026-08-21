@@ -29,8 +29,8 @@
 			<dd>Amount, destination, and timing.</dd>
 			<dt>Registrations</dt>
 			<dd>
-				The alias hash, its keys, and the address that owns it. The plaintext name is
-				published only if you chose to.
+				The alias hash, its <em>public</em> keys, and the address that owns it. The
+				plaintext name is published only if you chose to.
 			</dd>
 		</dl>
 	</section>

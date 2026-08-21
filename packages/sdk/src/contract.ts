@@ -320,24 +320,88 @@ export async function register(
     commitTx = null;
   }
 
-  // No client-side wait. The reveal is a separate transaction, so it lands in a later block
-  // than the commit by construction, and MAX_RESERVATION_AGE is 1. Polling for the block to
-  // advance hangs forever on a chain that only mines on demand — there is nothing to mine
-  // while we wait — and adds nothing on a live one.
+  // Retried on ReservationTooNew rather than assumed away. The reveal does land in a later
+  // *block* than the commit by construction — but it is estimated first, and eth_estimateGas
+  // simulates against the latest block, which is the one the commit just landed in. There
+  // `block.timestamp == madeAt`, the contract's `<= madeAt` check fires, and the wallet
+  // reports a failed estimation without ever sending anything. Nothing is mined, nothing is
+  // spent, and the flow simply stops.
   //
-  // If a builder does pack both into one block the contract reverts with ReservationTooNew, which
-  // is the protection working: that is precisely the position a front-runner is in.
-  // Nonce taken from the commit rather than looked up. ethers caches the account's
-  // transaction count, and two sends from one wallet in the same tick reuse the stale value
-  // — "Nonce too low. Expected 16 but got 15" — even when the first was awaited. Deriving it
-  // from the transaction we just mined is exact and costs no extra call.
+  // Hardhat hides this by estimating against a pending block with an advanced timestamp, so
+  // every local suite and e2e-live pass while a real chain stalls at the second step.
+  //
+  // Waiting unconditionally is the wrong fix: a chain that only mines on demand has nothing
+  // to mine while we wait. Reacting to the revert costs nothing when it does not happen and
+  // recovers when it does, and it is the same answer for a builder packing both into one
+  // block — which is precisely the position a front-runner is in.
   onStep?.("register");
-  return domain.revealRegistration(
-    name, h32(spendingCommitment), h32(nullifierKeyHash), h32(encryptionPubkey), owner, salt,
+  return revealWhenReservationRipens(
+    domain, name, spendingCommitment, nullifierKeyHash, encryptionPubkey, owner, salt, fee,
     // Nonce from the commit when we sent one; otherwise let ethers resolve it, since no
-    // second send is racing it.
-    commitTx ? { value: fee, nonce: commitTx.nonce + 1 } : { value: fee },
+    // second send is racing it. ethers caches the account's transaction count, and two sends
+    // from one wallet in the same tick reuse the stale value — "Nonce too low. Expected 16
+    // but got 15" — even when the first was awaited.
+    commitTx ? commitTx.nonce + 1 : undefined,
   );
+}
+
+/// `ReservationTooNew()`, as the wallet reports it.
+///
+/// Matched on the selector rather than the name: an estimation failure arrives as raw revert
+/// data, and only a provider that happens to know the ABI decodes it into something readable.
+const RESERVATION_TOO_NEW = "0x9d7b5dd7";
+
+function isReservationTooNew(e: any): boolean {
+  const blob = JSON.stringify(e?.info ?? e?.error ?? e?.data ?? e?.message ?? "") +
+               String(e?.data ?? "") + String(e?.shortMessage ?? "");
+  return blob.includes(RESERVATION_TOO_NEW) || blob.includes("ReservationTooNew");
+}
+
+/// Send the reveal, waiting out a reservation the chain still considers same-second.
+///
+/// Bounded deliberately. If the revert is something else, or the block will not advance, this
+/// has to surface rather than spin — a registration that hangs silently is worse than one
+/// that fails and says why, because the reservation stays valid for a day and can be retried
+/// by simply running the whole flow again.
+async function revealWhenReservationRipens(
+  domain: ethers.Contract,
+  name: string,
+  spendingCommitment: bigint,
+  nullifierKeyHash: bigint,
+  encryptionPubkey: bigint,
+  owner: string,
+  salt: string,
+  fee: bigint,
+  nonce?: number,
+  attempts = 4,
+): Promise<ethers.ContractTransactionResponse> {
+  const overrides = nonce === undefined ? { value: fee } : { value: fee, nonce };
+  const provider = domain.runner?.provider;
+
+  for (let i = 0; ; i++) {
+    try {
+      return await domain.revealRegistration(
+        name, h32(spendingCommitment), h32(nullifierKeyHash), h32(encryptionPubkey), owner,
+        salt, overrides,
+      );
+    } catch (e: any) {
+      if (i >= attempts - 1 || !isReservationTooNew(e) || !provider) throw e;
+      await waitForNextBlock(provider);
+    }
+  }
+}
+
+/// Block until the chain's head moves, or give up.
+///
+/// Giving up is not a failure here — the caller retries the send regardless, and a chain that
+/// has not produced a block in this long will report the real reason itself.
+async function waitForNextBlock(provider: ethers.Provider, timeoutMs = 30_000): Promise<void> {
+  const from = await provider.getBlockNumber();
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    if (await provider.getBlockNumber() > from) return;
+  }
 }
 
 // ── Owner-authorised alias actions ───────────────────────────────────────────
