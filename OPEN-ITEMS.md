@@ -61,6 +61,38 @@ relitigated. Not a roadmap — the README has that. This is the detail a roadmap
   paid for; charging twice defeats the point of removing the pool fee at all. The accepted
   cost is that creator and claimer are linkable through the credit — acceptable because this
   is an onboarding feature, not a privacy one, and the *amounts* stay private throughout.
+- **Gas: nothing left is worth a ceremony.** Measured, not estimated — `scripts/gas-probe.ts`
+  for the primitives, `scripts/gas-append.ts` for registration end to end. A transact is
+  ~882k with the real verifier and a registration 1,176,025.
+  - *Packing all 20 public signals into one hashed signal:* saves ~117k in the verifier
+    (~6,150 per signal: ECMUL 6,000 + ECADD 150), and costs 345,372 to fold 20 values with
+    Poseidon on chain — a **net loss of 228k**. Keccak costs 325 gas on chain but needs
+    keccak *in circuit*: 640 bytes is five permutation blocks, roughly 750k constraints on a
+    94,480-constraint circuit. Not viable in a browser.
+  - *Bit-packing the small signals* — `treeNumber[4]` (128 bits), `tokenAddress` (160),
+    `outputsEmpty` (1) — fits six signals into two and saves ~24,600, **2.8%**. Free on both
+    sides, and still not worth touching a frozen public layout shared by two circuits.
+  - *Rolling registry trees:* the registry assigns slots sequentially, so depth is a capacity
+    bound and rolling is arithmetically the same as a shallower single tree. It only beats one
+    by making the tree number public — and `registryRoot` is shared across outputs while
+    `outRegistryIndex` is private, so a public tree number would publish the **recipient's**
+    registration cohort on every transfer. `multi-tree-pool.md` accepted that leak for the
+    pool, where the tree number describes the sender's own notes. Here it describes the payee.
+  - *Reducing `REGISTRY_LEVELS`:* one level costs 29,635 (18,841 of it Poseidon, the rest a
+    sibling read and a node write), so the 32-level walk is 81% of a registration. 32→24 saves
+    237,080, 32→20 saves 355,620, 32→16 saves 474,160. All of them buy a permanent capacity
+    ceiling frozen by the ceremony. Rejected: 32 levels is 4.29e9 aliases and no ceiling at all.
+  - *Making registration take an append-only path* (registrations are already appends; only
+    rotations are true updates) measures **108,556, 9.1%** — `MockAppendRegistry` is the real
+    contract with only the tree write swapped. Rejected for what the other half costs: with no
+    stored nodes a rotation must carry its sibling path in calldata and verify it before
+    recomputing (~64 hashes against 32), the `filledSubtrees` entries a rotation's path runs
+    through must be repaired or the root corrupts silently, and `getSmtSiblings` disappears —
+    which is the SDK's fallback whenever a client's local mirror is stale.
+  - What remains is a privacy decision rather than an engineering one: `HaliasPool.sol:267`
+    writes all four nullifier slots unconditionally, so a one-note spend pays four cold
+    SSTOREs. Skipping the unused ones leaks how many real inputs a transaction has — the same
+    trade `outputsEmpty` documents and declines by default.
 - **Railgun is upgradeable** — `PausableUpgradableProxy` under token governance, which can
   upgrade and pause. `HaliasPool` has neither. `legal-considerations.md` understates this.
 
