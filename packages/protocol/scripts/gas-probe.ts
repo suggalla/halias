@@ -28,6 +28,18 @@ async function main() {
   console.log(`  a 16-level walk, hashing     ${16 * t3}   (saves ${16 * t3})`);
   console.log(`  fold 20 -> 1 via Poseidon   ${fold - noop} gas over that`);
   console.log(`  hash 20 -> 1 via keccak     ${kec - noop} gas over that`);
+  // A level of registry depth, end to end: the hash, the sibling read and the node write.
+  // Warmed first — the first few walks into a fresh tree pay cold writes that a steady-state
+  // registry does not, which is the same reason gasbench reports register #2 and not #1.
+  for (let i = 0; i < 8; i++) await used(probe.walk(32n));
+  const w32 = await used(probe.walk(32n));
+  const w16 = await used(probe.walk(16n));
+  const perLevel = Math.round((w32 - w16) / 16);
+  console.log("");
+  console.log(`  one registry level          ${perLevel} gas (hash + sibling read + node write)`);
+  console.log(`  32 -> 16 saves              ${16 * perLevel}`);
+  console.log(`  32 -> 20 saves              ${12 * perLevel}`);
+  console.log(`  32 -> 24 saves              ${8 * perLevel}`);
   console.log("");
   console.log(`  Groth16 per public signal   ~6150 (ECMUL 6000 + ECADD 150)`);
   console.log(`  20 signals cost             ~${20 * 6150}`);

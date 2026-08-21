@@ -3,11 +3,33 @@ pragma solidity ^0.8.28;
 
 import { PoseidonT3 } from "poseidon-solidity/PoseidonT3.sol";
 import { PoseidonT4 } from "poseidon-solidity/PoseidonT4.sol";
+import { TreeZeros } from "../base/TreeZeros.sol";
 
 /// @dev Measurement only. Each function is non-view so the cost shows up as gasUsed, and
 ///      each returns a value derived from the result so nothing can be optimised away.
 contract GasProbe {
     uint256 public sink;
+
+    // A copy of SMTRegistry._smtUpdate's loop, storage and all, so the cost of one level of
+    // registry depth can be measured rather than estimated. Poseidon alone is the smaller
+    // half: each level also reads a sibling and writes a node.
+    mapping(uint256 => bytes32)[32] private nodes;
+    uint32 private slot;
+
+    function walk(uint256 levels) external {
+        uint256 pathKey = slot++;
+        bytes32 current = bytes32(PoseidonT4.hash([uint256(1), uint256(2), 1]));
+        for (uint256 i = 0; i < levels; i++) {
+            uint256 nodePath    = pathKey >> i;
+            bytes32 sibling     = nodes[i][nodePath ^ 1];
+            if (sibling == bytes32(0)) sibling = TreeZeros.zeros(i);
+            nodes[i][nodePath] = current;
+            current = (nodePath & 1) == 1
+                ? bytes32(PoseidonT3.hash([uint256(sibling), uint256(current)]))
+                : bytes32(PoseidonT3.hash([uint256(current), uint256(sibling)]));
+        }
+        sink = uint256(current);
+    }
 
     /// n hashes in a chain, so the marginal cost comes out as a slope and every fixed cost —
     /// the 21k base, the calldata, the SSTORE — cancels between two runs. Subtracting one
