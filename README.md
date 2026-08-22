@@ -291,6 +291,7 @@ The app is at **[suggalla.github.io/halias](https://suggalla.github.io/halias/)*
 `main` and pointed at the contracts below. Verified on Etherscan, so the source behind each
 address can be read rather than trusted.
 
+<!-- deployment:sepolia -->
 | | |
 |---|---|
 | HaliasPool | [`0xB7836cf859836e801204f3918427FcCeb7Cb5d9f`](https://sepolia.etherscan.io/address/0xB7836cf859836e801204f3918427FcCeb7Cb5d9f#code) |
@@ -298,6 +299,7 @@ address can be read rather than trusted.
 | HaliasController | [`0x4BD25d89C9dc561a130C044CB2a420C929c407bf`](https://sepolia.etherscan.io/address/0x4BD25d89C9dc561a130C044CB2a420C929c407bf#code) |
 | TransactVerifier | [`0x818655DC9638Bf7574084cDAa328fA0e50322566`](https://sepolia.etherscan.io/address/0x818655DC9638Bf7574084cDAa328fA0e50322566#code) |
 | TransactClaimVerifier | [`0x80d311aD0f9AcF1f7f715cE4d9B897D963498957`](https://sepolia.etherscan.io/address/0x80d311aD0f9AcF1f7f715cE4d9B897D963498957#code) |
+<!-- /deployment:sepolia -->
 
 PoseidonT3 and PoseidonT4 are the canonical `poseidon-solidity` deployments at
 `0x3333333C…3B93` and `0x4443338E…ECF0` — the same addresses on every chain, reused rather

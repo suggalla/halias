@@ -256,6 +256,14 @@ async function main() {
     ...(tokens.length > 0 ? { tokens } : {}),
   });
 
+  // The README names these addresses, and it drifted the last time they changed — three dead
+  // links in the one place a reader is most likely to trust. Rewritten here because this is
+  // the moment they move; `npm run readme:sync` does the same by hand.
+  if (network === "sepolia") {
+    const { execFileSync } = await import("node:child_process");
+    execFileSync(process.execPath, [`${__dirname}/sync-readme.mjs`], { stdio: "inherit" });
+  }
+
   console.log(`\nRegistration fee: ${ethers.formatEther(await domC.registrationFee())} ETH`);
   // Argument lists match each constructor exactly. The pool's omitted claimVerifier here,
   // which fails as "has 3 parameters but 2 arguments were provided" only after a round trip
