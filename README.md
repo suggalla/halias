@@ -293,15 +293,15 @@ address can be read rather than trusted.
 
 | | |
 |---|---|
-| HaliasPool | [`0x1d2B3a2802911F656f74Ec7c23680aF46F4cf2E5`](https://sepolia.etherscan.io/address/0x1d2B3a2802911F656f74Ec7c23680aF46F4cf2E5#code) |
-| HaliasRegistry | [`0x8b3836F6bFA640c515F9A8F4C94615e8918Ff9a5`](https://sepolia.etherscan.io/address/0x8b3836F6bFA640c515F9A8F4C94615e8918Ff9a5#code) |
-| HaliasController | [`0x07Ff68c74926acd86467335a7E7A1824cEFb0ddC`](https://sepolia.etherscan.io/address/0x07Ff68c74926acd86467335a7E7A1824cEFb0ddC#code) |
+| HaliasPool | [`0xB7836cf859836e801204f3918427FcCeb7Cb5d9f`](https://sepolia.etherscan.io/address/0xB7836cf859836e801204f3918427FcCeb7Cb5d9f#code) |
+| HaliasRegistry | [`0x9E54164d4ff98Aa97aaac6CCb14f7163e68be4d9`](https://sepolia.etherscan.io/address/0x9E54164d4ff98Aa97aaac6CCb14f7163e68be4d9#code) |
+| HaliasController | [`0x4BD25d89C9dc561a130C044CB2a420C929c407bf`](https://sepolia.etherscan.io/address/0x4BD25d89C9dc561a130C044CB2a420C929c407bf#code) |
 | TransactVerifier | [`0x818655DC9638Bf7574084cDAa328fA0e50322566`](https://sepolia.etherscan.io/address/0x818655DC9638Bf7574084cDAa328fA0e50322566#code) |
 | TransactClaimVerifier | [`0x80d311aD0f9AcF1f7f715cE4d9B897D963498957`](https://sepolia.etherscan.io/address/0x80d311aD0f9AcF1f7f715cE4d9B897D963498957#code) |
 
 PoseidonT3 and PoseidonT4 are the canonical `poseidon-solidity` deployments at
 `0x3333333C…3B93` and `0x4443338E…ECF0` — the same addresses on every chain, reused rather
-than redeployed. `HaliasDeployer` at `0xCed57E02…fE4e` created the first three in one
+than redeployed. `HaliasDeployer` at `0x41226674…4FC5` created the first three in one
 transaction and is not verifiable: it links Poseidon inside its constructor only, so the
 addresses cannot be recovered from deployed bytecode.
 

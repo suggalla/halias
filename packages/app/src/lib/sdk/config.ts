@@ -1,8 +1,7 @@
 import { base } from '$app/paths';
-// Every network is optional. A static import of a missing file is a build error, and neither
-// deployment is guaranteed to exist: a fresh clone has never run a local deploy, and there is
-// currently no live Sepolia deployment at all — the last one predates the contract split and
-// was deleted rather than left to look usable. glob returns an empty object instead.
+// Every network is optional. A static import of a missing file is a build error and neither
+// file is guaranteed to be there — a fresh clone has never run a local deploy, and a Sepolia
+// deployment can be torn down. glob returns an empty object instead of failing the build.
 const load = (glob: Record<string, unknown>) =>
 	(Object.values(glob)[0] as { default: Record<string, unknown> } | undefined)?.default;
 
