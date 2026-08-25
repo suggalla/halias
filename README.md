@@ -40,7 +40,7 @@ money in it.** See [Status](#status).
   held ETH, so there is no funding trail leading back to you.
 - **Invites onboard from nothing.** Fund a code that registers a new name and pays its own
   registration fee on redemption. Someone joins on a completely fresh EOA, with no prior
-  balance and no history.
+  balance and no history using a relayer.
 - **Many aliases from one phrase, unlinkable to each other.** Aliases come from derivation
   indices, so `work.hls` and `personal.hls` can be the same person with nothing on chain to
   say so. Keep them separate, and nobody can join them up.
