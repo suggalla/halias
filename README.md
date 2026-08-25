@@ -1,7 +1,5 @@
 # Halias
 
-**Private payments made simple. No admin keys, no clunky addresses.**
-
 Send ETH and ERC-20s privately, to a recipient you can actually name — both guaranteed by
 zero-knowledge proofs rather than by trusting an operator.
 
