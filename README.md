@@ -129,8 +129,14 @@ proof shape, distinguished by the sign of `publicAmount`.
 
 Job: map an alias to its keys, and publish roots the circuit can prove against.
 
-A sparse Merkle tree, depth 32, with one immutable writer and no admin. Updates happen in
-place, so an alias keeps its slot through a key rotation or a handover.
+A Merkle tree, depth 32, with one immutable writer and no admin. Slots are handed out in
+arrival order, so depth is a capacity bound rather than a birthday bound — it is not sparse in
+any way that matters, whatever the leaf hash borrows from one.
+
+Updates happen **in place**, which is the real difference from the pool's tree and the reason
+every node is stored. An alias keeps its slot through a key rotation or a handover, so being
+in the tree and being current are the same statement — which is what lets a sender trust a
+membership proof about the keys they are about to pay.
 
 ### HaliasController
 

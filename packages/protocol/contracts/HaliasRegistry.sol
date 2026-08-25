@@ -2,8 +2,8 @@
 // Copyright 2026 Halias contributors.
 pragma solidity 0.8.28;
 
-import { SMTRegistry } from "./base/SMTRegistry.sol";
-// Direct rather than transitive: these arrived implicitly through SMTRegistry's own global
+import { MerkleRegistry } from "./base/MerkleRegistry.sol";
+// Direct rather than transitive: these arrived implicitly through MerkleRegistry's own global
 // import, which meant nothing here said where they came from.
 import { PoseidonT4 } from "poseidon-solidity/PoseidonT4.sol";
 import { FIELD_PRIME } from "./base/Constants.sol";
@@ -24,7 +24,7 @@ error DataHashOutOfField();
 error AliasNotRegistered();
 
 /// @title  HaliasRegistry — who the aliases are
-/// @notice The sparse Merkle tree of alias keys, and the roots the pool proves against.
+/// @notice The Merkle tree of alias keys, and the roots the pool proves against.
 /// @dev    Deliberately narrow. This contract knows what keys an alias has and where it
 ///         sits in the tree. It does not know who *owns* an alias, what it is called, or
 ///         what anyone paid for it — that is the controller's business, and keeping it out
@@ -40,7 +40,7 @@ error AliasNotRegistered();
 ///         two, every committed key is in-field — must hold because this contract enforces
 ///         them, not because the current controller happens to. A future controller, or a
 ///         buggy one, cannot corrupt the tree through this surface.
-contract HaliasRegistry is SMTRegistry {
+contract HaliasRegistry is MerkleRegistry {
     /// @notice The only address permitted to mutate the tree.
     /// @dev    Immutable, so the registry can never be repointed at a different controller.
     ///         Set by CREATE2 address prediction — the controller needs this contract's
@@ -57,7 +57,7 @@ contract HaliasRegistry is SMTRegistry {
         // uint256, not a narrower timestamp type. It follows four bytes32 fields, so it
         // starts a fresh slot with nothing to pack against — the narrower type buys no
         // storage and costs a `uint64(block.timestamp)` cast at the only write. Matches
-        // {SMTRegistry-registryRootSeenAt}, which is a timestamp for the same reason.
+        // {MerkleRegistry-registryRootSeenAt}, which is a timestamp for the same reason.
         uint256 registeredAt;
     }
 
@@ -97,7 +97,7 @@ contract HaliasRegistry is SMTRegistry {
         bytes32 nullifierKeyHash;
         bytes32 encryptionPubkey;
         bytes32 dataHash;
-        // The tree position, zero-based — what {SMTRegistry-getSmtSiblings} takes, NOT what
+        // The tree position, zero-based — what {MerkleRegistry-getSmtSiblings} takes, NOT what
         // {aliasSlot} stores or {AliasRegistered} emits. Those are offset by one so that zero
         // reads as "unregistered". Named `pathKey` rather than `slot` because the two
         // conventions have already been confused once, and an off-by-one here silently derives
@@ -172,7 +172,7 @@ contract HaliasRegistry is SMTRegistry {
     constructor(address _controller) {
         if (_controller == address(0)) revert ZeroController();
         controller = _controller;
-        _initSMT();
+        _initTree();
     }
 
     // ── Writes ─────────────────────────────────────────────────────────────────
@@ -202,8 +202,8 @@ contract HaliasRegistry is SMTRegistry {
         });
 
         bytes32 leaf = _writeLeaf(aliasHash);
-        // Indexed here rather than in {_smtUpdate} because this is the only path that creates
-        // an alias — the guard above makes that exact — while `_smtUpdate` also runs for
+        // Indexed here rather than in {_updateLeaf} because this is the only path that creates
+        // an alias — the guard above makes that exact — while `_updateLeaf` also runs for
         // rotations and data changes, which must not append a second copy.
         _indexPrefix(aliasHash);
         emit AliasRegistered(
@@ -376,11 +376,11 @@ contract HaliasRegistry is SMTRegistry {
     ///      there is no path that updates one without the other.
     function _writeLeaf(bytes32 aliasHash) private returns (bytes32 leaf) {
         leaf = _leaf(aliases[aliasHash]);
-        _smtUpdate(aliasHash, leaf);
+        _updateLeaf(aliasHash, leaf);
     }
 
     /// @dev The leaf commits to the keys only. Identity is bound one level up, in
-    ///      {SMTRegistry._smtUpdate}, which hashes `Poseidon(aliasKey, leaf, 1)` — so an
+    ///      {MerkleRegistry._updateLeaf}, which hashes `Poseidon(aliasKey, leaf, 1)` — so an
     ///      aliasHash argument here would be unused and imply a binding this does not make.
     function _leaf(AliasRecord storage rec) private view returns (bytes32) {
         return bytes32(PoseidonT4.hash([

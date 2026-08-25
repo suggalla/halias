@@ -10,11 +10,22 @@ import { TreeZeros } from "./TreeZeros.sol";
 error RegistryFull();
 
 // ---------------------------------------------------------------------------
-// SMTRegistry — abstract Sparse Merkle Tree registry base
+// MerkleRegistry — the alias tree, and the roots the pool proves against
 //
-// 32-level SMT. Position = the slot assigned at registration. Value = RegistryLeaf hash.
-// Supports in-place updates (key rotation, alias transfer) so the root always
-// reflects the *latest* keys — unlike an append-only Merkle tree.
+// 32 levels. Position = the slot assigned at registration. Value = RegistryLeaf hash.
+//
+// NOT a sparse Merkle tree, whatever the leaf hash borrows from one. Slots are handed out in
+// arrival order, so the occupied region is a dense prefix and depth is a capacity bound; no
+// position is derived from a key, and nothing here proves non-membership. It was called an
+// SMT for long enough that the docs contradicted each other — see docs/registry-buckets.md,
+// which had already worked this out.
+//
+// What it is instead is *mutable*, which is the whole difference from the pool's
+// MerkleTreeWithHistory and the reason every node is stored rather than just the filled
+// subtrees an append needs. Key rotation and alias transfer rewrite a leaf in place, so the
+// root always reflects the latest keys — and that is what makes "is in the tree" and "is
+// current" the same statement, which is the only reason a sender can trust a membership
+// proof about keys they are about to pay.
 //
 // Leaf hash:     SMTHash1(aliasKey, value) = Poseidon(aliasKey, value, 1)  [PoseidonT4]
 // Internal node: SMTHash2(L, R)            = Poseidon(L, R)               [PoseidonT3]
@@ -26,7 +37,7 @@ error RegistryFull();
 //
 // Recording the moment a root was superseded expresses that window in time, which is what
 // the freshness property needs, and makes the lookup O(1).
-abstract contract SMTRegistry {
+abstract contract MerkleRegistry {
     // Slots are assigned in registration order, so depth is a capacity bound rather than
     // a birthday bound: 32 levels holds 4.29e9 aliases and two can never contend for one
     // position. Deriving the position from aliasHash instead needed 64 levels purely to
@@ -48,7 +59,7 @@ abstract contract SMTRegistry {
     // rebuilt — a retry, not a loss.
     uint256 public constant REGISTRY_ROOT_MAX_AGE = 1 hours;
 
-    bytes32 internal smtRoot;   // read via getRegistryRoot()
+    bytes32 internal _root;   // read via getRegistryRoot()
     // root => the timestamp it stopped being current. 0 means never seen.
     mapping(bytes32 => uint256) public registryRootSeenAt;
 
@@ -58,19 +69,19 @@ abstract contract SMTRegistry {
     mapping(bytes32 => uint32) public aliasSlot;
     uint32 public nextAliasSlot;
 
-    // _smtNodes[level][nodePath], 0 meaning empty — use TreeZeros.zeros(level).
+    // _nodes[level][nodePath], 0 meaning empty — use TreeZeros.zeros(level).
     //
     // An array of mappings, not a mapping of mappings: the level is dense and bounded at
     // compile time, so only nodePath needs hashing. A nested mapping would keccak twice per
     // access, on two reads per level of every registration.
-    mapping(uint256 => bytes32)[REGISTRY_LEVELS] private _smtNodes;
+    mapping(uint256 => bytes32)[REGISTRY_LEVELS] private _nodes;
 
-    function _initSMT() internal {
+    function _initTree() internal {
         // The empty-subtree hashes are constants — see {TreeZeros}. They were a storage array
         // seeded here, which cost 33 SSTOREs once and a cold SLOAD at nearly every level of
-        // every update afterwards: in a sparse tree most siblings are empty, so the fallback
+        // every update afterwards: most siblings above the fill line are empty, so the fallback
         // below is the common path rather than the rare one.
-        smtRoot = TreeZeros.zeros(REGISTRY_LEVELS);
+        _root = TreeZeros.zeros(REGISTRY_LEVELS);
         // Not stamped: the genesis root is accepted as the current root, and is stamped
         // like any other when something supersedes it.
     }
@@ -80,7 +91,7 @@ abstract contract SMTRegistry {
     // Identity and position are separate: the leaf commits to aliasKey while the path follows
     // the slot assigned at first registration, which makes collisions impossible rather than
     // merely expensive. A rotation reuses the alias's slot and updates in place.
-    function _smtUpdate(bytes32 aliasHash, bytes32 value) internal {
+    function _updateLeaf(bytes32 aliasHash, bytes32 value) internal {
         uint256 key = uint256(aliasHash) % FIELD_PRIME;
 
         uint32 slot = aliasSlot[aliasHash];
@@ -102,9 +113,9 @@ abstract contract SMTRegistry {
             uint256 nodePath    = pathKey >> i;
             uint256 siblingPath = nodePath ^ 1;
             bool    isRight     = (nodePath & 1) == 1;
-            bytes32 sibling     = _smtNodes[i][siblingPath];
+            bytes32 sibling     = _nodes[i][siblingPath];
             if (sibling == bytes32(0)) sibling = TreeZeros.zeros(i);
-            _smtNodes[i][nodePath] = current;
+            _nodes[i][nodePath] = current;
             if (isRight) {
                 current = bytes32(PoseidonT3.hash([uint256(sibling), uint256(current)]));
             } else {
@@ -113,17 +124,17 @@ abstract contract SMTRegistry {
         }
         // Stamp the OUTGOING root, not the incoming one. Stamping at creation spends the
         // window while the root is still current — which needs no grace, since `root ==
-        // smtRoot` is accepted unconditionally — so on a quiet registry a root would be born
+        // _root` is accepted unconditionally — so on a quiet registry a root would be born
         // already expired. World ID's requireValidRoot does the same.
-        registryRootSeenAt[smtRoot] = block.timestamp;
-        smtRoot = current;
+        registryRootSeenAt[_root] = block.timestamp;
+        _root = current;
     }
 
     function isKnownRegistryRoot(bytes32 root) public view returns (bool) {
         if (root == bytes32(0)) return false;
         // The current root is always acceptable, however long the registry has been
         // idle — it is not stale, it is simply unchanged.
-        if (root == smtRoot) return true;
+        if (root == _root) return true;
         uint256 seen = registryRootSeenAt[root];
         if (seen == 0) return false;
         return block.timestamp - seen <= REGISTRY_ROOT_MAX_AGE;
@@ -169,12 +180,12 @@ abstract contract SMTRegistry {
     function _siblings(uint32 pathKey) private view returns (bytes32[REGISTRY_LEVELS] memory siblings) {
         for (uint256 i = 0; i < REGISTRY_LEVELS; i++) {
             uint256 siblingPath = (uint256(pathKey) >> i) ^ 1;
-            bytes32 s = _smtNodes[i][siblingPath];
+            bytes32 s = _nodes[i][siblingPath];
             siblings[i] = s == bytes32(0) ? TreeZeros.zeros(i) : s;
         }
     }
 
     function getRegistryRoot() external view returns (bytes32) {
-        return smtRoot;
+        return _root;
     }
 }

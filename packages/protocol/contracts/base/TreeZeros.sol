@@ -11,7 +11,7 @@ error ZeroLevelOutOfRange();
 ///
 ///         Constants rather than a storage array. These values are fixed by the hash function
 ///         and can never change, but read from storage they cost a cold SLOAD (2,100 gas) at
-///         nearly every level of every update — a sparse tree's siblings are mostly empty, so
+///         nearly every level of every update — most siblings above the fill line are empty, so
 ///         the fallback is the common path, not the rare one. Reading them from code costs a
 ///         handful of comparisons instead, and it also removes 33 zero-to-non-zero SSTOREs
 ///         from deployment.
