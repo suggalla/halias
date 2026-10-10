@@ -192,7 +192,7 @@
 <style>
 	.own { display: flex; flex-direction: column; gap: 0.85rem; }
 	.pending { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem;
-		border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-titlebar); }
+		border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-raised); }
 	.pending > div { display: flex; flex-direction: column; gap: 0.15rem; }
 	.k { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.09em;
 		color: var(--text-dim); }

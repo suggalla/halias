@@ -7,7 +7,7 @@ Contracts, circuits and ceremony tooling. What the protocol *is* and why is in t
 
 ```
 contracts/     the three contracts, their deployer, and the generated verifiers
-  base/        Constants, SMTRegistry, TreeZeros
+  base/        Constants, MerkleRegistry, TreeZeros
   interfaces/  IHaliasPool, IHaliasRegistry, ITransactVerifier
   mocks/       test doubles — small trees, a full tree, a fee-on-transfer token
 circuits/      transact.circom, transactClaim.circom, and lib/

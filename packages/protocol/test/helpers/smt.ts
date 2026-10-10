@@ -39,7 +39,7 @@ export class SMT {
   }
 
   // Position is the slot the contract assigned; the leaf still hashes aliasKey, so
-  // identity is bound by the leaf rather than by where it sits. Mirrors _smtUpdate.
+  // identity is bound by the leaf rather than by where it sits. Mirrors _updateLeaf.
   update(slot: number, aliasKey: bigint, value: bigint): void {
     const pathKey = BigInt(slot);
     const zeros = getZeros();

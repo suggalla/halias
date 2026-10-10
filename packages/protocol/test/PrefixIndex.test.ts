@@ -154,7 +154,7 @@ describe("registry prefix index", function () {
   });
 
   it("does not append a second entry when an alias is rotated or its data changes", async function () {
-    // `_smtUpdate` runs for rotations and data updates too. Indexing there rather than in
+    // `_updateLeaf` runs for rotations and data updates too. Indexing there rather than in
     // `register` would append a duplicate every rotation, and a client would build the same
     // leaf twice — harmless for the tree, wrong for the count, and a slow leak of how often
     // someone rotates.

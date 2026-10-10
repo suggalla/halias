@@ -237,7 +237,7 @@ template Transact(poolLevels, registryLevels, nIns, nOuts, withClaim) {
         pendingBits.in <== pendingSlot;
 
         // The slot is empty in the tree at registryRoot. Empty subtrees are built from
-        // zeros[0] = 0 (see SMTRegistry._initSMT), so an unoccupied leaf hashes as 0.
+        // zeros[0] = 0 (see MerkleRegistry._initTree), so an unoccupied leaf hashes as 0.
         component pendingEmpty = MerkleProof(registryLevels);
         pendingEmpty.leaf <== 0;
         for (var j = 0; j < registryLevels; j++) {

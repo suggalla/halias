@@ -34,7 +34,7 @@ its user count. That is the risk this project actually carries.
 **A tree of identity commitments proven in-circuit: plenty.** Semaphore is the closest
 structural analogue — commitments in an incremental Merkle tree, membership proven by a
 circuit — and World ID is Semaphore-derived, running at scale, audited repeatedly. Those are
-the right comparison for `SMTRegistry`.
+the right comparison for `MerkleRegistry`.
 
 ## Semaphore, via the Veridise audit
 
@@ -76,7 +76,7 @@ update path, which is the same shape as the Semaphore finding.
 A creator could pick a zero value whose nullifier and trapdoor they knew, giving themselves
 irrevocable membership, since removal writes the zero value rather than deleting.
 
-**Does not apply.** `_initSMT` derives zeros from `0` by repeated hashing with no caller
+**Does not apply.** `_initTree` derives zeros from `0` by repeated hashing with no caller
 input, and aliases are never removed.
 
 Their fix is worth noting anyway: `uint256(keccak256(abi.encodePacked(groupId))) >> 8`.

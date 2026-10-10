@@ -163,7 +163,7 @@ more than an RPC provider. Two things extend the present design first:
    pays the 19 ms load. This is the cheap one, and it is client-side only.
 2. **Download the tree instead of computing it**, if a registry ever gets large enough that
    hashing it is the problem. The occupied region is a dense prefix of ~2N nodes, so a bulk
-   node read over `_smtNodes` trades the hashing for ~640 KB at 10,000 aliases and leaks
+   node read over `_nodes` trades the hashing for ~640 KB at 10,000 aliases and leaks
    nothing — every client fetches the same range, so there is no k-anonymity parameter to
    argue about. **Not currently worth it:** 640 KB of bandwidth to avoid 1.27 s of CPU is a bad
    trade, and it costs a contract function. Revisit past ~100k aliases.

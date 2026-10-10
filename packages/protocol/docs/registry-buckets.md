@@ -32,7 +32,7 @@ the download long before the hashing matters. **This design is good to ~10k as i
 ## Two things that look like fixes and are not
 
 **"It's a sparse Merkle tree — exploit the sparsity."** It is not sparse where it matters.
-`SMTRegistry.sol:88` assigns `slot = ++nextAliasSlot`, so the occupied region is a *dense
+`MerkleRegistry.sol:99` assigns `slot = ++nextAliasSlot`, so the occupied region is a *dense
 prefix* of N leaves and depth 32 is a capacity bound rather than a birthday bound. Above level
 log₂(N) every sibling is a precomputed zero and already free; below it every sibling is real
 and summarises a subtree you must have built. There is no sparsity left to spend.
@@ -67,7 +67,7 @@ Two properties are worth stating precisely, because they are what makes this che
 **It is still one tree.** Buckets are subtrees of a single depth-*d* tree, not separate trees.
 So there is still exactly one `registryRoot` public signal, one `isKnownRegistryRoot` check,
 and one `REGISTRY_ROOT_MAX_AGE`. None of the freshness logic in `HaliasPool.sol:200` or
-`SMTRegistry.sol:122` changes. This matters more than it sounds: the circuit has a *single*
+`MerkleRegistry.sol:129` changes. This matters more than it sounds: the circuit has a *single*
 `registryRoot` shared by both outputs and the pending-insert path (`transact.circom:63`), and a
 design with per-bucket roots would need one root per output and a rework of that whole area.
 
@@ -107,7 +107,7 @@ Three things need separating, because they are not equally bad.
 ### A fixed-depth tree always has a hard cap. That is not new.
 
 Depth 32 with a global counter caps the registry at 4.3B and reverts with `RegistryFull`
-(`SMTRegistry.sol:95`). The cap exists today; bucketing does not introduce it. What bucketing
+(`MerkleRegistry.sol:106`). The cap exists today; bucketing does not introduce it. What bucketing
 does is **lower the ceiling** — depth 24 with 8 bucket bits gives 16.8M slots — and make the top
 sliver of that ceiling probabilistic per name rather than exact.
 
@@ -223,7 +223,7 @@ Globally, sequentiality is gone, and three consequences follow:
 
 ## Contract changes
 
-- Slot assignment in `SMTRegistry._smtUpdate`: `slot = (bucket << (d-8)) | ++nextLocal[bucket]`,
+- Slot assignment in `MerkleRegistry._updateLeaf`: `slot = (bucket << (d-8)) | ++nextLocal[bucket]`,
   preserving the "0 means unregistered" convention, with the probe loop taking the first
   candidate bucket that has room.
 - `nextAliasSlot` → `nextLocalSlot(uint8 bucket)`. The claim path reads it

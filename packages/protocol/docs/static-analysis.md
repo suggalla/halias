@@ -235,8 +235,8 @@ cannot arise.
 
 ### Contracts — the high-severity findings are all false positives
 
-**Caret read as exponentiation** (Slither ID-0/ID-1, Aderyn H-2) — `SMTRegistry.sol:112` and
-`:151`. `nodePath ^ 1` is genuine XOR: flipping the low bit of a node index is how you address its
+**Caret read as exponentiation** (Slither ID-0/ID-1, Aderyn H-2) — `MerkleRegistry.sol:114` and
+`:182`. `nodePath ^ 1` is genuine XOR: flipping the low bit of a node index is how you address its
 sibling in a binary tree. Exponentiation would be meaningless here. This detector fires on every
 Merkle implementation ever written.
 
@@ -244,6 +244,10 @@ Merkle implementation ever written.
 withdraw function, but the assembly reads `create2(callvalue(), ...)`, forwarding the entire
 `msg.value` to the contract being deployed. Nothing is retained, so there is nothing to strand.
 Both tools miss this because neither models `callvalue()` inside inline assembly.
+
+Since this run the contract is gone: deployment moved to `HaliasDeployer`, which uses plain
+CREATE off its own nonce and is not payable, so the finding has nothing left to fire on. Kept
+because this page records a run at a stated commit rather than the current tree.
 
 **Unsafe downcast** (Aderyn H-4) — `address(uint160(tokenAddress))`, when `TransactParams.tokenAddress`
 was a `uint256`. **This one was right, and the code changed rather than the finding being waved

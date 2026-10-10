@@ -14,11 +14,11 @@
 	const mergesNeeded = (n: number) =>
 		Math.max(0, Math.ceil((n - POOL_INPUTS) / (POOL_INPUTS - 1)));
 	import PrivacyNote from './PrivacyNote.svelte';
-	import InviteWindow from './InviteWindow.svelte';
+	import InvitePanel from './InvitePanel.svelte';
 	import ReviewStep from './ReviewStep.svelte';
 	import { RELAY_LABEL, RELAY_HINT } from '../copy.js';
 	import OwnershipView from './OwnershipView.svelte';
-	import DepositWindow from './DepositWindow.svelte';
+	import DepositPanel from './DepositPanel.svelte';
 	import ViewKeyView from './ViewKeyView.svelte';
 
 	// Everything here acts as one alias.
@@ -444,7 +444,7 @@
 
 		{:else if phase === 'form'}
 			{#if mode === 'invite'}
-				<InviteWindow />
+				<InvitePanel />
 			{:else if mode === 'ownership'}
 				<OwnershipView />
 			{:else if mode === 'notes'}
@@ -512,7 +512,7 @@
 			{:else if mode === 'viewkey'}
 				<ViewKeyView />
 			{:else if mode === 'deposit'}
-				<DepositWindow embedded initialTarget={alias?.name ? `${alias.name}.hls` : ''} />
+				<DepositPanel embedded initialTarget={alias?.name ? `${alias.name}.hls` : ''} />
 			{:else}
 			<div class="form">
 				<label>
@@ -724,7 +724,7 @@
 		padding: 0.7rem 0.85rem; background: var(--bg-input);
 		border: 1px solid var(--border); border-radius: 8px; text-align: left;
 		transition: border-color 0.15s, background 0.15s; }
-	.action:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-titlebar); }
+	.action:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-raised); }
 	.action:disabled { opacity: 0.55; }
 	.action:disabled .ab { overflow-wrap: anywhere; }
 	.an { font-size: 0.9rem; font-weight: 700; color: var(--text-bright); }

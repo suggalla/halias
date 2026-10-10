@@ -50,7 +50,7 @@ src/
 ├─ routes/           one page — the flow is a state machine, not a router
 └─ lib/
    ├─ sdk/           client.ts, config.ts, vault.ts, wallets.ts
-   └─ windows/       the screens
+   └─ ui/            the screens
 ```
 
 `lib/sdk/` is the boundary, and it is worth reading before the screens:
@@ -63,8 +63,8 @@ src/
 - **`client.ts`** — constructs the `Halias` client with a `BrowserCache`.
 
 The flow is linear — wallet, then alias, then act. An earlier version was a retro desktop
-window manager; the `windows/` directory name is what survives of it. The components are
-screens.
+window manager; nothing of it survives but the layout's `panel` vocabulary, where a
+`*Panel` component is the body of a modal sheet and a `*View` is a section of a screen.
 
 ## The two secrets
 

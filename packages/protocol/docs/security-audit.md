@@ -207,7 +207,7 @@ registry a root current for longer than `REGISTRY_ROOT_MAX_AGE` was born expired
 who read it, spent a minute generating a proof, and submitted would fail the moment anyone
 else registered.
 
-Liveness, not fund loss. Fixed by stamping the outgoing root in `_smtUpdate`:
+Liveness, not fund loss. Fixed by stamping the outgoing root in `_updateLeaf`:
 
 ```solidity
 registryRootBlock[smtRoot] = block.number;   // superseded now

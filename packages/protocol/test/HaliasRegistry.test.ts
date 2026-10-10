@@ -13,7 +13,7 @@ import { rand32 } from "./helpers/tx";
 const leafOf = (spendingCommitment: string, nullifierKeyHash: string, dataHash: string) =>
   poseidonHash([BigInt(spendingCommitment), BigInt(nullifierKeyHash), BigInt(dataHash)]);
 
-// HaliasRegistry — the standalone registry extracted from the SMTRegistry base.
+// HaliasRegistry — the standalone registry extracted from the MerkleRegistry base.
 //
 // What this file is about is the registry's own surface: a single immutable writer, and
 // validation that lives here rather than in whoever calls it. The tree must hold its

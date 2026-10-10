@@ -3,14 +3,14 @@
 	import type { Snippet } from 'svelte';
 	import { clientState, disconnect, deselectAlias } from '$lib/sdk/client.js';
 	import { getNetwork } from '$lib/sdk/config.js';
-	import WalletWindow from '$lib/windows/WalletWindow.svelte';
-	import TransactWindow from '$lib/windows/TransactWindow.svelte';
-	import HistoryView from '$lib/windows/HistoryView.svelte';
-	import InfoWindow from '$lib/windows/InfoWindow.svelte';
-	import RelayWindow from '$lib/windows/RelayWindow.svelte';
-	import DepositWindow from '$lib/windows/DepositWindow.svelte';
-	import ClaimWindow from '$lib/windows/ClaimWindow.svelte';
-	import Onboarding from '$lib/windows/Onboarding.svelte';
+	import WalletPanel from '$lib/ui/WalletPanel.svelte';
+	import TransactPanel from '$lib/ui/TransactPanel.svelte';
+	import HistoryView from '$lib/ui/HistoryView.svelte';
+	import InfoPanel from '$lib/ui/InfoPanel.svelte';
+	import RelayPanel from '$lib/ui/RelayPanel.svelte';
+	import DepositPanel from '$lib/ui/DepositPanel.svelte';
+	import ClaimPanel from '$lib/ui/ClaimPanel.svelte';
+	import Onboarding from '$lib/ui/Onboarding.svelte';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -69,6 +69,16 @@
 		if (key === openedFor) return;
 		openedFor = key;
 		panel = relay ? 'relay' : 'redeem';
+	});
+
+	// The page behind an open sheet must not scroll. The sheet is `position: fixed` and scrolls
+	// its own body, so without this a wheel event over the scrim moves the content underneath.
+	// A body class rather than inline style so the rule lives with the rest of the base CSS, and
+	// a cleanup return so closing the sheet — or leaving the page with one open — restores it.
+	$effect(() => {
+		const open = panel !== 'none';
+		document.body.classList.toggle('sheet-open', open);
+		return () => document.body.classList.remove('sheet-open');
 	});
 </script>
 
@@ -178,7 +188,7 @@
 				{#if $clientState.error}<p class="err">{$clientState.error}</p>{/if}
 			</section>
 		{:else if step === 2}
-			<section class="panel"><WalletWindow /></section>
+			<section class="panel"><WalletPanel /></section>
 		{:else}
 			<section class="panel">
 				<!-- No Actions tab for a view key: there are no actions it can take, and a tab
@@ -198,7 +208,7 @@
 							onclick={() => (tab = 'history')}>History</button>
 					</div>
 					{#if tab === 'actions'}
-						<TransactWindow />
+						<TransactPanel />
 					{:else}
 						<HistoryView />
 					{/if}
@@ -224,13 +234,13 @@
 				</header>
 				<div class="sheetBody">
 					{#if panel === 'about'}
-						<InfoWindow />
+						<InfoPanel />
 					{:else if panel === 'deposit'}
-						<DepositWindow />
+						<DepositPanel />
 					{:else if panel === 'redeem'}
-						<ClaimWindow />
+						<ClaimPanel />
 					{:else}
-						<RelayWindow />
+						<RelayPanel />
 					{/if}
 				</div>
 			</div>
@@ -259,7 +269,7 @@
 		/* A wallet name is user-supplied and up to 40 characters; the bar has to survive one. */
 		max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
 	.crumb:hover:not(:disabled) { color: var(--accent); border-color: var(--border);
-		background: var(--bg-window); }
+		background: var(--bg-surface); }
 	.crumb.now { color: var(--text-bright); }
 	.right { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
 	.net { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.75rem;
@@ -278,7 +288,7 @@
 	/* Boxed, not bare text. These sit beside a network pill and a breadcrumb, and without a
 	   boundary there was nothing to tell a reader they were controls at all. */
 	.link { color: var(--text-dim); font-size: 0.8rem; padding: 0.3rem 0.7rem;
-		border: 1px solid var(--border); border-radius: 6px; background: var(--bg-window);
+		border: 1px solid var(--border); border-radius: 6px; background: var(--bg-surface);
 		transition: color 0.15s, border-color 0.15s; }
 	.link:hover:not(:disabled) { color: var(--text-bright); border-color: var(--accent); }
 	.link.on { color: var(--bg-dark); background: var(--accent); border-color: var(--accent);
@@ -287,7 +297,7 @@
 	/* Content sits on the window mauve, not on the near-black behind it. The palette carries
 	   three depths for a reason — using only the darkest left every panel floating with no
 	   edge, which is most of why the wallet read as unfinished. */
-	.panel { width: 100%; max-width: 34rem; background: var(--bg-window);
+	.panel { width: 100%; max-width: 34rem; background: var(--bg-surface);
 		border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem; }
 	.center { background: none; border: none; padding: 0; }
 	.center { display: flex; flex-direction: column; gap: 1rem; align-items: flex-start;
@@ -316,11 +326,11 @@
 	.sheet { position: fixed; z-index: 11; top: 50%; left: 50%;
 		transform: translate(-50%, -50%); width: min(36rem, calc(100vw - 2rem));
 		max-height: calc(100vh - 4rem); display: flex; flex-direction: column;
-		background: var(--bg-window); border: 1px solid var(--border); border-radius: 8px;
+		background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
 		box-shadow: 0 18px 48px var(--shadow); }
 	.sheetBar { display: flex; align-items: center; justify-content: space-between;
 		gap: 1rem; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border);
-		background: var(--bg-titlebar); border-radius: 8px 8px 0 0; }
+		background: var(--bg-raised); border-radius: 8px 8px 0 0; }
 	.sheetTitle { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
 		color: var(--text-dim); font-weight: 700; }
 	.sheetBody { overflow-y: auto; padding: 1rem; }

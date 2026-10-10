@@ -51,7 +51,7 @@ export function rootFromSiblings(
   return current;
 }
 
-// Sparse Merkle Tree (32 levels), mirroring SMTRegistry's _smtUpdate/_smtZeros.
+// Sparse Merkle Tree (32 levels), mirroring MerkleRegistry's _updateLeaf/TreeZeros.
 // Position = the slot the contract assigned at registration. Value = RegistryLeaf hash.
 // The leaf still hashes aliasKey (aliasHash % FIELD_PRIME), so identity is bound by the
 // leaf while the path follows the slot — matching the circuit exactly.

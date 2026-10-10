@@ -602,7 +602,7 @@
 	.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
 		gap: 0.5rem; }
 	.steps > li { display: flex; gap: 0.9rem; padding: 1rem; border: 1px solid var(--border);
-		border-radius: 10px; background: var(--bg-window);
+		border-radius: 10px; background: var(--bg-surface);
 		transition: border-color 0.15s, opacity 0.15s; }
 	.steps > li.on { border-color: var(--accent); }
 	.steps > li.pending { opacity: 0.55; }
@@ -657,7 +657,7 @@
 		border: 1px solid var(--border); border-radius: 8px; text-align: left;
 		transition: border-color 0.15s, background 0.15s; }
 	.entry:hover { border-color: var(--accent); }
-	.entry.on { border-color: var(--accent); background: var(--bg-titlebar); }
+	.entry.on { border-color: var(--accent); background: var(--bg-raised); }
 	.en { font-size: 0.85rem; font-weight: 700; color: var(--text-bright); }
 	.ek { font-size: 0.72rem; color: var(--text-dim); }
 	.kinds { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
@@ -666,7 +666,7 @@
 		padding: 0.75rem 0.85rem; background: var(--bg-input);
 		border: 1px solid var(--border); border-radius: 8px; text-align: left;
 		transition: border-color 0.15s, background 0.15s; }
-	.action:hover { border-color: var(--accent); background: var(--bg-titlebar); }
+	.action:hover { border-color: var(--accent); background: var(--bg-raised); }
 	.an { font-size: 0.9rem; font-weight: 700; color: var(--text-bright); }
 	.ab { font-size: 0.76rem; color: var(--text-dim); line-height: 1.45; }
 	.row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
@@ -687,7 +687,7 @@
 	.w { width: 100%; display: flex; align-items: center; gap: 0.7rem; padding: 0.65rem 0.75rem;
 		background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px;
 		text-align: left; transition: border-color 0.15s, background 0.15s; }
-	.w:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-titlebar); }
+	.w:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-raised); }
 	.w img { border-radius: 5px; flex: none; }
 	.w .go { margin-left: auto; color: var(--text-dim); }
 	.w:hover:not(:disabled) .go { color: var(--accent); }

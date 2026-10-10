@@ -10,23 +10,16 @@
 /* === CSS VARS — Soft Feminine Elegant === */
 :root {
 	--bg-dark: #191418;
-	--bg-desktop: #1e1820;
-	--bg-window: #28202c;
-	--bg-titlebar: #302830;
+	--bg-surface: #28202c;
+	--bg-raised: #302830;
 	--bg-input: #1c161e;
 	--border: #4a3e50;
-	--border-focus: #6a5a72;
 	--accent: #d4a0c0;
-	--accent-glow: rgba(212, 160, 192, 0.2);
 	--accent-bright: #e8bcd4;
-	--accent-secondary: #c8a888;
 	--text: #f0ebe8;
 	--text-dim: #b8aeb4;
 	--text-bright: #faf5f2;
 	--shadow: rgba(0, 0, 0, 0.45);
-	--taskbar-h: 42px;
-	--titlebar-h: 32px;
-	--snap-preview: rgba(212, 160, 192, 0.15);
 
 	/* === TYPEFACES ===
 	 *
@@ -73,8 +66,15 @@
 /* === BASE === */
 html,
 body {
-	height: 100%;
-	overflow: hidden;
+	/* min-height, not height, and no `overflow: hidden`. Both were holdovers from the window
+	 * manager, where the desktop was a fixed viewport and each window scrolled its own body.
+	 * The layout is a linear column now: `.app` is `min-height: 100vh` and grows past the
+	 * viewport, so clipping it here made everything below the fold unreachable — there is no
+	 * inner scroller to fall back on. `min-height` still lets the background fill a short page.
+	 *
+	 * The clip did do one useful thing by accident: it stopped the page scrolling behind an
+	 * open sheet. That is now `body.sheet-open`, set while a panel is up. */
+	min-height: 100%;
 	background: var(--bg-dark);
 	color: var(--text);
 	font-family: var(--font-sans);
@@ -83,6 +83,13 @@ body {
 	 * line, and this app's longest text is its explanations. */
 	line-height: 1.55;
 	-webkit-font-smoothing: antialiased;
+}
+
+/* While a sheet is up the page behind it must not scroll: the sheet is `position: fixed`
+ * with its own `overflow-y: auto`, so a wheel event that fell through to the body moved the
+ * content behind the scrim instead of the dialog. Set from the layout, cleared on close. */
+body.sheet-open {
+	overflow: hidden;
 }
 
 /* Data, wherever it appears. Tabular figures so amounts in a column line up on the decimal
@@ -115,63 +122,11 @@ samp {
 	border-radius: 3px;
 }
 
-/* === SHARED COMPONENT STYLES === */
-.btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	padding: 8px 18px;
-	border: 1px solid var(--border);
-	border-radius: 2px;
-	background: var(--bg-input);
-	color: var(--text);
-	font-family: inherit;
-	font-size: 13px;
-	text-transform: uppercase;
-	letter-spacing: 1px;
-	cursor: pointer;
-	transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.btn:hover {
-	border-color: var(--accent);
-	box-shadow: 0 0 8px var(--accent-glow);
-}
-
-.btn:active {
-	background: var(--bg-window);
-}
-
-.btn-primary {
-	border-color: var(--accent);
-	color: var(--accent);
-}
-
-.btn-primary:hover {
-	box-shadow: 0 0 12px var(--accent-glow);
-}
-
-.input {
-	width: 100%;
-	padding: 9px 12px;
-	border: 1px solid var(--border);
-	border-radius: 2px;
-	background: var(--bg-input);
-	color: var(--text-bright);
-	font-family: inherit;
-	font-size: 15px;
-	outline: none;
-	transition: border-color 0.15s;
-}
-
-.input:focus {
-	border-color: var(--accent);
-}
-
-.input::placeholder {
-	color: var(--text-dim);
-}
-
+/* === SHARED COMPONENT STYLES ===
+ *
+ * `.btn`, `.btn-primary` and `.input` stood here: uppercase, 2px radius, a class on every
+ * control. They were the window manager's look, and the FORM CONTROLS block below replaced
+ * them by styling the bare elements instead — nothing referenced them any more. */
 .label {
 	display: block;
 	margin-bottom: 4px;
@@ -220,7 +175,7 @@ button:disabled {
 
 /* Not a faded pink — that reads as a styling bug rather than an unavailable control. */
 .primary:disabled {
-	background: var(--bg-titlebar);
+	background: var(--bg-raised);
 	border-color: var(--border);
 	color: var(--text-dim);
 }
@@ -291,11 +246,11 @@ textarea[readonly] {
 
 .tabs button:hover:not(.active) {
 	color: var(--text-bright);
-	background: var(--bg-window);
+	background: var(--bg-surface);
 }
 
 .tabs button.active {
-	background: var(--bg-titlebar);
+	background: var(--bg-raised);
 	border-color: var(--accent);
 	color: var(--accent-bright);
 	font-weight: 700;

@@ -22,7 +22,7 @@ describe("TreeZeros", function () {
 
   it("is the Poseidon chain from zero, at every level", async function () {
     // 0..32 inclusive: the pool reads up to LEVELS and the registry up to REGISTRY_LEVELS,
-    // and _initSMT reads the root level itself, so the deepest entry must exist.
+    // and _initTree reads the root level itself, so the deepest entry must exist.
     let expected = ethers.ZeroHash;
     for (let i = 0; i <= 32; i++) {
       expect(await zeros.at(i), `zeros(${i})`).to.equal(expected);

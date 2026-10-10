@@ -184,7 +184,7 @@
 		offersLoaded = true;
 	}
 
-	// Keyed on the address for the same reason InviteWindow is keyed on the alias: reading
+	// Keyed on the address for the same reason InvitePanel is keyed on the alias: reading
 	// `$clientState` subscribes to the whole store, so without a guard this refetched the
 	// offer list on every unrelated state change. It does not loop — `loadOffers` stays off
 	// `run` and so emits nothing itself — but it was a chain read per keystroke elsewhere.
